@@ -1,0 +1,71 @@
+[
+  {
+    "id": "6tbzki2",
+    "name": "GitHub Main",
+    "url": "https://github.com",
+    "interval": 15,
+    "method": "GET",
+    "headers": "",
+    "body": "",
+    "bodyEncoding": "JSON",
+    "status": "active",
+    "timeout": 5,
+    "retries": 2,
+    "retryInterval": 5,
+    "group": "Production",
+    "lastCheck": "2026-07-17T06:43:50.638Z",
+    "lastStatusCode": 200,
+    "lastStatusText": "OK",
+    "lastLatency": 151,
+    "isUp": true,
+    "certExpiryDate": "2026-09-30T23:59:59.000Z",
+    "certExpDays": 76,
+    "recentPings": [
+      {
+        "isUp": true,
+        "latency": 3543,
+        "timestamp": "2026-07-17T06:38:35.641Z"
+      },
+      {
+        "isUp": true,
+        "latency": 99,
+        "timestamp": "2026-07-17T06:40:49.072Z"
+      },
+      {
+        "isUp": true,
+        "latency": 168,
+        "timestamp": "2026-07-17T06:41:36.705Z"
+      },
+      {
+        "isUp": true,
+        "latency": 127,
+        "timestamp": "2026-07-17T06:41:37.732Z"
+      },
+      {
+        "isUp": true,
+        "latency": 103,
+        "timestamp": "2026-07-17T06:41:38.398Z"
+      },
+      {
+        "isUp": true,
+        "latency": 107,
+        "timestamp": "2026-07-17T06:41:38.681Z"
+      },
+      {
+        "isUp": true,
+        "latency": 139,
+        "timestamp": "2026-07-17T06:41:38.963Z"
+      },
+      {
+        "isUp": true,
+        "latency": 66,
+        "timestamp": "2026-07-17T06:41:39.238Z"
+      },
+      {
+        "isUp": true,
+        "latency": 68,
+        "timestamp": "2026-07-17T06:41:39.555Z"
+      }
+    ]
+  }
+]
