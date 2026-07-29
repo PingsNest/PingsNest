@@ -1,0 +1,1924 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  Activity, Wifi, WifiOff, Trash2, Play, Pause, Plus, RefreshCw, 
+  TrendingUp, Edit, Copy, ChevronDown, ChevronRight, Search, 
+  ExternalLink, FileText, Clock, AlertTriangle
+} from 'lucide-react';
+
+export interface SyntheticStep {
+  id: string;
+  name: string;
+  url?: string;
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+  headers?: string;
+  body?: string;
+  expectedStatus?: number;
+  assertionPattern?: string;
+  extractVar?: string;
+}
+
+interface UrlTarget {
+  id: string;
+  name: string;
+  url: string;
+  interval: number;
+  method: 'GET' | 'POST' | 'HEAD' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS';
+  headers?: string;
+  body?: string;
+  bodyEncoding?: string;
+  status: 'active' | 'paused';
+  timeout: number; // in seconds
+  retries: number;
+  retryInterval: number; // in seconds
+  group?: string;
+  certExpiryDate?: string;
+  certExpDays?: number;
+  recentPings?: { isUp: boolean; latency: number; timestamp: string }[];
+  lastCheck?: string;
+  lastStatusCode?: number;
+  lastStatusText?: string;
+  lastLatency?: number;
+  isUp?: boolean;
+  steps?: SyntheticStep[];
+  suppressAlertsUntil?: string;
+  assertions?: any[];
+  dnsLatency?: number;
+  tcpLatency?: number;
+  tlsLatency?: number;
+  ttfbLatency?: number;
+}
+
+
+export interface UrlIncident {
+  id: string;
+  targetId: string;
+  targetName: string;
+  targetUrl: string;
+  startedAt: string;
+  endedAt?: string;
+  durationSec?: number;
+  statusCode?: number;
+  errorReason?: string;
+  isResolved: boolean;
+}
+
+interface PingResult {
+  timestamp: string;
+  statusCode: number;
+  latency: number;
+  isUp: boolean;
+}
+
+interface UrlMonitorProps {
+  token: string | null;
+  onLogout: () => void;
+}
+
+export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
+  const [targets, setTargets] = useState<UrlTarget[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedTarget, setSelectedTarget] = useState<UrlTarget | null>(null);
+  const [history, setHistory] = useState<PingResult[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [logsVisible, setLogsVisible] = useState(10);  // show 10 initially, +15 per click
+  const [incidents, setIncidents] = useState<UrlIncident[]>([]);
+  const [loadingIncidents, setLoadingIncidents] = useState(false);
+  const [slaMetrics, setSlaMetrics] = useState<Record<string, { ratio: number; total: number; up: number; avgLatency: number }> | null>(null);
+  const [selectedSlaPeriod, setSelectedSlaPeriod] = useState<string>('24h');
+
+  // PDF Customization State
+  const [isPdfCustomizing, setIsPdfCustomizing] = useState(false);
+  const [pdfTarget, setPdfTarget] = useState<UrlTarget | null>(null);
+  const [pdfCompanyName, setPdfCompanyName] = useState(() => localStorage.getItem('nova_pdf_company_name') || '');
+  const [pdfCompanyLogo, setPdfCompanyLogo] = useState(() => localStorage.getItem('nova_pdf_company_logo') || '');
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [pdfScope, setPdfScope] = useState<'selected' | 'all'>('all');
+
+  // Search and Layout
+  const [searchQuery, setSearchQuery] = useState('');
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [isFormVisible, setIsFormVisible] = useState(false);
+  const [formTab, setFormTab] = useState<'general' | 'http' | 'advanced' | 'steps'>('general');
+
+  // Form fields
+  const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
+  const [name, setName] = useState('');
+  const [url, setUrl] = useState('');
+  const [interval, setIntervalVal] = useState('');
+  const [method, setMethod] = useState<'GET' | 'POST' | 'HEAD' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS'>('GET');
+  const [headers, setHeaders] = useState('');
+  const [body, setBody] = useState('');
+  const [timeout, setTimeoutVal] = useState('');
+  const [retries, setRetries] = useState('');
+  const [retryInterval, setRetryInterval] = useState('');
+  const [group, setGroup] = useState('');
+  const [bodyEncoding, setBodyEncoding] = useState('JSON');
+  const [scenarioSteps, setScenarioSteps] = useState<SyntheticStep[]>([]);
+  const [formError, setFormError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [checkingId, setCheckingId] = useState<string | null>(null);
+
+  // Authenticated Fetch Wrapper
+  const authFetch = async (url: string, options: RequestInit = {}) => {
+    const headers = new Headers(options.headers || {});
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401) {
+      onLogout();
+      throw new Error('Unauthorized');
+    }
+    return res;
+  };
+
+  // Fetch targets
+  const fetchTargets = async () => {
+    setLoading(true);
+    try {
+      const res = await authFetch('/api/url-monitor/targets');
+      const data = await res.json();
+      setTargets(data.targets || []);
+      
+      if (data.targets && data.targets.length > 0 && !selectedTarget) {
+        setSelectedTarget(data.targets[0]);
+      }
+    } catch (e) {
+      console.error('Failed to fetch targets:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch history for selected target
+  const fetchHistory = async (targetId: string) => {
+    setLoadingHistory(true);
+    try {
+      const res = await authFetch(`/api/url-monitor/history/${targetId}`);
+      const data = await res.json();
+      setHistory(data.history || []);
+    } catch (e) {
+      console.error('Failed to fetch history:', e);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  // Fetch SLA metrics for selected target
+  const fetchSla = async (targetId: string) => {
+    try {
+      const res = await authFetch(`/api/url-monitor/sla/${targetId}`);
+      const data = await res.json();
+      setSlaMetrics(data.sla || null);
+    } catch (e) {
+      console.error('Failed to fetch SLA:', e);
+    }
+  };
+
+  // Fetch outage incidents for selected target
+  const fetchIncidents = async (targetId: string) => {
+    setLoadingIncidents(true);
+    try {
+      const res = await authFetch(`/api/url-monitor/incidents/${targetId}`);
+      const data = await res.json();
+      setIncidents(data.incidents || []);
+    } catch (e) {
+      console.error('Failed to fetch incidents:', e);
+    } finally {
+      setLoadingIncidents(false);
+    }
+  };
+
+  useEffect(() => {
+    if (token) {
+      fetchTargets();
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (token && selectedTarget) {
+      setLogsVisible(10); // reset pagination when switching targets
+      fetchHistory(selectedTarget.id);
+      fetchSla(selectedTarget.id);
+      fetchIncidents(selectedTarget.id);
+      
+      const handle = window.setInterval(() => {
+        fetchHistory(selectedTarget.id);
+        fetchSla(selectedTarget.id);
+        fetchIncidents(selectedTarget.id);
+      }, 10000);
+      return () => clearInterval(handle);
+    }
+  }, [token, selectedTarget?.id]);
+
+
+  // Periodic poll targets list updates (runs every 10s)
+  useEffect(() => {
+    if (token) {
+      const handle = window.setInterval(async () => {
+        try {
+          const res = await authFetch('/api/url-monitor/targets');
+          const data = await res.json();
+          const freshTargets = data.targets || [];
+          setTargets(freshTargets);
+          
+          if (selectedTarget) {
+            const match = freshTargets.find((t: any) => t.id === selectedTarget.id);
+            if (match) setSelectedTarget(match);
+          }
+        } catch {}
+      }, 10000);
+      return () => clearInterval(handle);
+    }
+  }, [token, selectedTarget]);
+
+  // Real-time WebSocket target ping listener (instant live updates for heartbeat bars)
+  useEffect(() => {
+    if (!token) return;
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    let ws: WebSocket | null = null;
+
+    try {
+      ws = new WebSocket(wsUrl);
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'url_target_ping' && data.target) {
+            const updated: UrlTarget = data.target;
+            setTargets(prev => prev.map(t => t.id === updated.id ? { ...t, ...updated } : t));
+            setSelectedTarget(prev => (prev && prev.id === updated.id) ? { ...prev, ...updated } : prev);
+          }
+        } catch {}
+      };
+    } catch {}
+
+    return () => {
+      if (ws) ws.close();
+    };
+  }, [token]);
+
+
+  // Save Target (Create or Edit)
+  const handleSaveTarget = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError('');
+    setIsSubmitting(true);
+
+    if (!name || !url) {
+      setFormError('Name and URL are required.');
+      setIsSubmitting(false);
+      return;
+    }
+
+    try {
+      if (headers) {
+        JSON.parse(headers); // check valid JSON
+      }
+    } catch {
+      setFormError('Headers must be valid JSON.');
+      setIsSubmitting(false);
+      return;
+    }
+
+    const payload = {
+      name,
+      url,
+      interval: Number(interval),
+      method,
+      headers,
+      body,
+      timeout: Number(timeout),
+      retries: Number(retries),
+      retryInterval: Number(retryInterval),
+      group: group.trim(),
+      bodyEncoding,
+      steps: scenarioSteps
+    };
+
+    try {
+      const endpoint = editingTargetId 
+        ? `/api/url-monitor/targets/${editingTargetId}` 
+        : '/api/url-monitor/targets';
+      const httpMethod = editingTargetId ? 'PUT' : 'POST';
+
+      const res = await authFetch(endpoint, {
+        method: httpMethod,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        // Reset states
+        setName('');
+        setUrl('');
+        setHeaders('');
+        setBody('');
+        setIntervalVal('');
+        setMethod('GET');
+        setTimeoutVal('');
+        setRetries('');
+        setRetryInterval('');
+        setGroup('');
+        setBodyEncoding('JSON');
+        setScenarioSteps([]);
+        setEditingTargetId(null);
+        setIsFormVisible(false);
+
+        
+        await fetchTargets();
+        if (data.target) setSelectedTarget(data.target);
+      } else {
+        setFormError(data.error || 'Failed to save target.');
+      }
+    } catch (err: any) {
+      setFormError(err.message || 'Error occurred.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Toggle Active/Paused status
+  const handleToggleStatus = async (id: string) => {
+    try {
+      const res = await authFetch('/api/url-monitor/targets/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTargets(targets.map(t => t.id === id ? data.target : t));
+        if (selectedTarget?.id === id) setSelectedTarget(data.target);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Delete Target
+  const handleDeleteTarget = async (id: string) => {
+    if (!window.confirm('Are you sure you want to stop monitoring this URL?')) return;
+    try {
+      const res = await authFetch(`/api/url-monitor/targets/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        const filtered = targets.filter(t => t.id !== id);
+        setTargets(filtered);
+        if (selectedTarget?.id === id) {
+          setSelectedTarget(filtered.length > 0 ? filtered[0] : null);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Clone Target
+  const handleCloneTarget = async (id: string) => {
+    if (!window.confirm('Clone this URL monitor configuration?')) return;
+    try {
+      const res = await authFetch('/api/url-monitor/targets/clone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchTargets();
+        if (data.target) setSelectedTarget(data.target);
+      } else {
+        alert(data.error || 'Failed to clone target.');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Start Edit Mode
+  const handleStartEdit = (target: UrlTarget) => {
+    setEditingTargetId(target.id);
+    setName(target.name);
+    setUrl(target.url);
+    setIntervalVal(String(target.interval));
+    setMethod(target.method);
+    setHeaders(target.headers || '');
+    setBody(target.body || '');
+    setTimeoutVal(String(target.timeout || 48));
+    setRetries(String(target.retries || 0));
+    setRetryInterval(String(target.retryInterval || 60));
+    setGroup(target.group || '');
+    setBodyEncoding(target.bodyEncoding || 'JSON');
+    setScenarioSteps(target.steps || []);
+    setFormTab('general');
+    setIsFormVisible(true);
+  };
+
+
+  // Immediate Check Ping
+  const handleCheckNow = async (id: string) => {
+    setCheckingId(id);
+    try {
+      const res = await authFetch('/api/url-monitor/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTargets(targets.map(t => t.id === id ? data.target : t));
+        if (selectedTarget?.id === id) {
+          setSelectedTarget(data.target);
+          await fetchHistory(id);
+          await fetchSla(id);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setCheckingId(null);
+    }
+  };
+
+  const handleOpenPdfCustomize = (target: UrlTarget | null) => {
+    setPdfTarget(target);
+    setPdfScope(target ? 'selected' : 'all');
+    setPdfCompanyName(localStorage.getItem('nova_pdf_company_name') || '');
+    setPdfCompanyLogo(localStorage.getItem('nova_pdf_company_logo') || '');
+    setIsPdfCustomizing(true);
+  };
+
+  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const res = reader.result as string;
+      setPdfCompanyLogo(res);
+      localStorage.setItem('nova_pdf_company_logo', res);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleGenerateCustomPdf = async () => {
+    setIsGeneratingPdf(true);
+    try {
+      if (pdfCompanyName.trim()) {
+        localStorage.setItem('nova_pdf_company_name', pdfCompanyName.trim());
+      } else {
+        localStorage.removeItem('nova_pdf_company_name');
+      }
+
+      if (pdfCompanyLogo) {
+        localStorage.setItem('nova_pdf_company_logo', pdfCompanyLogo);
+      } else {
+        localStorage.removeItem('nova_pdf_company_logo');
+      }
+
+      const targetId = pdfTarget?.id || selectedTarget?.id;
+      const endpoint = pdfScope === 'all'
+        ? '/api/url-monitor/report/pdf-all'
+        : `/api/url-monitor/report/pdf/${targetId}`;
+
+      const tokenVal = localStorage.getItem('nova_auth_token') || token;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${tokenVal}`
+        },
+        body: JSON.stringify({
+          companyName: pdfCompanyName.trim(),
+          companyLogo: pdfCompanyLogo
+        })
+      });
+      if (!res.ok) {
+        throw new Error('Failed to generate customized PDF report');
+      }
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      const filename = pdfScope === 'all'
+        ? `official-consolidated-sla-report-${new Date().toISOString().slice(0, 10)}.pdf`
+        : `official-sla-report-${(pdfTarget?.name || selectedTarget?.name || 'monitor').replace(/[^a-z0-9]/gi, '_')}.pdf`;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode?.removeChild(link);
+      setIsPdfCustomizing(false);
+    } catch (err: any) {
+      alert(err.message || 'Error generating PDF SLA report');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
+  // Group collapsing handler
+  const toggleGroup = (grpName: string) => {
+    setCollapsedGroups(prev => ({
+      ...prev,
+      [grpName]: !prev[grpName]
+    }));
+  };
+
+  // Render Uptime Kuma-style heartbeat bars
+  const renderHeartbeatBar = (recentPings?: { isUp: boolean; latency: number }[], size: 'sm' | 'lg' = 'sm') => {
+    const totalBars = size === 'lg' ? 45 : 12;
+    const pings = recentPings || [];
+    const paddingLength = Math.max(0, totalBars - pings.length);
+    
+    const barsList: { isUp?: boolean; latency?: number; isEmpty: boolean }[] = [];
+    
+    // Empty spacer bars
+    for (let i = 0; i < paddingLength; i++) {
+      barsList.push({ isEmpty: true });
+    }
+    
+    // Actual check pings
+    const activePings = pings.slice(-totalBars);
+    activePings.forEach(p => {
+      barsList.push({ isUp: p.isUp, latency: p.latency, isEmpty: false });
+    });
+
+    const barHeight = size === 'lg' ? '28px' : '14px';
+    const gap = size === 'lg' ? '4px' : '1.5px';
+    const borderRadius = size === 'lg' ? '3px' : '1px';
+
+    return (
+      <div style={{ display: 'flex', gap, alignItems: 'center', width: '100%' }}>
+        {barsList.map((bar, idx) => {
+          let bg = 'rgba(128, 128, 128, 0.18)';
+          let title = 'Waiting for checks...';
+          
+          if (!bar.isEmpty) {
+            bg = bar.isUp ? 'var(--color-success)' : 'var(--color-error)';
+            title = `Status: ${bar.isUp ? 'UP' : 'DOWN'}\nLatency: ${bar.latency}ms`;
+          }
+          
+          return (
+            <div
+              key={idx}
+              style={{
+                flex: size === 'lg' ? 1 : 'none',
+                width: size === 'lg' ? 'auto' : '3px',
+                height: barHeight,
+                backgroundColor: bg,
+                borderRadius,
+                transition: 'background-color 0.2s ease',
+                cursor: bar.isEmpty ? 'default' : 'pointer'
+              }}
+              title={title}
+            />
+          );
+        })}
+      </div>
+    );
+  };
+
+
+  // Computes SLA ratio
+  const activeCount = targets.filter(t => t.status === 'active').length;
+  const upCount = targets.filter(t => t.status === 'active' && t.isUp).length;
+  const downCount = targets.filter(t => t.status === 'active' && !t.isUp).length;
+  const uptimeRatio = activeCount > 0 ? Math.round((upCount / activeCount) * 100) : 100;
+
+  // Grouping & Filtering for Sidebar
+  const filteredTargets = targets.filter(t => 
+    t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    t.url.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (t.group || '').toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const groupedTargets: Record<string, UrlTarget[]> = {};
+  filteredTargets.forEach(t => {
+    const grp = t.group?.trim() || 'General';
+    if (!groupedTargets[grp]) groupedTargets[grp] = [];
+    groupedTargets[grp].push(t);
+  });
+
+  // Calculate statistics for selected monitor
+  const uptime24h = history.length > 0
+    ? Math.round((history.filter(h => h.isUp).length / history.length) * 1000) / 10
+    : 100;
+
+  // Render SVG Sparkline
+  const renderSVGChart = () => {
+    if (history.length < 2) {
+      return (
+        <div style={{ height: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+          Accumulating check metrics... Send a manual ping or wait for the check interval.
+        </div>
+      );
+    }
+
+    const latencies = history.map(h => h.latency);
+    const maxLatency = Math.max(...latencies, 200); 
+    const minLatency = Math.min(...latencies, 0);
+    const height = 160;
+    const width = 500;
+    const padding = 12;
+
+    const points = history.map((h, i) => {
+      const x = padding + (i * (width - padding * 2)) / (history.length - 1);
+      const y = height - padding - ((h.latency - minLatency) * (height - padding * 2)) / (maxLatency - minLatency || 1);
+      return { x, y };
+    });
+
+    const dPath = `M ${points.map(p => `${p.x} ${p.y}`).join(' L ')}`;
+    const dArea = `${dPath} L ${points[points.length - 1].x} ${height - padding} L ${points[0].x} ${height - padding} Z`;
+
+    return (
+      <div style={{ position: 'relative', width: '100%', overflowX: 'auto' }}>
+        <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} style={{ overflow: 'visible' }}>
+          <defs>
+            <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--color-primary)" stopOpacity="0.25" />
+              <stop offset="100%" stopColor="var(--color-primary)" stopOpacity="0.0" />
+            </linearGradient>
+          </defs>
+
+          <line x1={padding} y1={padding} x2={width - padding} y2={padding} stroke="rgba(255,255,255,0.03)" />
+          <line x1={padding} y1={height / 2} x2={width - padding} y2={height / 2} stroke="rgba(255,255,255,0.03)" />
+          <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="rgba(255,255,255,0.06)" strokeWidth={1} />
+
+          <path d={dArea} fill="url(#areaGrad)" />
+          <path d={dPath} fill="none" stroke="var(--color-primary)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+
+          {points.map((p, idx) => (
+            <circle
+              key={idx}
+              cx={p.x}
+              cy={p.y}
+              r={3}
+              fill={history[idx].isUp ? 'var(--color-success)' : 'var(--color-error)'}
+              stroke="var(--bg-base)"
+              strokeWidth={1}
+            />
+          ))}
+        </svg>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-muted)', marginTop: '8px' }}>
+          <span>{new Date(history[0].timestamp).toLocaleTimeString()}</span>
+          <span>Max: {maxLatency}ms</span>
+          <span>{new Date(history[history.length - 1].timestamp).toLocaleTimeString()}</span>
+        </div>
+      </div>
+    );
+  };
+
+
+
+  return (
+    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      
+      {/* 1. Header Summary Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+        <div className="glass-panel" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: 'rgba(0, 242, 254, 0.08)', border: '1px solid rgba(0, 242, 254, 0.2)' }}>
+            <Activity size={20} color="var(--color-primary)" />
+          </div>
+          <div>
+            <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1.2 }}>{targets.length}</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Configured Monitors</div>
+          </div>
+        </div>
+
+        <div className="glass-panel" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+            <Wifi size={20} color="var(--color-success)" />
+          </div>
+          <div>
+            <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--color-success)', lineHeight: 1.2 }}>{upCount}</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Online / Operational</div>
+          </div>
+        </div>
+
+        <div className="glass-panel" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+            <WifiOff size={20} color="var(--color-error)" />
+          </div>
+          <div>
+            <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--color-error)', lineHeight: 1.2 }}>{downCount}</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Down / Outages</div>
+          </div>
+        </div>
+
+        <div className="glass-panel" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: 'rgba(255, 153, 0, 0.08)', border: '1px solid rgba(255, 153, 0, 0.2)' }}>
+            <TrendingUp size={20} color="var(--color-aws)" />
+          </div>
+          <div>
+            <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1.2 }}>{uptimeRatio}%</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Overall System SLA</div>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. Layout Splits */}
+      <div style={{ display: 'grid', gridTemplateColumns: '330px 1fr', gap: '24px', minHeight: '580px' }}>
+        
+        {/* Left sidebar panel */}
+        <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px', height: 'fit-content' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+            <h4 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>Monitors</h4>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <button 
+                onClick={() => handleOpenPdfCustomize(null)}
+                className="btn btn-secondary"
+                style={{ padding: '5px 8px', fontSize: '11px', borderRadius: '6px', gap: '4px', whiteSpace: 'nowrap' }}
+                title="Download consolidated SLA report for ALL URLs in one PDF"
+              >
+                <FileText size={12} color="var(--color-primary)" /> SLA Report
+              </button>
+              <button 
+                onClick={() => {
+                  setEditingTargetId(null);
+                  setName('');
+                  setUrl('');
+                  setHeaders('');
+                  setBody('');
+                  setIntervalVal('');
+                  setMethod('GET');
+                  setTimeoutVal('');
+                  setRetries('');
+                  setRetryInterval('');
+                  setGroup('');
+                  setBodyEncoding('JSON');
+                  setIsFormVisible(true);
+                }}
+                className="btn btn-primary"
+                style={{ padding: '5px 10px', fontSize: '11px', borderRadius: '6px', gap: '4px', whiteSpace: 'nowrap' }}
+              >
+                <Plus size={12} /> Add New
+              </button>
+            </div>
+          </div>
+
+
+          {/* Search filter */}
+          <div style={{ position: 'relative' }}>
+            <Search size={14} color="var(--text-muted)" style={{ position: 'absolute', left: '10px', top: '10px' }} />
+            <input
+              type="text"
+              placeholder="Search monitors..."
+              className="input-field"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{ padding: '8px 10px 8px 30px', fontSize: '12px', borderRadius: '6px' }}
+            />
+          </div>
+
+          {/* Grouped monitor listing */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '520px', overflowY: 'auto' }}>
+            {loading ? (
+              <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+                Loading monitors...
+              </div>
+            ) : Object.keys(groupedTargets).length === 0 ? (
+              <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+                No monitors found.
+              </div>
+            ) : (
+              Object.keys(groupedTargets).map(grpName => (
+                <div key={grpName} style={{ display: 'flex', flexDirection: 'column', border: '1px solid var(--border-main)', borderRadius: '8px', overflow: 'hidden' }}>
+                  
+                  {/* Collapsible header */}
+                  <div 
+                    onClick={() => toggleGroup(grpName)}
+                    style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'space-between',
+                      padding: '8px 12px', 
+                      cursor: 'pointer',
+                      backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                      userSelect: 'none'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {collapsedGroups[grpName] ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                      <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)' }}>{grpName}</span>
+                    </div>
+                    <span style={{ fontSize: '10px', color: 'var(--text-muted)', backgroundColor: 'rgba(255,255,255,0.04)', padding: '1px 6px', borderRadius: '8px' }}>
+                      {groupedTargets[grpName].length}
+                    </span>
+                  </div>
+
+                  {/* Monitor children */}
+                  {!collapsedGroups[grpName] && (
+                    <div style={{ display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-input)' }}>
+
+                      {groupedTargets[grpName].map(t => {
+                        const isSelected = selectedTarget?.id === t.id;
+                        const isActive = t.status === 'active';
+                        
+                        return (
+                          <div
+                            key={t.id}
+                            onClick={() => {
+                              setSelectedTarget(t);
+                              setIsFormVisible(false);
+                            }}
+                            style={{
+                              padding: '10px 12px',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '6px',
+                              cursor: 'pointer',
+                              backgroundColor: isSelected ? 'rgba(0, 242, 254, 0.05)' : 'transparent',
+                              borderLeft: isSelected ? '3px solid var(--color-primary)' : '3px solid transparent',
+                              borderBottom: '1px solid rgba(255,255,255,0.02)',
+                              transition: 'all 0.15s ease'
+                            }}
+                            onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
+                            onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent'; }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                                <span style={{ 
+                                  width: '8px', 
+                                  height: '8px', 
+                                  borderRadius: '50%', 
+                                  backgroundColor: !isActive ? 'var(--text-muted)' : t.isUp ? 'var(--color-success)' : 'var(--color-error)',
+                                  boxShadow: isActive ? (t.isUp ? '0 0 6px var(--color-success)' : '0 0 6px var(--color-error)') : 'none'
+                                }} />
+                                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                                  {t.name}
+                                </span>
+                              </div>
+                              <span style={{ fontSize: '10px', color: !isActive ? 'var(--text-muted)' : t.isUp ? 'var(--color-success)' : 'var(--color-error)' }}>
+                                {!isActive ? 'Pause' : t.isUp ? 'Up' : 'Down'}
+                              </span>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                              {t.certExpDays !== undefined ? (
+                                <span style={{ 
+                                  fontSize: '9px', 
+                                  padding: '1px 4px', 
+                                  borderRadius: '4px',
+                                  backgroundColor: t.certExpDays < 15 ? 'rgba(239,68,68,0.1)' : 'rgba(16,185,129,0.1)',
+                                  color: t.certExpDays < 15 ? 'var(--color-error)' : 'var(--color-success)' 
+                                }}>
+                                  Cert: {t.certExpDays}d
+                                </span>
+                              ) : (
+                                <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>HTTP</span>
+                              )}
+                              {renderHeartbeatBar(t.recentPings, 'sm')}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+        </div>
+      </div>
+
+        {/* Right main panel */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          
+          {isFormVisible ? (
+            /* Create / Edit Form Panel */
+            <div className="glass-panel" style={{ padding: '24px' }}>
+              <h3 style={{ fontSize: '18px', color: 'var(--text-primary)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {editingTargetId ? <Edit size={18} color="var(--color-primary)" /> : <Plus size={18} color="var(--color-primary)" />}
+                {editingTargetId ? `Edit Monitor: ${name}` : 'Add New Monitor'}
+              </h3>
+
+              {/* Tabs */}
+              <div style={{ display: 'flex', gap: '12px', borderBottom: '1px solid var(--border-main)', marginBottom: '20px' }}>
+                <button
+                  type="button"
+                  onClick={() => setFormTab('general')}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    color: formTab === 'general' ? 'var(--color-primary)' : 'var(--text-secondary)',
+                    borderBottom: formTab === 'general' ? '2px solid var(--color-primary)' : '2px solid transparent',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  General
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormTab('http')}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    color: formTab === 'http' ? 'var(--color-primary)' : 'var(--text-secondary)',
+                    borderBottom: formTab === 'http' ? '2px solid var(--color-primary)' : '2px solid transparent',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  HTTP Options
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormTab('advanced')}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    color: formTab === 'advanced' ? 'var(--color-primary)' : 'var(--text-secondary)',
+                    borderBottom: formTab === 'advanced' ? '2px solid var(--color-primary)' : '2px solid transparent',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Advanced
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormTab('steps')}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    color: formTab === 'steps' ? 'var(--color-primary)' : 'var(--text-secondary)',
+                    borderBottom: formTab === 'steps' ? '2px solid var(--color-primary)' : '2px solid transparent',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Multi-Step Synthetics
+                </button>
+              </div>
+
+
+              <form onSubmit={handleSaveTarget} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {formError && (
+                  <div style={{ padding: '12px', borderRadius: '8px', backgroundColor: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)', color: 'var(--color-error)', fontSize: '13px' }}>
+                    {formError}
+                  </div>
+                )}
+
+                {formTab === 'general' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>FRIENDLY NAME</label>
+                      <input
+                        type="text"
+                        className="input-field"
+                        placeholder="e.g. Production API Gateway"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                      />
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>URL</label>
+                      <input
+                        type="url"
+                        className="input-field"
+                        placeholder="https://api.example.com/health"
+                        value={url}
+                        onChange={(e) => setUrl(e.target.value)}
+                      />
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>GROUP / CATEGORY</label>
+                        <input
+                          type="text"
+                          className="input-field"
+                          placeholder="e.g. Production, DevOps, UAT"
+                          value={group}
+                          onChange={(e) => setGroup(e.target.value)}
+                          list="group-suggestions"
+                        />
+                        <datalist id="group-suggestions">
+                          {Array.from(new Set(targets.map(t => t.group).filter(Boolean))).map(g => (
+                            <option key={g} value={g} />
+                          ))}
+                        </datalist>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>HEARTBEAT INTERVAL (SECONDS)</label>
+                        <input
+                          type="number"
+                          className="input-field"
+                          placeholder="e.g. 60"
+                          value={interval}
+                          min="10"
+                          onChange={(e) => setIntervalVal(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {formTab === 'http' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>HTTP METHOD</label>
+                        <select
+                          className="input-field"
+                          value={method}
+                          onChange={(e: any) => setMethod(e.target.value)}
+                          style={{ appearance: 'none' }}
+                        >
+                          <option value="GET">GET</option>
+                          <option value="POST">POST</option>
+                          <option value="PUT">PUT</option>
+                          <option value="PATCH">PATCH</option>
+                          <option value="DELETE">DELETE</option>
+                          <option value="HEAD">HEAD</option>
+                          <option value="OPTIONS">OPTIONS</option>
+                        </select>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>BODY ENCODING</label>
+                        <select
+                          className="input-field"
+                          value={bodyEncoding}
+                          disabled={method === 'GET' || method === 'HEAD' || method === 'OPTIONS'}
+                          onChange={(e) => setBodyEncoding(e.target.value)}
+                          style={{ appearance: 'none' }}
+                        >
+                          <option value="JSON">JSON (application/json)</option>
+                          <option value="XML">XML (application/xml)</option>
+                          <option value="TEXT">Text (text/plain)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>HEADERS (JSON OBJECT)</label>
+                      <textarea
+                        className="input-field"
+                        placeholder='{"Authorization": "Bearer token", "X-Custom-Header": "value"}'
+                        value={headers}
+                        onChange={(e) => setHeaders(e.target.value)}
+                        rows={3}
+                        style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', resize: 'vertical' }}
+                      />
+                    </div>
+
+                    {method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>REQUEST BODY</label>
+                        <textarea
+                          className="input-field"
+                          placeholder='{"status": "ping"}'
+                          value={body}
+                          onChange={(e) => setBody(e.target.value)}
+                          rows={3}
+                          style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', resize: 'vertical' }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {formTab === 'advanced' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>REQUEST TIMEOUT (S)</label>
+                        <input
+                          type="number"
+                          className="input-field"
+                          placeholder="e.g. 48"
+                          value={timeout}
+                          min="1"
+                          onChange={(e) => setTimeoutVal(e.target.value)}
+                        />
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>MAX RETRIES</label>
+                        <input
+                          type="number"
+                          className="input-field"
+                          placeholder="e.g. 0"
+                          value={retries}
+                          min="0"
+                          onChange={(e) => setRetries(e.target.value)}
+                        />
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>RETRY INTERVAL (S)</label>
+                        <input
+                          type="number"
+                          className="input-field"
+                          placeholder="e.g. 60"
+                          value={retryInterval}
+                          min="5"
+                          onChange={(e) => setRetryInterval(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+
+                {formTab === 'steps' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div style={{
+                      backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                      border: '1px solid rgba(99, 102, 241, 0.25)',
+                      borderRadius: '8px',
+                      padding: '12px',
+                      fontSize: '12px',
+                      color: '#a5b4fc',
+                      lineHeight: '1.4'
+                    }}>
+                      <strong>💡 Multi-Step Synthetic Workflow Engine:</strong> Chain sequential API calls together. You can extract variables (e.g. <code>token</code>) from step responses and use <code>{`{{token}}`}</code> in subsequent step headers, body, or URLs.
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                        Configured Sequential Steps ({scenarioSteps.length})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newStep: SyntheticStep = {
+                            id: `step-${Date.now()}`,
+                            name: `Step ${scenarioSteps.length + 1}`,
+                            method: 'GET',
+                            url: '',
+                            expectedStatus: 200,
+                            assertionPattern: '',
+                            extractVar: ''
+                          };
+                          setScenarioSteps([...scenarioSteps, newStep]);
+                        }}
+                        style={{
+                          backgroundColor: '#6366f1',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '6px',
+                          padding: '6px 12px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        <Plus size={14} /> Add Step
+                      </button>
+                    </div>
+
+                    {scenarioSteps.map((step, sIdx) => (
+                      <div
+                        key={step.id}
+                        style={{
+                          backgroundColor: 'rgba(0,0,0,0.25)',
+                          border: '1px solid var(--border-main)',
+                          borderRadius: '8px',
+                          padding: '14px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '10px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '12px', fontWeight: 700, color: '#38bdf8' }}>
+                            #{sIdx + 1} — {step.name}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setScenarioSteps(scenarioSteps.filter(s => s.id !== step.id))}
+                            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 100px', gap: '8px' }}>
+                          <select
+                            className="input-field"
+                            value={step.method || 'GET'}
+                            onChange={e => {
+                              const updated = [...scenarioSteps];
+                              updated[sIdx].method = e.target.value as any;
+                              setScenarioSteps(updated);
+                            }}
+                          >
+                            <option value="GET">GET</option>
+                            <option value="POST">POST</option>
+                            <option value="PUT">PUT</option>
+                            <option value="DELETE">DELETE</option>
+                            <option value="PATCH">PATCH</option>
+                          </select>
+
+                          <input
+                            type="text"
+                            className="input-field"
+                            placeholder="https://api.example.com/login"
+                            value={step.url || ''}
+                            onChange={e => {
+                              const updated = [...scenarioSteps];
+                              updated[sIdx].url = e.target.value;
+                              setScenarioSteps(updated);
+                            }}
+                          />
+
+                          <input
+                            type="number"
+                            className="input-field"
+                            placeholder="Expected 200"
+                            value={step.expectedStatus || 200}
+                            onChange={e => {
+                              const updated = [...scenarioSteps];
+                              updated[sIdx].expectedStatus = Number(e.target.value);
+                              setScenarioSteps(updated);
+                            }}
+                          />
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                          <input
+                            type="text"
+                            className="input-field"
+                            placeholder='Body Assertion Pattern (e.g. "status":"active")'
+                            value={step.assertionPattern || ''}
+                            onChange={e => {
+                              const updated = [...scenarioSteps];
+                              updated[sIdx].assertionPattern = e.target.value;
+                              setScenarioSteps(updated);
+                            }}
+                            style={{ fontSize: '11px' }}
+                          />
+
+                          <input
+                            type="text"
+                            className="input-field"
+                            placeholder='Extract JSON Var (e.g. token or access_token)'
+                            value={step.extractVar || ''}
+                            onChange={e => {
+                              const updated = [...scenarioSteps];
+                              updated[sIdx].extractVar = e.target.value;
+                              setScenarioSteps(updated);
+                            }}
+                            style={{ fontSize: '11px' }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+
+                <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="btn btn-primary"
+                    style={{ flex: 1, padding: '10px' }}
+                  >
+                    {isSubmitting ? 'Saving...' : editingTargetId ? 'Save Monitor Config' : 'Create Monitor'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsFormVisible(false)}
+                    className="btn btn-secondary"
+                    style={{ padding: '10px 16px' }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : selectedTarget ? (
+            /* Inspector View Panel */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              
+              {/* Header and Controller Section */}
+              <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
+                  <div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <span>Monitors</span>
+                      <span>/</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>{selectedTarget.group || 'General'}</span>
+                    </div>
+                    <h2 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', marginTop: '4px' }}>
+                      {selectedTarget.name}
+                    </h2>
+                    <a
+                      href={selectedTarget.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ fontSize: '13px', color: 'var(--color-primary)', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none', marginTop: '4px' }}
+                    >
+                      {selectedTarget.url} <ExternalLink size={12} />
+                    </a>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button
+                      onClick={() => handleCheckNow(selectedTarget.id)}
+                      disabled={checkingId === selectedTarget.id}
+                      className="btn btn-secondary"
+                      style={{ padding: '8px 12px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                      title="Ping Target Now"
+                    >
+                      <RefreshCw size={13} className={checkingId === selectedTarget.id ? 'spin-anim' : ''} style={checkingId === selectedTarget.id ? { animation: 'spin-anim 1s linear infinite' } : {}} />
+                      Check
+                    </button>
+
+                    <button
+                      onClick={() => handleToggleStatus(selectedTarget.id)}
+                      className="btn btn-secondary"
+                      style={{ 
+                        padding: '8px 12px', 
+                        fontSize: '13px', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: '6px',
+                        color: selectedTarget.status === 'active' ? 'var(--color-warning)' : 'var(--color-success)'
+                      }}
+                    >
+                      {selectedTarget.status === 'active' ? (
+                        <>
+                          <Pause size={13} /> Pause
+                        </>
+                      ) : (
+                        <>
+                          <Play size={13} /> Resume
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={() => handleStartEdit(selectedTarget)}
+                      className="btn btn-secondary"
+                      style={{ padding: '8px 12px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <Edit size={13} /> Edit
+                    </button>
+
+                    <button
+                      onClick={() => handleCloneTarget(selectedTarget.id)}
+                      className="btn btn-secondary"
+                      style={{ padding: '8px 12px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <Copy size={13} /> Clone
+                    </button>
+
+                    <button
+                      onClick={() => handleOpenPdfCustomize(selectedTarget)}
+                      className="btn btn-secondary"
+                      style={{ 
+                        padding: '8px 12px', 
+                        fontSize: '13px', 
+                        display: 'inline-flex', 
+                        alignItems: 'center', 
+                        gap: '6px',
+                        background: 'rgba(0, 242, 254, 0.05)',
+                        borderColor: 'rgba(0, 242, 254, 0.2)',
+                        color: 'var(--color-primary)'
+                      }}
+                      title="Customize and Download SLA Audit Report PDF"
+                    >
+                      <FileText size={13} /> PDF Report
+                    </button>
+
+                    <button
+                      onClick={() => handleDeleteTarget(selectedTarget.id)}
+                      className="btn btn-secondary"
+                      style={{ 
+                        padding: '8px 12px', 
+                        fontSize: '13px', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: '6px',
+                        backgroundColor: 'rgba(239, 68, 68, 0.05)',
+                        borderColor: 'rgba(239, 68, 68, 0.15)',
+                        color: 'var(--color-error)'
+                      }}
+                    >
+                      <Trash2 size={13} /> Delete
+                    </button>
+                  </div>
+                </div>
+
+                {/* Big Status Badge + Heartbeat Bar */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', borderTop: '1px solid var(--border-main)', paddingTop: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ 
+                        padding: '6px 14px', 
+                        borderRadius: '6px', 
+                        fontWeight: 800,
+                        fontSize: '14px',
+                        color: '#fff',
+                        backgroundColor: selectedTarget.status !== 'active' ? 'var(--text-muted)' : selectedTarget.isUp ? 'var(--color-success)' : 'var(--color-error)',
+                        boxShadow: selectedTarget.status === 'active' ? (selectedTarget.isUp ? 'var(--glow-success)' : 'var(--glow-error)') : 'none'
+                      }}>
+                        {selectedTarget.status !== 'active' ? 'PAUSED' : selectedTarget.isUp ? 'UP' : 'DOWN'}
+                      </span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        Interval: Check every {selectedTarget.interval}s (Timeout {selectedTarget.timeout}s, Retries {selectedTarget.retries})
+                      </span>
+                    </div>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Uptime (Recent)</span>
+                  </div>
+
+                  <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--bg-input)', padding: '12px 16px', borderRadius: '10px', border: '1px solid var(--border-main)' }}>
+                    <div style={{ flex: 1, marginRight: '16px', display: 'flex', alignItems: 'center' }}>
+                      {renderHeartbeatBar(selectedTarget.recentPings, 'lg')}
+                    </div>
+                    <span style={{ fontSize: '15px', fontWeight: 800, color: 'var(--color-success)', whiteSpace: 'nowrap' }}>
+                      {uptime24h}%
+                    </span>
+                  </div>
+
+                </div>
+              </div>
+
+              {/* SLA Analysis Selector */}
+              <div className="glass-panel" style={{ padding: '12px 16px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Clock size={14} color="var(--color-primary)" />
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>SLA Analysis Timeframe:</span>
+                </div>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {['24h', '1m', '3m', '6m', '1y', '2y'].map(period => {
+                    const labels: Record<string, string> = {
+                      '24h': '24 Hours',
+                      '1m': '30 Days',
+                      '3m': '90 Days',
+                      '6m': '6 Months',
+                      '1y': '1 Year',
+                      '2y': '2 Years'
+                    };
+                    const isActive = selectedSlaPeriod === period;
+                    return (
+                      <button
+                        key={period}
+                        type="button"
+                        onClick={() => setSelectedSlaPeriod(period)}
+                        className="btn"
+                        style={{
+                          padding: '4px 10px',
+                          fontSize: '11px',
+                          borderRadius: '6px',
+                          fontWeight: 600,
+                          background: isActive ? 'linear-gradient(135deg, #00f2fe 0%, #4facfe 100%)' : 'rgba(255,255,255,0.03)',
+                          color: isActive ? '#060913' : 'var(--text-secondary)',
+                          border: isActive ? '1px solid transparent' : '1px solid var(--border-main)',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        {labels[period]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Statistics Cards Row */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '16px' }}>
+                <div className="glass-panel" style={{ padding: '16px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Response (Current)</div>
+                  <div style={{ fontSize: '18px', fontWeight: 800, color: selectedTarget.isUp ? 'var(--color-success)' : 'var(--color-error)' }}>
+                    {selectedTarget.lastLatency ? `${selectedTarget.lastLatency} ms` : '—'}
+                  </div>
+                </div>
+
+                <div className="glass-panel" style={{ padding: '16px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                    Avg. Response ({selectedSlaPeriod === '24h' ? '24h' : selectedSlaPeriod})
+                  </div>
+                  <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--color-primary)' }}>
+                    {slaMetrics?.[selectedSlaPeriod]?.avgLatency !== undefined ? `${slaMetrics[selectedSlaPeriod].avgLatency} ms` : '—'}
+                  </div>
+                </div>
+
+                <div className="glass-panel" style={{ padding: '16px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                    Availability ({selectedSlaPeriod === '24h' ? '24h' : selectedSlaPeriod})
+                  </div>
+                  <div style={{ 
+                    fontSize: '18px', 
+                    fontWeight: 800, 
+                    color: slaMetrics?.[selectedSlaPeriod]?.ratio !== undefined 
+                      ? (slaMetrics[selectedSlaPeriod].ratio >= 99.9 ? 'var(--color-success)' : slaMetrics[selectedSlaPeriod].ratio >= 99.0 ? 'var(--color-warning)' : 'var(--color-error)') 
+                      : 'var(--text-muted)' 
+                  }}>
+                    {slaMetrics?.[selectedSlaPeriod]?.ratio !== undefined ? `${slaMetrics[selectedSlaPeriod].ratio.toFixed(2)}%` : '—'}
+                  </div>
+                </div>
+
+                <div className="glass-panel" style={{ padding: '16px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                    Total Checks ({selectedSlaPeriod === '24h' ? '24h' : selectedSlaPeriod})
+                  </div>
+                  <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--color-aws)' }}>
+                    {slaMetrics?.[selectedSlaPeriod]?.total !== undefined ? `${slaMetrics[selectedSlaPeriod].total}` : '—'}
+                  </div>
+                </div>
+
+                <div className="glass-panel" style={{ padding: '16px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '4px', justifyContent: 'center' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>SSL Cert Expiry</div>
+                  {selectedTarget.certExpDays !== undefined ? (
+                    <div>
+                      <div style={{ 
+                        fontSize: '16px', 
+                        fontWeight: 800, 
+                        color: selectedTarget.certExpDays < 10 ? 'var(--color-error)' : selectedTarget.certExpDays < 30 ? 'var(--color-warning)' : 'var(--color-success)' 
+                      }}>
+                        {selectedTarget.certExpDays} days
+                      </div>
+                      {selectedTarget.certExpiryDate && (
+                        <div style={{ fontSize: '9px', color: 'var(--text-muted)' }}>
+                          Exp: {new Date(selectedTarget.certExpiryDate).toLocaleDateString()}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-muted)' }}>N/A</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Latency History Graph */}
+              <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <h4 style={{ fontSize: '14px', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <TrendingUp size={14} color="var(--color-primary)" />
+                  Response Time History
+                </h4>
+                {loadingHistory ? (
+                  <div style={{ height: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
+                    Retrieving response times...
+                  </div>
+                ) : (
+                  renderSVGChart()
+                )}
+              </div>
+
+              {/* Check logs table */}
+              <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <h4 style={{ fontSize: '14px', color: 'var(--text-primary)' }}>Checks Log (Latest)</h4>
+                
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                        <th style={{ padding: '8px 12px' }}>Status</th>
+                        <th style={{ padding: '8px 12px' }}>Date Time</th>
+                        <th style={{ padding: '8px 12px', textAlign: 'right' }}>Latency</th>
+                        <th style={{ padding: '8px 12px' }}>Message / Code</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {loadingHistory ? (
+                        <tr>
+                          <td colSpan={4} style={{ textAlign: 'center', padding: '16px', color: 'var(--text-muted)' }}>Loading logs...</td>
+                        </tr>
+                      ) : history.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} style={{ textAlign: 'center', padding: '16px', color: 'var(--text-muted)' }}>No logs compiled.</td>
+                        </tr>
+                      ) : (
+                        history.slice().reverse().slice(0, logsVisible).map((h, i) => (
+                          <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.01)' }}>
+                            <td style={{ padding: '8px 12px' }}>
+                              <span style={{ 
+                                display: 'inline-flex', 
+                                alignItems: 'center', 
+                                gap: '4px',
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                color: h.isUp ? 'var(--color-success)' : 'var(--color-error)' 
+                              }}>
+                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: h.isUp ? 'var(--color-success)' : 'var(--color-error)' }} />
+                                {h.isUp ? 'UP' : 'DOWN'}
+                              </span>
+                            </td>
+                            <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>
+                              {new Date(h.timestamp).toLocaleString()}
+                            </td>
+                            <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+                              {h.latency} ms
+                            </td>
+                            <td style={{ padding: '8px 12px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                              {h.statusCode} {h.isUp ? 'OK' : 'Error'}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Show More button */}
+                {!loadingHistory && history.length > logsVisible && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, paddingTop: 4 }}>
+                    <div style={{ flex: 1, height: 1, backgroundColor: 'var(--border-main)' }} />
+                    <button
+                      onClick={() => setLogsVisible(v => v + 15)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '6px 18px', borderRadius: 8, cursor: 'pointer',
+                        fontSize: 12, fontWeight: 700,
+                        border: '1px solid var(--border-main)',
+                        backgroundColor: 'var(--bg-input)',
+                        color: 'var(--color-primary)',
+                        transition: 'all 0.15s'
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--color-primary)')}
+                      onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border-main)')}
+                    >
+                      ↓ Show 15 More
+                      <span style={{
+                        padding: '1px 7px', borderRadius: 4, fontSize: 10,
+                        backgroundColor: 'rgba(0,242,254,0.08)',
+                        border: '1px solid rgba(0,242,254,0.2)',
+                        color: 'var(--text-muted)'
+                      }}>
+                        {history.length - logsVisible} remaining
+                      </span>
+                    </button>
+                    <div style={{ flex: 1, height: 1, backgroundColor: 'var(--border-main)' }} />
+                  </div>
+                )}
+
+                {/* Collapse back when all shown */}
+                {!loadingHistory && history.length > 10 && logsVisible >= history.length && (
+                  <div style={{ display: 'flex', justifyContent: 'center' }}>
+                    <button
+                      onClick={() => setLogsVisible(10)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 5,
+                        padding: '4px 14px', borderRadius: 8, cursor: 'pointer',
+                        fontSize: 11, fontWeight: 600,
+                        border: '1px solid var(--border-main)',
+                        backgroundColor: 'transparent',
+                        color: 'var(--text-muted)',
+                      }}
+                    >
+                      ↑ Show less
+                    </button>
+                  </div>
+                )}
+
+              </div>
+
+              {/* Outage Incidents Timeline Table */}
+              <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h4 style={{ fontSize: '14px', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <AlertTriangle size={14} color="var(--color-warning)" />
+                    Outage Incidents History
+                  </h4>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    {incidents.length} incident(s) recorded
+                  </span>
+                </div>
+
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                        <th style={{ padding: '8px 12px' }}>State</th>
+                        <th style={{ padding: '8px 12px' }}>Outage Start</th>
+                        <th style={{ padding: '8px 12px' }}>Resolved Time</th>
+                        <th style={{ padding: '8px 12px', textAlign: 'right' }}>Duration</th>
+                        <th style={{ padding: '8px 12px' }}>Root Cause</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {loadingIncidents ? (
+                        <tr>
+                          <td colSpan={5} style={{ textAlign: 'center', padding: '16px', color: 'var(--text-muted)' }}>Loading incidents...</td>
+                        </tr>
+                      ) : incidents.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} style={{ textAlign: 'center', padding: '16px', color: 'var(--color-success)', fontWeight: 600 }}>
+                            ✓ 100% SLA Uptime — No outage incidents recorded!
+                          </td>
+                        </tr>
+                      ) : (
+                        incidents.map((inc) => (
+                          <tr key={inc.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.01)' }}>
+                            <td style={{ padding: '8px 12px' }}>
+                              <span style={{
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                fontSize: '10px',
+                                fontWeight: 700,
+                                backgroundColor: inc.isResolved ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.15)',
+                                color: inc.isResolved ? 'var(--color-success)' : 'var(--color-error)',
+                                border: `1px solid ${inc.isResolved ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)'}`
+                              }}>
+                                {inc.isResolved ? 'RESOLVED' : 'ACTIVE OUTAGE'}
+                              </span>
+                            </td>
+                            <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>
+                              {new Date(inc.startedAt).toLocaleString()}
+                            </td>
+                            <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>
+                              {inc.endedAt ? new Date(inc.endedAt).toLocaleString() : 'Ongoing'}
+                            </td>
+                            <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+                              {inc.durationSec ? `${inc.durationSec}s` : 'Active'}
+                            </td>
+                            <td style={{ padding: '8px 12px', color: 'var(--color-error)', fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                              {inc.statusCode ? `HTTP ${inc.statusCode}` : ''} {inc.errorReason || 'Service Unavailable'}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          ) : (
+            /* Empty State */
+            <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
+              <Activity size={48} color="var(--text-muted)" />
+              <div>
+                <h3 style={{ fontSize: '16px', color: 'var(--text-primary)' }}>Select a monitor</h3>
+                <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  Please select a monitor endpoint from the sidebar checklist to examine its details.
+                </p>
+              </div>
+            </div>
+          )}
+
+        </div>
+
+      </div>
+
+      {isPdfCustomizing && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(6, 9, 19, 0.85)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          animation: 'fade-in 0.2s ease-out'
+        }}>
+          <div className="glass-panel animate-fade-in" style={{
+            width: '100%',
+            maxWidth: '450px',
+            padding: '32px',
+            borderRadius: '16px',
+            border: '1px solid var(--border-main)',
+            boxShadow: '0 25px 60px rgba(0,0,0,0.65), inset 0 0 0 1px rgba(255,255,255,0.02)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '24px'
+          }}>
+            <div>
+              <h3 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '8px', letterSpacing: '-0.4px' }}>
+                Customize SLA Audit Report
+              </h3>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                {(pdfCompanyName || pdfCompanyLogo) ? (
+                  <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>
+                    ✓ Saved branding preferences are active & pre-filled. You can edit or remove them anytime.
+                  </span>
+                ) : (
+                  'Enhance your PDF report header by adding custom company branding. Your settings will be automatically saved for all future reports.'
+                )}
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.5px' }}>
+                  REPORT TARGET SCOPE
+                </label>
+                <select
+                  className="input-field"
+                  value={pdfScope}
+                  onChange={e => setPdfScope(e.target.value as any)}
+                  style={{ padding: '12px 14px', borderRadius: '8px' }}
+                >
+                  <option value="all">🌐 All Monitored URLs ({targets.length} Endpoints Consolidated Audit)</option>
+                  {(pdfTarget || selectedTarget) && (
+                    <option value="selected">🎯 Single Target Only ({(pdfTarget || selectedTarget)?.name})</option>
+                  )}
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.5px' }}>
+                  COMPANY NAME
+                </label>
+                <input
+                  type="text"
+                  className="input-field"
+                  placeholder="e.g. Acme Corporation"
+                  value={pdfCompanyName}
+                  onChange={e => setPdfCompanyName(e.target.value)}
+                  style={{ padding: '12px 14px', borderRadius: '8px' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.5px' }}>
+                  COMPANY LOGO IMAGE
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleLogoChange}
+                  style={{
+                    fontSize: '12px',
+                    color: 'var(--text-secondary)',
+                    backgroundColor: 'rgba(255,255,255,0.01)',
+                    padding: '12px',
+                    borderRadius: '8px',
+                    border: '1px dashed var(--border-main)',
+                    cursor: 'pointer',
+                    width: '100%',
+                    boxSizing: 'border-box'
+                  }}
+                />
+                
+                {pdfCompanyLogo && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px', backgroundColor: 'rgba(255,255,255,0.02)', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border-main)' }}>
+                    <img
+                      src={pdfCompanyLogo}
+                      alt="Logo Preview"
+                      style={{ height: '36px', maxWidth: '80px', objectFit: 'contain', borderRadius: '4px' }}
+                    />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>Logo selected</span>
+                      <button
+                        type="button"
+                        onClick={() => setPdfCompanyLogo('')}
+                        style={{ background: 'none', border: 'none', color: 'var(--color-error)', fontSize: '10px', cursor: 'pointer', fontWeight: 700, padding: 0, textAlign: 'left' }}
+                      >
+                        Remove logo
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'end', gap: '12px', marginTop: '6px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setIsPdfCustomizing(false)}
+                disabled={isGeneratingPdf}
+                style={{ padding: '12px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 650 }}
+              >
+                Cancel
+              </button>
+              
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleGenerateCustomPdf}
+                disabled={isGeneratingPdf}
+                style={{
+                  padding: '12px 24px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  background: 'linear-gradient(135deg, #00f2fe 0%, #4facfe 100%)',
+                  color: '#060913',
+                  border: 'none',
+                  boxShadow: '0 4px 15px rgba(0, 242, 254, 0.25)'
+                }}
+              >
+                {isGeneratingPdf ? 'Generating PDF...' : 'Download PDF'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+};

@@ -1,0 +1,120 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: api-gateway-monitor
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgres://nova:nova_secret@timescaledb:5432/nova_monitor
+      - KAFKA_BROKERS=kafka:9092
+      - LOG_ROTATION_INTERVAL=30 days
+    volumes:
+      - credentials_data:/app/credentials
+    depends_on:
+      redis:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - monitor-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: api-gateway-monitor-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - monitor-net
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: api-gateway-monitor-db
+    environment:
+      POSTGRES_DB: nova_monitor
+      POSTGRES_USER: nova
+      POSTGRES_PASSWORD: nova_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nova -d nova_monitor"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - monitor-net
+
+  # ── Kafka (KRaft mode — no Zookeeper required) ───────────────────────────────
+  # Uses the official Apache Kafka image with KRaft built-in.
+  # KRaft eliminates Zookeeper dependency; this is the standard from Kafka 3.3+.
+  kafka:
+    image: apache/kafka:3.8.1
+    container_name: api-gateway-monitor-kafka
+    ports:
+      - "29092:29092"   # external access from host (e.g. local dev tools)
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168   # 7-day topic log retention
+      KAFKA_LOG_RETENTION_BYTES: 1073741824  # 1 GiB max per topic
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"   # fixed cluster ID for KRaft
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - monitor-net
+
+volumes:
+  redis_data:
+    driver: local
+  credentials_data:
+    driver: local
+  timescale_data:
+    driver: local
+  kafka_data:
+    driver: local
+
+networks:
+  monitor-net:
+    driver: bridge
