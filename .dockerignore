@@ -5,6 +5,9 @@ dist-server
 .gitignore
 *.log
 credentials.json
+profiles.json
+*.db
 .env
 .env.*
+.gemini
 README.md

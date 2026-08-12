@@ -3,12 +3,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: api-gateway-monitor
+    container_name: pingsnest-app
     ports:
-      - "3000:3000"
+      - "3001:3001"
     environment:
       - NODE_ENV=production
-      - PORT=3000
+      - PORT=3001
       - REDIS_URL=redis://redis:6379
       - DATABASE_URL=postgres://nova:nova_secret@timescaledb:5432/nova_monitor
       - KAFKA_BROKERS=kafka:9092
@@ -23,7 +23,7 @@ services:
       kafka:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));\""]
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));\""]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -34,7 +34,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: api-gateway-monitor-redis
+    container_name: pingsnest-redis
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
@@ -51,7 +51,7 @@ services:
 
   timescaledb:
     image: timescale/timescaledb:latest-pg16
-    container_name: api-gateway-monitor-db
+    container_name: pingsnest-db
     environment:
       POSTGRES_DB: nova_monitor
       POSTGRES_USER: nova
@@ -70,11 +70,9 @@ services:
       - monitor-net
 
   # ── Kafka (KRaft mode — no Zookeeper required) ───────────────────────────────
-  # Uses the official Apache Kafka image with KRaft built-in.
-  # KRaft eliminates Zookeeper dependency; this is the standard from Kafka 3.3+.
   kafka:
     image: apache/kafka:3.8.1
-    container_name: api-gateway-monitor-kafka
+    container_name: pingsnest-kafka
     ports:
       - "29092:29092"   # external access from host (e.g. local dev tools)
     environment:
