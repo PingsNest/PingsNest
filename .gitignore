@@ -6,7 +6,7 @@ node_modules/
 dist/
 dist-server/
 dist-ssr/
-html_folder/dist-assets/
+html_folder/
 k8s/
 
 # Environment & Credentials (CRITICAL - DO NOT COMMIT SECRETS)

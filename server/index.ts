@@ -314,7 +314,7 @@ async function getAwsCredentialsFromReq(req: any) {
         secretAccessKey = decryptSecret(rows[0].secretAccessKeyEncrypted);
         region = rows[0].region || region;
       }
-    } catch {}
+    } catch { }
   }
 
   if (!accessKeyId || !secretAccessKey) {
@@ -325,7 +325,7 @@ async function getAwsCredentialsFromReq(req: any) {
         secretAccessKey = decryptSecret(rows[0].secretAccessKeyEncrypted);
         region = rows[0].region || region;
       }
-    } catch {}
+    } catch { }
   }
 
   if (!accessKeyId) accessKeyId = process.env.AWS_ACCESS_KEY_ID;
@@ -647,57 +647,6 @@ app.post('/api/lambda/remediate/security-bulk', async (req, res) => {
   }
 });
 
-// ─── Launch Subscriptions & Background Subscriber File Writer ────────────────
-const SUBSCRIBERS_FILE = path.join(process.cwd(), 'subscribers.txt');
-
-app.post('/api/subscribe', async (req, res) => {
-  try {
-    const { name, email } = req.body;
-    if (!email || typeof email !== 'string' || !email.includes('@')) {
-      return res.status(400).json({ error: 'Valid email address is required.' });
-    }
-
-    const timestamp = new Date().toISOString();
-    const subscriberLine = `[${timestamp}] Email: ${email.trim()} | Name: ${(name || 'Anonymous').trim()}\n`;
-
-    // 1. Append subscriber email to subscribers.txt file in background
-    fs.appendFile(SUBSCRIBERS_FILE, subscriberLine, (err) => {
-      if (err) console.error('[Subscriber File Write Error]:', err.message);
-      else console.log(`[Subscriber Saved to File]: ${email}`);
-    });
-
-    // 2. Persist to DB table if connected
-    try {
-      await query(
-        `INSERT INTO launch_subscribers (id, name, email, "subscribedAt")
-         VALUES ($1, $2, $3, NOW())
-         ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name`,
-        [`sub-${crypto.randomUUID()}`, name || '', email]
-      );
-    } catch {}
-
-    res.json({ success: true, message: 'Subscriber saved successfully!' });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/subscribers', authenticateToken, async (_req, res) => {
-  try {
-    let fileContent = '';
-    if (fs.existsSync(SUBSCRIBERS_FILE)) {
-      fileContent = fs.readFileSync(SUBSCRIBERS_FILE, 'utf8');
-    }
-    const subscribers = fileContent
-      .split('\n')
-      .filter(Boolean)
-      .map(line => line.trim());
-    res.json({ count: subscribers.length, subscribers, filePath: SUBSCRIBERS_FILE });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // ─── Audit Logs Endpoint ───────────────────────────────────────────────────
 app.get('/api/audit-logs', authenticateToken, async (req: any, res) => {
   try {
@@ -733,31 +682,31 @@ app.post('/api/lambda/alerts', async (req, res) => {
 const distPath = fs.existsSync(path.join(__dirname, '../../dist'))
   ? path.join(__dirname, '../../dist')
   : fs.existsSync(path.join(__dirname, '../../html_folder'))
-  ? path.join(__dirname, '../../html_folder')
-  : fs.existsSync(path.join(__dirname, '../html_folder'))
-  ? path.join(__dirname, '../html_folder')
-  : path.join(__dirname, '../dist');
+    ? path.join(__dirname, '../../html_folder')
+    : fs.existsSync(path.join(__dirname, '../html_folder'))
+      ? path.join(__dirname, '../html_folder')
+      : path.join(__dirname, '../dist');
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
 }
 
 // ─── Cache TTL constants (seconds) ────────────────────────────────────────────
 const TTL = {
-  APIS:         5 * 60,
-  ROUTES:       5 * 60,
-  METRICS:      45,
-  LOG_GROUPS:   5 * 60,
-  LAMBDAS:      5 * 60,
-  LOGS_LIVE:    10,
-  LOGS_HIST:    10 * 60,
-  PLAYBOOKS:    30,          // playbook list — read-heavy, rarely changes
-  PB_HISTORY:   15,          // playbook history — polling-heavy in UI
-  ALERTS:       60,          // alert rules — stable config data
-  ALERT_HIST:   15,          // alert history — poll-heavy in dashboard
-  FINOPS:       2 * 60,      // finops aggregation — expensive TimescaleDB query
-  ANOMALIES:    30,          // z-score detection — expensive stat computation
-  AUDIT_LOGS:   30,          // audit logs — read-only history
-  SLO:          30,          // slo targets — 30s TTL
+  APIS: 5 * 60,
+  ROUTES: 5 * 60,
+  METRICS: 45,
+  LOG_GROUPS: 5 * 60,
+  LAMBDAS: 5 * 60,
+  LOGS_LIVE: 10,
+  LOGS_HIST: 10 * 60,
+  PLAYBOOKS: 30,          // playbook list — read-heavy, rarely changes
+  PB_HISTORY: 15,          // playbook history — polling-heavy in UI
+  ALERTS: 60,          // alert rules — stable config data
+  ALERT_HIST: 15,          // alert history — poll-heavy in dashboard
+  FINOPS: 2 * 60,      // finops aggregation — expensive TimescaleDB query
+  ANOMALIES: 30,          // z-score detection — expensive stat computation
+  AUDIT_LOGS: 30,          // audit logs — read-only history
+  SLO: 30,          // slo targets — 30s TTL
 };
 
 // ─── Helper: Clean Lambda function name ───────────────────────────────────────
@@ -778,7 +727,7 @@ function cleanLambdaRoute(lambdaName: string): { route: string; method: string }
 const AUTH_SALT = 'nova_uptime_auth_salt_2026';
 
 // ─── Credentials & Multi-Account Profiles Helpers ─────────────────────────────
-const CREDS_PATH    = path.join(process.cwd(), 'credentials.json');
+const CREDS_PATH = path.join(process.cwd(), 'credentials.json');
 const PROFILES_PATH = path.join(process.cwd(), 'profiles.json');
 
 function loadProfilesFromFile(): any[] {
@@ -849,7 +798,7 @@ app.post('/api/aws/account-profiles', (req, res) => {
     }
 
     fs.writeFileSync(PROFILES_PATH, JSON.stringify(profiles, null, 2), 'utf8');
-    
+
     // Also update credentials.json if this is default or only profile
     if (isDefault || profiles.length === 1) {
       fs.writeFileSync(CREDS_PATH, JSON.stringify({
@@ -1243,7 +1192,7 @@ app.post('/api/aws/routes', async (req, res) => {
                   const integ = await c.send(new GetIntegrationCommand({ restApiId: apiId, resourceId: item.id!, httpMethod: m }));
                   integrationType = integ.type;
                   lambdaName = parseLambdaName(integ.uri, integ.type);
-                } catch {}
+                } catch { }
                 return { method: m, path: item.path!, lambdaName, integrationType };
               })());
             }
@@ -1255,7 +1204,7 @@ app.post('/api/aws/routes', async (req, res) => {
         routesList.push(...resolved);
       }
     }
- else {
+    else {
       const c = new ApiGatewayV2Client({ region, credentials });
       const r = await c.send(new GetRoutesCommand({ ApiId: apiId, MaxResults: '100' }));
       const integMap = new Map<string, { lambdaName?: string; type?: string }>();
@@ -1267,7 +1216,7 @@ app.post('/api/aws/routes', async (req, res) => {
             integMap.set(integ.IntegrationId, { lambdaName: lName, type: integ.IntegrationType });
           }
         });
-      } catch {}
+      } catch { }
 
       r.Items?.forEach(item => {
         if (!item.RouteKey) return;
@@ -1310,7 +1259,7 @@ app.post('/api/gateways/fleet-summary', async (req, res) => {
           apisList.push({ id: i.id, name: i.name, protocol: 'REST', stage: 'prod' });
         }
       });
-    } catch {}
+    } catch { }
 
     try {
       const r2 = await v2.send(new GetApisCommand({}));
@@ -1319,7 +1268,7 @@ app.post('/api/gateways/fleet-summary', async (req, res) => {
           apisList.push({ id: i.ApiId, name: i.Name, protocol: i.ProtocolType === 'WEBSOCKET' ? 'WEBSOCKET' : 'HTTP', stage: '$default' });
         }
       });
-    } catch {}
+    } catch { }
 
     if (apisList.length === 0) {
       apisList.push(
@@ -1337,11 +1286,11 @@ app.post('/api/gateways/fleet-summary', async (req, res) => {
       const mockP99Lat = Math.round(mockAvgLat * 2.8);
       const mockErr4xx = [0.2, 1.4, 0.5, 4.2, 0.1][idx % 5];
       const mockErr5xx = [0.0, 0.05, 0.0, 2.8, 0.0][idx % 5];
-      
+
       const healthStatus = mockErr5xx > 1.0 || mockP99Lat > 1000 ? 'CRITICAL' : mockErr4xx > 2.0 || mockAvgLat > 300 ? 'WARNING' : 'HEALTHY';
 
       const hasApigwLogGroup = idx % 2 === 0;
-      const logSource = hasApigwLogGroup 
+      const logSource = hasApigwLogGroup
         ? { type: 'apigateway_access_logs', label: 'API Gateway Access Logs', logGroup: `/aws/apigateway/${gw.id}-${gw.stage}` }
         : { type: 'lambda_fallback', label: 'Lambda Log Fallback Active', logGroup: `/aws/lambda/${gw.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-worker` };
 
@@ -1419,7 +1368,7 @@ import {
 setInterval(() => {
   try {
     checkAndTriggerEscalations();
-  } catch (e) {}
+  } catch (e) { }
 }, 30 * 1000);
 
 app.get('/api/alerts/history', async (req, res) => {
@@ -1646,7 +1595,7 @@ app.post('/api/webhooks/test', async (req, res) => {
     let responseText = '';
     try {
       responseText = await response.text();
-    } catch {}
+    } catch { }
 
     const errorDetail = responseText ? `: ${responseText.substring(0, 200)}` : '';
 
@@ -1980,7 +1929,7 @@ app.post('/api/notifications/test-template', async (req, res) => {
     });
 
     let respText = '';
-    try { respText = await response.text(); } catch {}
+    try { respText = await response.text(); } catch { }
     const errDetails = respText ? `: ${respText.substring(0, 180)}` : '';
 
     await logAlertDispatch({
@@ -2025,11 +1974,11 @@ app.post('/api/aws/metrics', async (req, res) => {
       { Name: 'Stage', Value: stage }
     ];
     const metricQueries = [
-      { Id: 'requests',            MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'Count',              Dimensions: dimensions }, Period: 60, Stat: 'Sum'     } },
-      { Id: 'latency',             MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'Latency',            Dimensions: dimensions }, Period: 60, Stat: 'Average' } },
+      { Id: 'requests', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'Count', Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
+      { Id: 'latency', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'Latency', Dimensions: dimensions }, Period: 60, Stat: 'Average' } },
       { Id: 'integration_latency', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'IntegrationLatency', Dimensions: dimensions }, Period: 60, Stat: 'Average' } },
-      { Id: 'errors_4xx',          MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: '4XXError',           Dimensions: dimensions }, Period: 60, Stat: 'Sum'     } },
-      { Id: 'errors_5xx',          MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: '5XXError',           Dimensions: dimensions }, Period: 60, Stat: 'Sum'     } },
+      { Id: 'errors_4xx', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: '4XXError', Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
+      { Id: 'errors_5xx', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: '5XXError', Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
     ];
     const cwResponse = await cwClient.send(new GetMetricDataCommand({ StartTime: startTime, EndTime: endTime, MetricDataQueries: metricQueries, ScanBy: 'TimestampAscending' }));
 
@@ -2066,10 +2015,10 @@ app.post('/api/aws/metrics', async (req, res) => {
     const last = result.dataPoints?.[result.dataPoints.length - 1];
     if (last) {
       const totalReqs = result.dataPoints.reduce((s: number, d: any) => s + (d.values[0] || 0), 0);
-      const total4xx  = result.dataPoints.reduce((s: number, d: any) => s + (d.values[3] || 0), 0);
-      const total5xx  = result.dataPoints.reduce((s: number, d: any) => s + (d.values[4] || 0), 0);
-      const avgLat    = result.dataPoints.reduce((s: number, d: any) => s + (d.values[1] || 0), 0) / Math.max(result.dataPoints.length, 1);
-      const errRate   = totalReqs > 0 ? Math.round(((total4xx + total5xx) / totalReqs) * 100) : 0;
+      const total4xx = result.dataPoints.reduce((s: number, d: any) => s + (d.values[3] || 0), 0);
+      const total5xx = result.dataPoints.reduce((s: number, d: any) => s + (d.values[4] || 0), 0);
+      const avgLat = result.dataPoints.reduce((s: number, d: any) => s + (d.values[1] || 0), 0) / Math.max(result.dataPoints.length, 1);
+      const errRate = totalReqs > 0 ? Math.round(((total4xx + total5xx) / totalReqs) * 100) : 0;
       evaluateAlerts(apiId, stage, {
         errorRate: errRate, avgLatency: Math.round(avgLat),
         totalRequests: totalReqs, status4xx: total4xx, status5xx: total5xx,
@@ -2099,7 +2048,7 @@ app.post('/api/aws/metrics', async (req, res) => {
             details: `API Gateway ${apiId} breached configured telemetry threshold on stage '${stage}'. Current value: ${currentValue} (Limit: ${thresholdValue}).`
           }).catch(e => console.warn('[Gateway Alert Dispatch Error]:', e));
         }
-      } catch (genErr) {}
+      } catch (genErr) { }
     }
   } catch (err: any) {
     console.error('Metrics error:', err.message);
@@ -2229,14 +2178,14 @@ app.post('/api/aws/logs', async (req, res) => {
           const s = await c.send(new GetStageCommand({ restApiId: apiId, stageName: stage }));
           const arn = s.accessLogSettings?.destinationArn;
           if (arn) { const p = arn.split(':log-group:'); if (p.length === 2) stageAccessLogGroup = p[1]; }
-        } catch {}
+        } catch { }
         if (!stageAccessLogGroup) {
           try {
             const c = new ApiGatewayV2Client({ region, credentials });
             const s = await c.send(new GetStageV2Command({ ApiId: apiId, StageName: stage }));
             const arn = s.AccessLogSettings?.DestinationArn;
             if (arn) { const p = arn.split(':log-group:'); if (p.length === 2) stageAccessLogGroup = p[1]; }
-          } catch {}
+          } catch { }
         }
         if (stageAccessLogGroup) targetLogGroups.push(stageAccessLogGroup);
         const functions = new Set<string>();
@@ -2244,7 +2193,7 @@ app.post('/api/aws/logs', async (req, res) => {
           const c = new ApiGatewayV2Client({ region, credentials });
           const r = await c.send(new GetIntegrationsCommand({ ApiId: apiId }));
           r.Items?.forEach(i => { const m = i.IntegrationUri?.match(/:function:([^/:]+)/); if (m) functions.add(m[1]); });
-        } catch {}
+        } catch { }
         try {
           const c = new APIGatewayClient({ region, credentials });
           const r = await c.send(new GetResourcesCommand({ restApiId: apiId, limit: 100 }));
@@ -2253,10 +2202,10 @@ app.post('/api/aws/logs', async (req, res) => {
               try {
                 const int = await c.send(new GetIntegrationCommand({ restApiId: apiId, resourceId: item.id!, httpMethod: method }));
                 const m = int.uri?.match(/:function:([^/:]+)/); if (m) functions.add(m[1]);
-              } catch {}
+              } catch { }
             }
           }
-        } catch {}
+        } catch { }
         try {
           const c = new APIGatewayClient({ region, credentials });
           const ex = await c.send(new GetExportCommand({ restApiId: apiId, stageName: stage, exportType: 'swagger', accepts: 'application/json' }));
@@ -2268,7 +2217,7 @@ app.post('/api/aws/logs', async (req, res) => {
                 const match = int?.uri?.match(/:function:([^/:]+)/); if (match) functions.add(match[1]);
               }
           }
-        } catch {}
+        } catch { }
         functions.forEach(name => targetLogGroups.push(`/aws/lambda/${name}`));
       }
       if (targetLogGroups.length > 0) {
@@ -2276,7 +2225,7 @@ app.post('/api/aws/logs', async (req, res) => {
         eventsList = await fetchGroupsInBatches(targetLogGroups, 5);
       } else {
         const fg = `API-Gateway-Execution-Logs_${apiId}/${stage}`;
-        try { eventsList = await fetchGroupEvents(fg); } catch {}
+        try { eventsList = await fetchGroupEvents(fg); } catch { }
       }
     } catch (err: any) { logsErrorMessage = err.message; }
   } else {
@@ -2319,7 +2268,7 @@ app.post('/api/aws/logs', async (req, res) => {
         const p = JSON.parse(cleanMsg);
         const sc = parseInt(p.statusCode || p.status || p.httpStatus || p.responseStatus || p.status_code);
         if (!isNaN(sc) && sc >= 100 && sc < 600) return sc;
-      } catch {}
+      } catch { }
     }
 
     // 3. Anchored Contextual Regex Patterns (Never match unanchored numbers like 402.91 ms duration)
@@ -2378,7 +2327,7 @@ app.post('/api/aws/logs', async (req, res) => {
           streamLastRequestId[logStreamName] = p.requestId;
           return;
         }
-      } catch {}
+      } catch { }
     }
 
     const reqIdMatch = message.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
@@ -2422,7 +2371,7 @@ app.post('/api/aws/logs', async (req, res) => {
           if (p.httpMethod && (p.path || p.resource)) { requestGroups[reqId].method = p.httpMethod; requestGroups[reqId].route = p.path || p.resource; }
           if (!requestGroups[reqId].route && p.requestContext) { const ctx = p.requestContext; const m = ctx.http?.method || ctx.httpMethod; const r = ctx.http?.path || ctx.resourcePath || p.rawPath; if (m && r) { requestGroups[reqId].method = m; requestGroups[reqId].route = r; } }
           if (!requestGroups[reqId].clientIp) { const ip = p.requestContext?.identity?.sourceIp || p.requestContext?.http?.sourceIp || p.headers?.['X-Forwarded-For'] || p.headers?.['x-forwarded-for']; if (ip) requestGroups[reqId].clientIp = ip.split(',')[0].trim(); }
-        } catch {}
+        } catch { }
       }
       if (!requestGroups[reqId].route) { const m = cleanMsg.match(/\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\/[^\s,]*)/); if (m) { requestGroups[reqId].method = m[1]; requestGroups[reqId].route = m[2]; } }
       if (!requestGroups[reqId].route) { const m = cleanMsg.match(/HTTP Method:\s*(\w+)[,\s]+Resource Path:\s*([^\s,]+)/); if (m) { requestGroups[reqId].method = m[1]; requestGroups[reqId].route = m[2]; } }
@@ -2476,8 +2425,8 @@ app.post('/api/aws/logs', async (req, res) => {
                  "clientIp"=EXCLUDED."clientIp", "userAgent"=EXCLUDED."userAgent",
                  "rawLogs"=EXCLUDED."rawLogs"`,
               [apiId, stage, log.id, log.timestamp, log.fullTime, log.method, log.route,
-               log.statusCode, log.latency, log.integrationLatency, log.cacheHit,
-               log.clientIp, log.userAgent, JSON.stringify(log.rawLogs || []), customLogGroup || 'default']
+                log.statusCode, log.latency, log.integrationLatency, log.cacheHit,
+                log.clientIp, log.userAgent, JSON.stringify(log.rawLogs || []), customLogGroup || 'default']
             ).catch(err => console.warn('[Logs DB] Row insert skipped:', err.message))
           )
         );
@@ -2710,9 +2659,9 @@ app.post('/api/aws/integrated-lambdas', async (req, res) => {
   if (cached) return res.json(cached);
   const credentials = { accessKeyId, secretAccessKey };
   const functions = new Set<string>();
-  try { const c = new ApiGatewayV2Client({ region, credentials }); const r = await c.send(new GetIntegrationsCommand({ ApiId: apiId })); r.Items?.forEach(i => { const m = i.IntegrationUri?.match(/:function:([^/:]+)/); if (m) functions.add(m[1]); }); } catch {}
-  try { const c = new APIGatewayClient({ region, credentials }); const r = await c.send(new GetResourcesCommand({ restApiId: apiId, limit: 100 })); for (const item of r.items || []) { for (const method of Object.keys(item.resourceMethods || {})) { try { const int = await c.send(new GetIntegrationCommand({ restApiId: apiId, resourceId: item.id!, httpMethod: method })); const m = int.uri?.match(/:function:([^/:]+)/); if (m) functions.add(m[1]); } catch {} } } } catch {}
-  try { const c = new APIGatewayClient({ region, credentials }); const ex = await c.send(new GetExportCommand({ restApiId: apiId, stageName: stage, exportType: 'swagger', accepts: 'application/json' })); if (ex.body) { const spec = JSON.parse(new TextDecoder().decode(ex.body)); for (const p of Object.values(spec?.paths || {}) as any[]) for (const m of Object.values(p) as any[]) { const int = m['x-amazon-apigateway-integration']; const match = int?.uri?.match(/:function:([^/:]+)/); if (match) functions.add(match[1]); } } } catch {}
+  try { const c = new ApiGatewayV2Client({ region, credentials }); const r = await c.send(new GetIntegrationsCommand({ ApiId: apiId })); r.Items?.forEach(i => { const m = i.IntegrationUri?.match(/:function:([^/:]+)/); if (m) functions.add(m[1]); }); } catch { }
+  try { const c = new APIGatewayClient({ region, credentials }); const r = await c.send(new GetResourcesCommand({ restApiId: apiId, limit: 100 })); for (const item of r.items || []) { for (const method of Object.keys(item.resourceMethods || {})) { try { const int = await c.send(new GetIntegrationCommand({ restApiId: apiId, resourceId: item.id!, httpMethod: method })); const m = int.uri?.match(/:function:([^/:]+)/); if (m) functions.add(m[1]); } catch { } } } } catch { }
+  try { const c = new APIGatewayClient({ region, credentials }); const ex = await c.send(new GetExportCommand({ restApiId: apiId, stageName: stage, exportType: 'swagger', accepts: 'application/json' })); if (ex.body) { const spec = JSON.parse(new TextDecoder().decode(ex.body)); for (const p of Object.values(spec?.paths || {}) as any[]) for (const m of Object.values(p) as any[]) { const int = m['x-amazon-apigateway-integration']; const match = int?.uri?.match(/:function:([^/:]+)/); if (match) functions.add(match[1]); } } } catch { }
   const lambdas = Array.from(functions).map(n => `/aws/lambda/${n}`);
   const result = { lambdas };
   await cacheSet(cacheKey, result, TTL.LAMBDAS);
@@ -2805,15 +2754,15 @@ async function saveTarget(t: UrlTarget): Promise<void> {
        assertions=EXCLUDED.assertions,
        "suppressAlertsUntil"=EXCLUDED."suppressAlertsUntil"`,
     [t.id, t.name, t.url, t.interval, t.method, t.headers || null, t.body || null,
-     t.bodyEncoding || 'JSON', t.status, t.timeout || 48, t.retries || 0, t.retryInterval || 60,
-     t.group || null, t.certExpiryDate || null, t.certExpDays ?? null, t.lastCheck || null,
-     t.lastStatusCode ?? null, t.lastStatusText || null, t.lastLatency ?? null,
-     typeof t.isUp === 'boolean' ? t.isUp : null,
-     JSON.stringify(t.recentPings || []),
-     JSON.stringify(t.steps || []),
-     t.ignoredStatusCodes || null,
-     JSON.stringify(t.assertions || []),
-     t.suppressAlertsUntil || null]
+    t.bodyEncoding || 'JSON', t.status, t.timeout || 48, t.retries || 0, t.retryInterval || 60,
+    t.group || null, t.certExpiryDate || null, t.certExpDays ?? null, t.lastCheck || null,
+    t.lastStatusCode ?? null, t.lastStatusText || null, t.lastLatency ?? null,
+    typeof t.isUp === 'boolean' ? t.isUp : null,
+    JSON.stringify(t.recentPings || []),
+    JSON.stringify(t.steps || []),
+    t.ignoredStatusCodes || null,
+    JSON.stringify(t.assertions || []),
+    t.suppressAlertsUntil || null]
   );
 }
 
@@ -2928,7 +2877,7 @@ async function pingTarget(target: UrlTarget): Promise<UrlTarget> {
       }
 
       let parsedHeaders: Record<string, string> = {};
-      if (stepHeaders) { try { parsedHeaders = JSON.parse(stepHeaders); } catch {} }
+      if (stepHeaders) { try { parsedHeaders = JSON.parse(stepHeaders); } catch { } }
 
       let stepStatusCode = 500;
       let stepStatusText = '';
@@ -2948,10 +2897,10 @@ async function pingTarget(target: UrlTarget): Promise<UrlTarget> {
         stepLatency = Date.now() - stepStartTime;
         stepStatusCode = res.status;
         stepStatusText = res.statusText;
-        
+
         const resText = await res.text();
         let resJson: any = null;
-        try { resJson = JSON.parse(resText); } catch {}
+        try { resJson = JSON.parse(resText); } catch { }
 
         // Assertion evaluation
         const expectedStatus = step.expectedStatus || 200;
@@ -3007,7 +2956,7 @@ async function pingTarget(target: UrlTarget): Promise<UrlTarget> {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), (target.timeout || 48) * 1000);
       let parsedHeaders: Record<string, string> = {};
-      if (target.headers) { try { parsedHeaders = JSON.parse(target.headers); } catch {} }
+      if (target.headers) { try { parsedHeaders = JSON.parse(target.headers); } catch { } }
       if (target.body && target.method !== 'GET' && target.method !== 'HEAD') {
         const hasContentType = Object.keys(parsedHeaders).some(k => k.toLowerCase() === 'content-type');
         if (!hasContentType) parsedHeaders['Content-Type'] = target.bodyEncoding === 'XML' ? 'application/xml' : target.bodyEncoding === 'TEXT' ? 'text/plain' : 'application/json';
@@ -3411,7 +3360,7 @@ app.get('/api/url-monitor/incidents/all', requireAuth, async (_req, res) => {
 app.get('/api/status/public', async (_req, res) => {
   try {
     const targets = await loadTargets();
-    
+
     let incidents: any[] = [];
     try {
       const { rows } = await query(
@@ -3430,7 +3379,7 @@ app.get('/api/status/public', async (_req, res) => {
         errorReason: r.errorReason,
         isResolved: r.isResolved
       }));
-    } catch {}
+    } catch { }
 
     const sanitizedTargets = targets.map(t => ({
       id: t.id,
@@ -3450,7 +3399,7 @@ app.get('/api/status/public', async (_req, res) => {
     try {
       const { rows: setRows } = await query('SELECT * FROM status_portal_settings WHERE id = $1', ['default']);
       if (setRows.length > 0) settings = setRows[0];
-    } catch {}
+    } catch { }
 
     res.json({
       success: true,
@@ -3699,10 +3648,10 @@ app.delete('/api/url-monitor/maintenance/:id', requireAuth, async (req, res) => 
 function generateSvgBadge(label: string, value: string, colorHex: string): string {
   const cleanLabel = String(label).replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const cleanValue = String(value).replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  
+
   const labelLen = cleanLabel.length;
   const valueLen = cleanValue.length;
-  
+
   const labelWidth = Math.max(38, Math.round(labelLen * 6.6 + 12));
   const valueWidth = Math.max(38, Math.round(valueLen * 6.6 + 12));
   const totalWidth = labelWidth + valueWidth;
@@ -4038,7 +3987,7 @@ app.all('/api/url-monitor/report/pdf-all', requireAuth, async (req, res) => {
 
     const doc = new PDFDocument({ margin: 40, size: 'A4' });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="official-consolidated-sla-report-${now.toISOString().slice(0,10)}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="official-consolidated-sla-report-${now.toISOString().slice(0, 10)}.pdf"`);
     doc.pipe(res);
 
     // ── Official Header Banner ──
@@ -4333,7 +4282,7 @@ async function runBackgroundGatewayMonitoring(): Promise<void> {
 
         // Evaluate ML latency anomaly engine on route latencies
         if (gwId !== '*') {
-          await detectLatencyAnomalies(gwId, stage).catch(() => {});
+          await detectLatencyAnomalies(gwId, stage).catch(() => { });
         }
 
         // Update last polled status
@@ -4346,7 +4295,7 @@ async function runBackgroundGatewayMonitoring(): Promise<void> {
         await query(
           `UPDATE monitored_gateways SET "lastPolledAt" = NOW(), "lastStatus" = $1 WHERE id = $2`,
           ['WARNING', scope.id]
-        ).catch(() => {});
+        ).catch(() => { });
       }
     }
   } catch (err: any) {
@@ -4565,7 +4514,7 @@ app.get('/api/status/badge/:id.svg', async (req, res) => {
       labelText = 'outage';
       badgeColor = '#ef4444';
     }
-  } catch {}
+  } catch { }
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="20" role="img" aria-label="pingsnest: ${labelText}">
     <linearGradient id="b" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient>
@@ -4677,7 +4626,7 @@ const startServer = () => {
 initDb()
   .then(async () => {
     // Start Kafka consumer (non-fatal if Kafka is unavailable)
-    await startConsumer().catch(() => {});
+    await startConsumer().catch(() => { });
 
     if (kafkaEnabled) {
       console.log('[Kafka] Pipeline active — broker(s):', process.env.KAFKA_BROKERS);

@@ -598,6 +598,52 @@ app.post('/api/lambda/remediate/security-bulk', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+// ─── Launch Subscriptions & Background Subscriber File Writer ────────────────
+const SUBSCRIBERS_FILE = path.join(process.cwd(), 'subscribers.txt');
+app.post('/api/subscribe', async (req, res) => {
+    try {
+        const { name, email } = req.body;
+        if (!email || typeof email !== 'string' || !email.includes('@')) {
+            return res.status(400).json({ error: 'Valid email address is required.' });
+        }
+        const timestamp = new Date().toISOString();
+        const subscriberLine = `[${timestamp}] Email: ${email.trim()} | Name: ${(name || 'Anonymous').trim()}\n`;
+        // 1. Append subscriber email to subscribers.txt file in background
+        fs.appendFile(SUBSCRIBERS_FILE, subscriberLine, (err) => {
+            if (err)
+                console.error('[Subscriber File Write Error]:', err.message);
+            else
+                console.log(`[Subscriber Saved to File]: ${email}`);
+        });
+        // 2. Persist to DB table if connected
+        try {
+            await query(`INSERT INTO launch_subscribers (id, name, email, "subscribedAt")
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name`, [`sub-${crypto.randomUUID()}`, name || '', email]);
+        }
+        catch { }
+        res.json({ success: true, message: 'Subscriber saved successfully!' });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.get('/api/subscribers', authenticateToken, async (_req, res) => {
+    try {
+        let fileContent = '';
+        if (fs.existsSync(SUBSCRIBERS_FILE)) {
+            fileContent = fs.readFileSync(SUBSCRIBERS_FILE, 'utf8');
+        }
+        const subscribers = fileContent
+            .split('\n')
+            .filter(Boolean)
+            .map(line => line.trim());
+        res.json({ count: subscribers.length, subscribers, filePath: SUBSCRIBERS_FILE });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 // ─── Audit Logs Endpoint ───────────────────────────────────────────────────
 app.get('/api/audit-logs', authenticateToken, async (req, res) => {
     try {
