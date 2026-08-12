@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   Activity, Wifi, WifiOff, Trash2, Play, Pause, Plus, RefreshCw, 
   TrendingUp, Edit, Copy, ChevronDown, ChevronRight, Search, 
-  ExternalLink, FileText, Clock, AlertTriangle
+  ExternalLink, FileText, Clock, AlertTriangle, Award, Check,
+  Bell, Calendar, Zap
 } from 'lucide-react';
 
 export interface SyntheticStep {
@@ -46,8 +47,8 @@ interface UrlTarget {
   tcpLatency?: number;
   tlsLatency?: number;
   ttfbLatency?: number;
+  ignoredStatusCodes?: string;
 }
-
 
 export interface UrlIncident {
   id: string;
@@ -83,6 +84,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
   const [logsVisible, setLogsVisible] = useState(10);  // show 10 initially, +15 per click
   const [incidents, setIncidents] = useState<UrlIncident[]>([]);
   const [loadingIncidents, setLoadingIncidents] = useState(false);
+  const [incidentsVisible, setIncidentsVisible] = useState(5);
   const [slaMetrics, setSlaMetrics] = useState<Record<string, { ratio: number; total: number; up: number; avgLatency: number }> | null>(null);
   const [selectedSlaPeriod, setSelectedSlaPeriod] = useState<string>('24h');
 
@@ -93,6 +95,27 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
   const [pdfCompanyLogo, setPdfCompanyLogo] = useState(() => localStorage.getItem('nova_pdf_company_logo') || '');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [pdfScope, setPdfScope] = useState<'selected' | 'all'>('all');
+
+  // Badge Service State
+  const [badgeTarget, setBadgeTarget] = useState<UrlTarget | null>(null);
+  const [copiedBadgeKey, setCopiedBadgeKey] = useState<string | null>(null);
+  const [badgePeriod, setBadgePeriod] = useState<'24h' | '7d' | '30d' | '90d' | '365d'>('24h');
+  const [customBaseUrl, setCustomBaseUrl] = useState(() => localStorage.getItem('nova_public_base_url') || window.location.origin);
+
+  // Webhooks & Maintenance Modal States
+  const [isAlertModalOpen, setIsAlertModalOpen] = useState(false);
+  const [alertDestinations, setAlertDestinations] = useState<any[]>([]);
+  const [newAlertName, setNewAlertName] = useState('');
+  const [newAlertType, setNewAlertType] = useState<'slack' | 'discord' | 'pagerduty' | 'msteams' | 'custom'>('slack');
+  const [newAlertUrl, setNewAlertUrl] = useState('');
+  const [testingAlertId, setTestingAlertId] = useState<string | null>(null);
+
+  const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
+  const [maintenanceWindows, setMaintenanceWindows] = useState<any[]>([]);
+  const [maintTitle, setMaintTitle] = useState('');
+  const [maintDesc, setMaintDesc] = useState('');
+  const [maintStartTime, setMaintStartTime] = useState('');
+  const [maintEndTime, setMaintEndTime] = useState('');
 
   // Search and Layout
   const [searchQuery, setSearchQuery] = useState('');
@@ -113,6 +136,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
   const [retryInterval, setRetryInterval] = useState('');
   const [group, setGroup] = useState('');
   const [bodyEncoding, setBodyEncoding] = useState('JSON');
+  const [ignoredStatusCodes, setIgnoredStatusCodes] = useState('');
   const [scenarioSteps, setScenarioSteps] = useState<SyntheticStep[]>([]);
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -190,23 +214,127 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
     }
   };
 
+  const fetchAlerts = async () => {
+    try {
+      const res = await authFetch('/api/url-monitor/alerts');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.destinations) setAlertDestinations(data.destinations);
+      }
+    } catch {}
+  };
+
+  const fetchMaintenance = async () => {
+    try {
+      const res = await authFetch('/api/url-monitor/maintenance');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.windows) setMaintenanceWindows(data.windows);
+      }
+    } catch {}
+  };
+
+  const handleAddAlert = async () => {
+    if (!newAlertName || !newAlertUrl) return;
+    try {
+      const res = await authFetch('/api/url-monitor/alerts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newAlertName, type: newAlertType, url: newAlertUrl })
+      });
+      if (res.ok) {
+        setNewAlertName('');
+        setNewAlertUrl('');
+        await fetchAlerts();
+      }
+    } catch {}
+  };
+
+  const handleDeleteAlert = async (id: string) => {
+    try {
+      await authFetch(`/api/url-monitor/alerts/${id}`, { method: 'DELETE' });
+      await fetchAlerts();
+    } catch {}
+  };
+
+  const handleTestAlert = async (id: string) => {
+    setTestingAlertId(id);
+    try {
+      await authFetch('/api/url-monitor/alerts/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+    } catch {} finally {
+      setTimeout(() => setTestingAlertId(null), 1500);
+    }
+  };
+
+  const handleAddMaintenance = async () => {
+    if (!maintTitle || !maintStartTime || !maintEndTime) return;
+    try {
+      const res = await authFetch('/api/url-monitor/maintenance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetId: selectedTarget?.id || null,
+          title: maintTitle,
+          description: maintDesc,
+          startTime: maintStartTime,
+          endTime: maintEndTime
+        })
+      });
+      if (res.ok) {
+        setMaintTitle('');
+        setMaintDesc('');
+        setMaintStartTime('');
+        setMaintEndTime('');
+        await fetchMaintenance();
+      }
+    } catch {}
+  };
+
+  const handleDeleteMaintenance = async (id: string) => {
+    try {
+      await authFetch(`/api/url-monitor/maintenance/${id}`, { method: 'DELETE' });
+      await fetchMaintenance();
+    } catch {}
+  };
+
   useEffect(() => {
     if (token) {
       fetchTargets();
+      fetchAlerts();
+      fetchMaintenance();
     }
   }, [token]);
+
+  const [sloData, setSloData] = useState<any>(null);
+
+  const fetchSloData = async (targetId: string) => {
+    try {
+      const res = await authFetch(`/api/url-monitor/slo/${targetId}?slo=99.9`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.slo) setSloData(data.slo);
+      }
+    } catch {}
+  };
 
   useEffect(() => {
     if (token && selectedTarget) {
       setLogsVisible(10); // reset pagination when switching targets
+      setIncidentsVisible(5);
       fetchHistory(selectedTarget.id);
       fetchSla(selectedTarget.id);
       fetchIncidents(selectedTarget.id);
+      fetchSloData(selectedTarget.id);
       
       const handle = window.setInterval(() => {
         fetchHistory(selectedTarget.id);
         fetchSla(selectedTarget.id);
         fetchIncidents(selectedTarget.id);
+        fetchSloData(selectedTarget.id);
       }, 10000);
       return () => clearInterval(handle);
     }
@@ -295,6 +423,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
       retryInterval: Number(retryInterval),
       group: group.trim(),
       bodyEncoding,
+      ignoredStatusCodes: ignoredStatusCodes.trim(),
       steps: scenarioSteps
     };
 
@@ -324,6 +453,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
         setRetryInterval('');
         setGroup('');
         setBodyEncoding('JSON');
+        setIgnoredStatusCodes('');
         setScenarioSteps([]);
         setEditingTargetId(null);
         setIsFormVisible(false);
@@ -411,6 +541,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
     setRetryInterval(String(target.retryInterval || 60));
     setGroup(target.group || '');
     setBodyEncoding(target.bodyEncoding || 'JSON');
+    setIgnoredStatusCodes(target.ignoredStatusCodes || '');
     setScenarioSteps(target.steps || []);
     setFormTab('general');
     setIsFormVisible(true);
@@ -717,47 +848,66 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
       </div>
 
       {/* 2. Layout Splits */}
-      <div style={{ display: 'grid', gridTemplateColumns: '330px 1fr', gap: '24px', minHeight: '580px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '350px 1fr', gap: '24px', minHeight: '580px' }}>
         
         {/* Left sidebar panel */}
-        <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px', height: 'fit-content' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-            <h4 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>Monitors</h4>
-            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-              <button 
-                onClick={() => handleOpenPdfCustomize(null)}
-                className="btn btn-secondary"
-                style={{ padding: '5px 8px', fontSize: '11px', borderRadius: '6px', gap: '4px', whiteSpace: 'nowrap' }}
-                title="Download consolidated SLA report for ALL URLs in one PDF"
-              >
-                <FileText size={12} color="var(--color-primary)" /> SLA Report
-              </button>
-              <button 
-                onClick={() => {
-                  setEditingTargetId(null);
-                  setName('');
-                  setUrl('');
-                  setHeaders('');
-                  setBody('');
-                  setIntervalVal('');
-                  setMethod('GET');
-                  setTimeoutVal('');
-                  setRetries('');
-                  setRetryInterval('');
-                  setGroup('');
-                  setBodyEncoding('JSON');
-                  setIsFormVisible(true);
-                }}
-                className="btn btn-primary"
-                style={{ padding: '5px 10px', fontSize: '11px', borderRadius: '6px', gap: '4px', whiteSpace: 'nowrap' }}
-              >
-                <Plus size={12} /> Add New
-              </button>
-            </div>
+        <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', height: 'fit-content' }}>
+          
+          {/* Header Row */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h4 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Monitors</h4>
+            <button 
+              onClick={() => {
+                setEditingTargetId(null);
+                setName('');
+                setUrl('');
+                setHeaders('');
+                setBody('');
+                setIntervalVal('');
+                setMethod('GET');
+                setTimeoutVal('');
+                setRetries('');
+                setRetryInterval('');
+                setGroup('');
+                setBodyEncoding('JSON');
+                setIsFormVisible(true);
+              }}
+              className="btn btn-primary"
+              style={{ padding: '6px 12px', fontSize: '12px', borderRadius: '8px', gap: '5px' }}
+            >
+              <Plus size={13} /> Add Target
+            </button>
           </div>
 
+          {/* Quick Action Toolbar */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px' }}>
+            <button 
+              onClick={() => setIsAlertModalOpen(true)}
+              className="btn btn-secondary"
+              style={{ padding: '6px 8px', fontSize: '11px', borderRadius: '6px', gap: '4px', justifyContent: 'center' }}
+              title="Manage Alert Webhooks (Slack, Discord, PagerDuty, MS Teams)"
+            >
+              <Bell size={12} color="var(--color-aws)" /> Webhooks
+            </button>
+            <button 
+              onClick={() => setIsMaintenanceModalOpen(true)}
+              className="btn btn-secondary"
+              style={{ padding: '6px 8px', fontSize: '11px', borderRadius: '6px', gap: '4px', justifyContent: 'center' }}
+              title="Schedule Maintenance Windows"
+            >
+              <Calendar size={12} color="var(--color-success)" /> Maint
+            </button>
+            <button 
+              onClick={() => handleOpenPdfCustomize(null)}
+              className="btn btn-secondary"
+              style={{ padding: '6px 8px', fontSize: '11px', borderRadius: '6px', gap: '4px', justifyContent: 'center' }}
+              title="Download consolidated SLA report for ALL URLs in one PDF"
+            >
+              <FileText size={12} color="var(--color-primary)" /> SLA PDF
+            </button>
+          </div>
 
-          {/* Search filter */}
+          {/* Search Bar */}
           <div style={{ position: 'relative' }}>
             <Search size={14} color="var(--text-muted)" style={{ position: 'absolute', left: '10px', top: '10px' }} />
             <input
@@ -1128,6 +1278,22 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
                         />
                       </div>
                     </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingTop: '4px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        IGNORE STATUS CODES / RANGES (EXP. HEALTHY STATUS CODES)
+                      </label>
+                      <input
+                        type="text"
+                        className="input-field"
+                        placeholder="e.g. 300, 301, 300-399, 404"
+                        value={ignoredStatusCodes}
+                        onChange={(e) => setIgnoredStatusCodes(e.target.value)}
+                      />
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                        Treat responses matching these status codes or ranges as healthy <strong>UP</strong> status instead of an outage/failure. Supports exact codes and ranges separated by commas e.g. <code>300, 301, 300-399</code> or <code>401, 404, 500-503</code>.
+                      </span>
+                    </div>
                   </div>
                 )}
 
@@ -1399,6 +1565,24 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
                     </button>
 
                     <button
+                      onClick={() => setBadgeTarget(selectedTarget)}
+                      className="btn btn-secondary"
+                      style={{ 
+                        padding: '8px 12px', 
+                        fontSize: '13px', 
+                        display: 'inline-flex', 
+                        alignItems: 'center', 
+                        gap: '6px',
+                        background: 'rgba(255, 153, 0, 0.05)',
+                        borderColor: 'rgba(255, 153, 0, 0.2)',
+                        color: 'var(--color-aws)'
+                      }}
+                      title="Get live SVG status badges for GitHub README or Website embeds"
+                    >
+                      <Award size={13} /> Badges
+                    </button>
+
+                    <button
                       onClick={() => handleDeleteTarget(selectedTarget.id)}
                       className="btn btn-secondary"
                       style={{ 
@@ -1432,8 +1616,13 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
                       }}>
                         {selectedTarget.status !== 'active' ? 'PAUSED' : selectedTarget.isUp ? 'UP' : 'DOWN'}
                       </span>
-                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                        Interval: Check every {selectedTarget.interval}s (Timeout {selectedTarget.timeout}s, Retries {selectedTarget.retries})
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                        <span>Interval: Check every {selectedTarget.interval}s (Timeout {selectedTarget.timeout}s, Retries {selectedTarget.retries})</span>
+                        {selectedTarget.ignoredStatusCodes && (
+                          <span style={{ padding: '2px 8px', borderRadius: '4px', background: 'rgba(0, 242, 254, 0.1)', color: 'var(--color-primary)', fontSize: '11px', border: '1px solid rgba(0, 242, 254, 0.2)', fontWeight: 600 }}>
+                            Ignored Status Codes: {selectedTarget.ignoredStatusCodes}
+                          </span>
+                        )}
                       </span>
                     </div>
                     <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Uptime (Recent)</span>
@@ -1539,22 +1728,52 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
                   <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>SSL Cert Expiry</div>
                   {selectedTarget.certExpDays !== undefined ? (
                     <div>
-                      <div style={{ 
+                      <span style={{ 
                         fontSize: '16px', 
                         fontWeight: 800, 
-                        color: selectedTarget.certExpDays < 10 ? 'var(--color-error)' : selectedTarget.certExpDays < 30 ? 'var(--color-warning)' : 'var(--color-success)' 
+                        color: selectedTarget.certExpDays < 15 ? 'var(--color-error)' : selectedTarget.certExpDays < 30 ? 'var(--color-warning)' : 'var(--color-success)' 
                       }}>
-                        {selectedTarget.certExpDays} days
-                      </div>
-                      {selectedTarget.certExpiryDate && (
-                        <div style={{ fontSize: '9px', color: 'var(--text-muted)' }}>
-                          Exp: {new Date(selectedTarget.certExpiryDate).toLocaleDateString()}
-                        </div>
-                      )}
+                        {selectedTarget.certExpDays} Days
+                      </span>
                     </div>
                   ) : (
                     <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-muted)' }}>N/A</div>
                   )}
+                </div>
+              </div>
+
+              {/* SLO Error Budget Card */}
+              <div className="glass-panel" style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Award size={16} color="var(--color-aws)" />
+                    <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-primary)' }}>
+                      SLO Error Budget & Burn Rate (30-Day Window)
+                    </span>
+                  </div>
+                  <span style={{ 
+                    fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '12px',
+                    backgroundColor: sloData?.burnRateStatus === 'CRITICAL_BURN' ? 'rgba(239,68,68,0.15)' : 'rgba(16,185,129,0.15)',
+                    color: sloData?.burnRateStatus === 'CRITICAL_BURN' ? '#ef4444' : '#34d399',
+                    border: `1px solid ${sloData?.burnRateStatus === 'CRITICAL_BURN' ? 'rgba(239,68,68,0.3)' : 'rgba(16,185,129,0.3)'}`
+                  }}>
+                    {sloData?.burnRateStatus || 'NORMAL BURN'}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                    <span>Error Budget Remaining: <strong>{sloData?.remainingBudgetPercent ?? 100}%</strong></span>
+                    <span>{(sloData?.consumedDownSec ? (sloData.consumedDownSec / 60).toFixed(1) : '0.0')} / 43.2 min Downtime Consumed</span>
+                  </div>
+                  <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--bg-input)', borderRadius: '4px', overflow: 'hidden', border: '1px solid var(--border-main)' }}>
+                    <div style={{
+                      width: `${sloData?.remainingBudgetPercent ?? 100}%`,
+                      height: '100%',
+                      backgroundColor: (sloData?.remainingBudgetPercent ?? 100) < 20 ? '#ef4444' : (sloData?.remainingBudgetPercent ?? 100) < 50 ? '#f59e0b' : '#34d399',
+                      transition: 'width 0.3s ease'
+                    }} />
+                  </div>
                 </div>
               </div>
 
@@ -1646,7 +1865,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
                       onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--color-primary)')}
                       onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border-main)')}
                     >
-                      ↓ Show 15 More
+                      Show 15 More
                       <span style={{
                         padding: '1px 7px', borderRadius: 4, fontSize: 10,
                         backgroundColor: 'rgba(0,242,254,0.08)',
@@ -1674,7 +1893,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
                         color: 'var(--text-muted)',
                       }}
                     >
-                      ↑ Show less
+                      Show Less
                     </button>
                   </div>
                 )}
@@ -1712,11 +1931,11 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
                       ) : incidents.length === 0 ? (
                         <tr>
                           <td colSpan={5} style={{ textAlign: 'center', padding: '16px', color: 'var(--color-success)', fontWeight: 600 }}>
-                            ✓ 100% SLA Uptime — No outage incidents recorded!
+                            100% SLA Uptime — No outage incidents recorded!
                           </td>
                         </tr>
                       ) : (
-                        incidents.map((inc) => (
+                        incidents.slice(0, incidentsVisible).map((inc) => (
                           <tr key={inc.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.01)' }}>
                             <td style={{ padding: '8px 12px' }}>
                               <span style={{
@@ -1749,6 +1968,57 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
                     </tbody>
                   </table>
                 </div>
+
+                {/* Show More button if incidents truncated */}
+                {!loadingIncidents && incidents.length > incidentsVisible && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+                    <div style={{ flex: 1, height: 1, backgroundColor: 'var(--border-main)' }} />
+                    <button
+                      onClick={() => setIncidentsVisible(v => v + 10)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '6px 18px', borderRadius: 8, cursor: 'pointer',
+                        fontSize: 11, fontWeight: 700,
+                        backgroundColor: 'rgba(0,242,254,0.06)',
+                        border: '1px solid rgba(0,242,254,0.25)',
+                        color: 'var(--color-primary)',
+                        transition: 'all 0.15s'
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--color-primary)')}
+                      onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border-main)')}
+                    >
+                      Show 10 More Incidents
+                      <span style={{
+                        padding: '1px 7px', borderRadius: 4, fontSize: 10,
+                        backgroundColor: 'rgba(0,242,254,0.08)',
+                        border: '1px solid rgba(0,242,254,0.2)',
+                        color: 'var(--text-muted)'
+                      }}>
+                        {incidents.length - incidentsVisible} remaining
+                      </span>
+                    </button>
+                    <div style={{ flex: 1, height: 1, backgroundColor: 'var(--border-main)' }} />
+                  </div>
+                )}
+
+                {/* Collapse back when all shown */}
+                {!loadingIncidents && incidents.length > 5 && incidentsVisible >= incidents.length && (
+                  <div style={{ display: 'flex', justifyContent: 'center', marginTop: 4 }}>
+                    <button
+                      onClick={() => setIncidentsVisible(5)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 5,
+                        padding: '4px 14px', borderRadius: 8, cursor: 'pointer',
+                        fontSize: 11, fontWeight: 600,
+                        border: '1px solid var(--border-main)',
+                        backgroundColor: 'transparent',
+                        color: 'var(--text-muted)',
+                      }}
+                    >
+                      Show Less
+                    </button>
+                  </div>
+                )}
               </div>
 
             </div>
@@ -1914,6 +2184,403 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
               >
                 {isGeneratingPdf ? 'Generating PDF...' : 'Download PDF'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── LIVE SVG BADGE SERVICE MODAL ─── */}
+      {badgeTarget && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(6px)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '16px'
+        }}>
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '680px', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', maxHeight: '90vh', overflowY: 'auto' }}>
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: 'rgba(255, 153, 0, 0.1)', border: '1px solid rgba(255, 153, 0, 0.25)' }}>
+                  <Award size={18} color="var(--color-aws)" />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                    Live SVG Status Badges
+                  </h3>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    Target: <strong style={{ color: 'var(--text-secondary)' }}>{badgeTarget.name}</strong> ({badgeTarget.url})
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setBadgeTarget(null)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '18px', padding: '4px' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5', backgroundColor: 'rgba(255,255,255,0.02)', padding: '12px 14px', borderRadius: '8px', border: '1px solid var(--border-main)' }}>
+              Real-time vector SVG badges that automatically update with live database metrics. Embed them in your <strong>GitHub README</strong>, status pages, or internal dashboards!
+            </div>
+
+            {/* Domain / Base URL Input Bar */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', backgroundColor: 'var(--bg-input)', padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--border-main)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Public Domain / Host for Embed Links:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomBaseUrl(window.location.origin);
+                    localStorage.setItem('nova_public_base_url', window.location.origin);
+                  }}
+                  style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '10px', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Reset Active Host ({window.location.origin})
+                </button>
+              </div>
+              <input
+                type="text"
+                className="input-field"
+                value={customBaseUrl}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setCustomBaseUrl(val);
+                  if (val.trim()) {
+                    localStorage.setItem('nova_public_base_url', val.trim().replace(/\/+$/, ''));
+                  } else {
+                    localStorage.removeItem('nova_public_base_url');
+                  }
+                }}
+                placeholder="e.g. https://status.xyz.com"
+                style={{ fontSize: '12px', fontFamily: 'var(--font-mono)' }}
+              />
+              <span style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                Auto-detects your active DNS host (e.g. <code>https://xyz.com</code>). You can also edit it above to output custom public URLs in Markdown and HTML embeds.
+              </span>
+            </div>
+
+            {/* Time Period Selector Bar */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', backgroundColor: 'var(--bg-input)', padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--border-main)' }}>
+              <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Uptime Period:
+              </span>
+              {[
+                { id: '24h', label: '24 Hours' },
+                { id: '7d', label: '1 Week (7d)' },
+                { id: '30d', label: '1 Month (30d)' },
+                { id: '90d', label: '1 Quarter (3 Months)' },
+                { id: '365d', label: '1 Year (365d)' }
+              ].map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setBadgePeriod(p.id as any)}
+                  className="btn btn-secondary"
+                  style={{
+                    padding: '4px 10px',
+                    fontSize: '11px',
+                    fontWeight: badgePeriod === p.id ? 700 : 500,
+                    backgroundColor: badgePeriod === p.id ? 'rgba(0, 242, 254, 0.15)' : 'transparent',
+                    borderColor: badgePeriod === p.id ? 'rgba(0, 242, 254, 0.3)' : 'var(--border-main)',
+                    color: badgePeriod === p.id ? 'var(--color-primary)' : 'var(--text-secondary)',
+                    borderRadius: '6px'
+                  }}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {[
+                { key: 'uptime', label: `Uptime Badge (${badgePeriod})`, type: 'uptime', period: badgePeriod, desc: `Displays SLA uptime percentage for the selected timeframe (${badgePeriod})` },
+                { key: 'status', label: 'Live Status Badge', type: 'status', desc: 'Displays current status (UP 200 or DOWN 500)' },
+                { key: 'response', label: 'Response Latency Badge', type: 'response', desc: 'Displays latest response time in milliseconds' },
+                { key: 'ssl', label: 'SSL Cert Expiry Badge', type: 'ssl', desc: 'Displays remaining valid SSL certificate days' }
+              ].map((bItem) => {
+                const baseUrl = (customBaseUrl && customBaseUrl.trim()) 
+                  ? customBaseUrl.trim().replace(/\/+$/, '') 
+                  : `${window.location.protocol}//${window.location.host}`;
+                const periodQuery = bItem.period ? `&period=${bItem.period}` : '';
+                const badgeApiUrl = `${baseUrl}/api/url-monitor/badge/${badgeTarget.id}.svg?type=${bItem.type}${periodQuery}`;
+                const mdCode = `![${bItem.label}](${badgeApiUrl})`;
+                const htmlCode = `<img src="${badgeApiUrl}" alt="${bItem.label}" />`;
+                const imgPreviewUrl = `/api/url-monitor/badge/${badgeTarget.id}.svg?type=${bItem.type}${periodQuery}`;
+
+                return (
+                  <div
+                    key={bItem.key}
+                    style={{
+                      backgroundColor: 'var(--bg-input)',
+                      border: '1px solid var(--border-main)',
+                      borderRadius: '10px',
+                      padding: '14px 16px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                      <div>
+                        <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>{bItem.label}</div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{bItem.desc}</div>
+                      </div>
+
+                      {/* Real Live Rendered SVG Badge Image */}
+                      <div style={{ padding: '4px 8px', backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center' }}>
+                        <img src={imgPreviewUrl} alt={bItem.label} style={{ height: '20px' }} />
+                      </div>
+                    </div>
+
+                    {/* Copyable Markdown & HTML Controls */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Markdown Embed</label>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <input
+                            type="text"
+                            readOnly
+                            value={mdCode}
+                            className="input-field"
+                            style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', padding: '6px 8px' }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(mdCode);
+                              setCopiedBadgeKey(`${bItem.key}-md`);
+                              setTimeout(() => setCopiedBadgeKey(null), 2000);
+                            }}
+                            className="btn btn-secondary"
+                            style={{ padding: '6px 10px', fontSize: '11px', whiteSpace: 'nowrap' }}
+                          >
+                            {copiedBadgeKey === `${bItem.key}-md` ? <Check size={12} color="var(--color-success)" /> : <Copy size={12} />}
+                            {copiedBadgeKey === `${bItem.key}-md` ? 'Copied' : 'Copy'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>HTML Embed</label>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <input
+                            type="text"
+                            readOnly
+                            value={htmlCode}
+                            className="input-field"
+                            style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', padding: '6px 8px' }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(htmlCode);
+                              setCopiedBadgeKey(`${bItem.key}-html`);
+                              setTimeout(() => setCopiedBadgeKey(null), 2000);
+                            }}
+                            className="btn btn-secondary"
+                            style={{ padding: '6px 10px', fontSize: '11px', whiteSpace: 'nowrap' }}
+                          >
+                            {copiedBadgeKey === `${bItem.key}-html` ? <Check size={12} color="var(--color-success)" /> : <Copy size={12} />}
+                            {copiedBadgeKey === `${bItem.key}-html` ? 'Copied' : 'Copy'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+              <button
+                type="button"
+                onClick={() => setBadgeTarget(null)}
+                className="btn btn-secondary"
+                style={{ padding: '8px 16px' }}
+              >
+                Close
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ─── ALERT WEBHOOK DESTINATIONS MODAL ─── */}
+      {isAlertModalOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)',
+          zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
+        }}>
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '640px', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: 'rgba(255, 153, 0, 0.1)', border: '1px solid rgba(255, 153, 0, 0.25)' }}>
+                  <Bell size={18} color="var(--color-aws)" />
+                </div>
+                <h3 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                  Alert Destinations & Webhooks
+                </h3>
+              </div>
+              <button onClick={() => setIsAlertModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '18px' }}>✕</button>
+            </div>
+
+            {/* Add Alert Form */}
+            <div style={{ backgroundColor: 'var(--bg-input)', padding: '14px', borderRadius: '10px', border: '1px solid var(--border-main)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)' }}>Add New Webhook Integration</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: '8px' }}>
+                <input
+                  type="text"
+                  placeholder="Integration Name (e.g. Slack #ops-alerts)"
+                  value={newAlertName}
+                  onChange={e => setNewAlertName(e.target.value)}
+                  className="input-field"
+                  style={{ fontSize: '12px' }}
+                />
+                <select
+                  value={newAlertType}
+                  onChange={e => setNewAlertType(e.target.value as any)}
+                  className="input-field"
+                  style={{ fontSize: '12px' }}
+                >
+                  <option value="slack">Slack</option>
+                  <option value="discord">Discord</option>
+                  <option value="pagerduty">PagerDuty</option>
+                  <option value="msteams">MS Teams</option>
+                  <option value="custom">HTTP POST</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  placeholder="Webhook URL (e.g. https://hooks.slack.com/services/...)"
+                  value={newAlertUrl}
+                  onChange={e => setNewAlertUrl(e.target.value)}
+                  className="input-field"
+                  style={{ flex: 1, fontSize: '12px', fontFamily: 'var(--font-mono)' }}
+                />
+                <button type="button" onClick={handleAddAlert} className="btn btn-primary" style={{ padding: '6px 14px', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                  <Plus size={13} /> Add Webhook
+                </button>
+              </div>
+            </div>
+
+            {/* Existing Webhooks List */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Active Alert Destinations ({alertDestinations.length})</span>
+              {alertDestinations.length === 0 ? (
+                <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>No alert webhooks configured yet. Add one above to receive instant Slack/Discord/PagerDuty alerts when URLs fail.</div>
+              ) : (
+                alertDestinations.map(d => (
+                  <div key={d.id} style={{ padding: '12px 14px', borderRadius: '8px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span>{d.name}</span>
+                        <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '4px', background: 'rgba(0, 242, 254, 0.1)', color: 'var(--color-primary)', textTransform: 'uppercase' }}>{d.type}</span>
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: '2px' }}>{d.url}</div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <button type="button" onClick={() => handleTestAlert(d.id)} className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '11px' }}>
+                        {testingAlertId === d.id ? <Check size={12} color="var(--color-success)" /> : <Zap size={12} />}
+                        {testingAlertId === d.id ? 'Sent!' : 'Test Ping'}
+                      </button>
+                      <button type="button" onClick={() => handleDeleteAlert(d.id)} style={{ background: 'none', border: 'none', color: 'var(--color-error)', cursor: 'pointer', padding: '4px' }}>
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+              <button type="button" onClick={() => setIsAlertModalOpen(false)} className="btn btn-secondary" style={{ padding: '8px 16px' }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MAINTENANCE SCHEDULE MANAGER MODAL ─── */}
+      {isMaintenanceModalOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)',
+          zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
+        }}>
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '640px', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)' }}>
+                  <Calendar size={18} color="var(--color-success)" />
+                </div>
+                <h3 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                  Scheduled Maintenance Windows
+                </h3>
+              </div>
+              <button onClick={() => setIsMaintenanceModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '18px' }}>✕</button>
+            </div>
+
+            {/* Schedule Maintenance Form */}
+            <div style={{ backgroundColor: 'var(--bg-input)', padding: '14px', borderRadius: '10px', border: '1px solid var(--border-main)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)' }}>Schedule Planned System Maintenance</div>
+              <input
+                type="text"
+                placeholder="Maintenance Title (e.g. Database Index Optimization)"
+                value={maintTitle}
+                onChange={e => setMaintTitle(e.target.value)}
+                className="input-field"
+                style={{ fontSize: '12px' }}
+              />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <div>
+                  <label style={{ fontSize: '10px', color: 'var(--text-muted)', display: 'block', marginBottom: '2px' }}>Start Time:</label>
+                  <input type="datetime-local" value={maintStartTime} onChange={e => setMaintStartTime(e.target.value)} className="input-field" style={{ fontSize: '11px' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '10px', color: 'var(--text-muted)', display: 'block', marginBottom: '2px' }}>End Time:</label>
+                  <input type="datetime-local" value={maintEndTime} onChange={e => setMaintEndTime(e.target.value)} className="input-field" style={{ fontSize: '11px' }} />
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+                <button type="button" onClick={handleAddMaintenance} className="btn btn-primary" style={{ padding: '6px 16px', fontSize: '12px' }}>
+                  <Plus size={13} /> Schedule Maintenance
+                </button>
+              </div>
+            </div>
+
+            {/* Maintenance List */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Active & Upcoming Schedules ({maintenanceWindows.length})</span>
+              {maintenanceWindows.length === 0 ? (
+                <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>No maintenance windows scheduled. Alerts will fire normally for all targets.</div>
+              ) : (
+                maintenanceWindows.map(m => (
+                  <div key={m.id} style={{ padding: '12px 14px', borderRadius: '8px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>{m.title}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                        {new Date(m.startTime).toLocaleString()} — {new Date(m.endTime).toLocaleString()}
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => handleDeleteMaintenance(m.id)} style={{ background: 'none', border: 'none', color: 'var(--color-error)', cursor: 'pointer', padding: '4px' }}>
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+              <button type="button" onClick={() => setIsMaintenanceModalOpen(false)} className="btn btn-secondary" style={{ padding: '8px 16px' }}>Close</button>
             </div>
           </div>
         </div>

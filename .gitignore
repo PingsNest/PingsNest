@@ -26,3 +26,6 @@ dist-ssr
 # AWS persisted credentials
 credentials.json
 
+
+html_folder/*
+TECHNICAL_ARCHITECTURE.md

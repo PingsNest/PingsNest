@@ -75,10 +75,33 @@ export async function cacheDelPattern(pattern: string): Promise<void> {
   try {
     const c = getClient();
     if (!c || !connected) return;
-    const keys = await c.keys(pattern);
+    // Use non-blocking SCAN instead of KEYS * to avoid Redis latency spikes on large keyspaces
+    const keys: string[] = [];
+    let cursor = '0';
+    do {
+      const [nextCursor, batch] = await c.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
+      cursor = nextCursor;
+      keys.push(...batch);
+    } while (cursor !== '0');
     if (keys.length > 0) await c.del(...keys);
-    console.log(`[Cache] DEL pattern  ${pattern}  (${keys.length} keys)`);
+    console.log(`[Cache] SCAN DEL  ${pattern}  (${keys.length} keys)`);
   } catch {}
+}
+
+/**
+ * Get-or-set helper: returns cached value if present, otherwise calls `fn()`,
+ * caches the result, and returns it. Reduces boilerplate on every cached route.
+ */
+export async function cacheGetOrSet<T = any>(
+  key: string,
+  ttlSeconds: number,
+  fn: () => Promise<T>
+): Promise<T> {
+  const cached = await cacheGet<T>(key);
+  if (cached !== null) return cached;
+  const value = await fn();
+  await cacheSet(key, value, ttlSeconds);
+  return value;
 }
 
 export async function getRedisStats(): Promise<{ connected: boolean; memUsed: string }> {

@@ -57,6 +57,23 @@ export async function detectLatencyAnomalies(apiId, stage) {
                     zScore: result.zScore,
                     timestamp: new Date().toISOString()
                 });
+                // Dispatch multi-channel Gateway anomaly alert
+                try {
+                    const { dispatchGatewayFleetAlert } = await import('./notifications.js');
+                    await dispatchGatewayFleetAlert({
+                        severity: 'warning',
+                        gatewayId: apiId,
+                        gatewayName: `API Gateway (${apiId})`,
+                        region: 'us-east-1',
+                        stage,
+                        routePath: route,
+                        metricName: '3-Sigma Latency Anomaly Spike',
+                        currentValue: `${latestLatency}ms (Z-Score: ${result.zScore})`,
+                        thresholdValue: `${Math.round(mean)}ms baseline`,
+                        details: `Statistical EWMA latency anomaly spike detected on route ${route}. Current: ${latestLatency}ms vs 1hr mean ${Math.round(mean)}ms.`
+                    }).catch(() => { });
+                }
+                catch (dispatchErr) { }
             }
         }
     }

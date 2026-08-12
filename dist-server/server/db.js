@@ -7,9 +7,10 @@ const DATABASE_URL = process.env.DATABASE_URL ||
     'postgres://nova:nova_secret@localhost:5432/nova_monitor';
 export const pool = new Pool({
     connectionString: DATABASE_URL,
-    max: 10,
+    max: 25, // up from 10 — handles concurrent API + background pollers
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
+    allowExitOnIdle: true, // allows graceful shutdown without hanging
 });
 pool.on('error', (err) => {
     console.error('[DB] Unexpected pool error:', err.message);
@@ -80,6 +81,7 @@ export async function initDb() {
     await query(`ALTER TABLE targets ADD COLUMN IF NOT EXISTS "certSanDomains" JSONB DEFAULT '[]';`).catch(() => { });
     await query(`ALTER TABLE targets ADD COLUMN IF NOT EXISTS "suppressAlertsUntil" TIMESTAMPTZ;`).catch(() => { });
     await query(`ALTER TABLE targets ADD COLUMN IF NOT EXISTS "assertions" JSONB DEFAULT '[]';`).catch(() => { });
+    await query(`ALTER TABLE targets ADD COLUMN IF NOT EXISTS "ignoredStatusCodes" TEXT;`).catch(() => { });
     await query(`ALTER TABLE pings ADD COLUMN IF NOT EXISTS "dnsLatency" INTEGER;`).catch(() => { });
     await query(`ALTER TABLE pings ADD COLUMN IF NOT EXISTS "tcpLatency" INTEGER;`).catch(() => { });
     await query(`ALTER TABLE pings ADD COLUMN IF NOT EXISTS "tlsLatency" INTEGER;`).catch(() => { });
@@ -99,6 +101,141 @@ export async function initDb() {
       "isResolved"    BOOLEAN NOT NULL DEFAULT false
     );
   `);
+    // ── Maintenance Windows Table ──────────────────────────────────────────────
+    await query(`
+    CREATE TABLE IF NOT EXISTS maintenance_windows (
+      id            TEXT PRIMARY KEY,
+      "targetId"    TEXT,
+      title         TEXT NOT NULL,
+      description   TEXT,
+      "startTime"   TIMESTAMPTZ NOT NULL,
+      "endTime"     TIMESTAMPTZ NOT NULL,
+      "isActive"    BOOLEAN NOT NULL DEFAULT true,
+      "createdAt"   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => { });
+    // ── Alert Destinations / Webhooks Table ─────────────────────────────────────
+    await query(`
+    CREATE TABLE IF NOT EXISTS alert_destinations (
+      id            TEXT PRIMARY KEY,
+      name          TEXT NOT NULL,
+      type          TEXT NOT NULL,
+      url           TEXT NOT NULL,
+      events        JSONB DEFAULT '["down", "up"]',
+      "isEnabled"   BOOLEAN NOT NULL DEFAULT true,
+      "createdAt"   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => { });
+    // ── Status Portal Settings Table ──────────────────────────────────────────
+    await query(`
+    CREATE TABLE IF NOT EXISTS status_portal_settings (
+      id            TEXT PRIMARY KEY DEFAULT 'default',
+      title         TEXT DEFAULT 'PingsNest System Status',
+      notice        TEXT DEFAULT '',
+      "logoUrl"     TEXT DEFAULT '',
+      "accentColor" TEXT DEFAULT '#00f2fe',
+      "supportEmail" TEXT DEFAULT '',
+      "customDomain" TEXT DEFAULT '',
+      "updatedAt"   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => { });
+    // ── AWS SES Configuration Table ─────────────────────────────────────────────
+    await query(`
+    CREATE TABLE IF NOT EXISTS aws_ses_config (
+      id               TEXT PRIMARY KEY DEFAULT 'default',
+      "isEnabled"      BOOLEAN NOT NULL DEFAULT false,
+      "senderEmail"    TEXT DEFAULT '',
+      "recipientEmails" TEXT DEFAULT '',
+      region           TEXT DEFAULT 'us-east-1',
+      "accessKeyId"    TEXT DEFAULT '',
+      "secretAccessKey" TEXT DEFAULT '',
+      "updatedAt"      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => { });
+    // ── Generic SMTP Mail Server Configuration Table ───────────────────────────
+    await query(`
+    CREATE TABLE IF NOT EXISTS smtp_config (
+      id               TEXT PRIMARY KEY DEFAULT 'default',
+      "isEnabled"      BOOLEAN NOT NULL DEFAULT false,
+      host             TEXT DEFAULT '',
+      port             INTEGER DEFAULT 587,
+      username         TEXT DEFAULT '',
+      password         TEXT DEFAULT '',
+      security         TEXT DEFAULT 'tls',
+      "fromEmail"      TEXT DEFAULT '',
+      "recipientEmails" TEXT DEFAULT '',
+      "updatedAt"      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => { });
+    // ── Webhook Channels Configuration Table ───────────────────────────────────
+    await query(`
+    CREATE TABLE IF NOT EXISTS webhook_channels_config (
+      id            TEXT PRIMARY KEY DEFAULT 'default',
+      "slackUrl"    TEXT DEFAULT '',
+      "teamsUrl"    TEXT DEFAULT '',
+      "pagerdutyUrl" TEXT DEFAULT '',
+      "discordUrl"  TEXT DEFAULT '',
+      "customUrl"   TEXT DEFAULT '',
+      "updatedAt"   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => { });
+    // ── Generic Cross-Module Alert Rules Table ─────────────────────────────────
+    await query(`
+    CREATE TABLE IF NOT EXISTS generic_alert_rules (
+      id                           TEXT PRIMARY KEY DEFAULT 'default',
+      "gatewayErrorRateThreshold"  NUMERIC DEFAULT 2.0,
+      "gatewayLatencyThresholdMs"  INTEGER DEFAULT 1500,
+      "gatewayThrottleThreshold"   INTEGER DEFAULT 100,
+      "lambdaErrorRateThreshold"   NUMERIC DEFAULT 2.0,
+      "lambdaDurationThresholdMs"  INTEGER DEFAULT 3000,
+      "lambdaColdstartThresholdMs" INTEGER DEFAULT 2000,
+      "urlMonitorOutageAlert"      BOOLEAN DEFAULT true,
+      "urlSslWarningDays"          INTEGER DEFAULT 14,
+      "urlMaxLatencyThresholdMs"   INTEGER DEFAULT 2000,
+      "sloBurnRateThreshold"       NUMERIC DEFAULT 2.0,
+      "kafkaLagThreshold"          INTEGER DEFAULT 500,
+      "redisMemoryThresholdPct"    NUMERIC DEFAULT 85.0,
+      "enableSlack"                BOOLEAN DEFAULT true,
+      "enableTeams"                BOOLEAN DEFAULT true,
+      "enablePagerDuty"            BOOLEAN DEFAULT true,
+      "enableEmail"                BOOLEAN DEFAULT true,
+      "updatedAt"                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => { });
+    // ── Alert Dispatch Audit Log Table ─────────────────────────────────────────
+    await query(`
+    CREATE TABLE IF NOT EXISTS alert_dispatch_history (
+      id           TEXT PRIMARY KEY,
+      timestamp    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      module       TEXT NOT NULL,
+      severity     TEXT NOT NULL,
+      destination  TEXT NOT NULL,
+      title        TEXT NOT NULL,
+      message      TEXT NOT NULL,
+      status       TEXT NOT NULL
+    );
+  `).catch(() => { });
+    // ── Security Threats & Anomaly Log Table ───────────────────────────────────
+    await query(`
+    CREATE TABLE IF NOT EXISTS security_threats (
+      id            TEXT PRIMARY KEY,
+      timestamp     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ip            TEXT NOT NULL,
+      "threatType"  TEXT NOT NULL,
+      severity      TEXT NOT NULL,
+      "requestPath" TEXT NOT NULL,
+      "rawPayload"  TEXT,
+      "isBlocked"   BOOLEAN NOT NULL DEFAULT true
+    );
+  `).catch(() => { });
+    // ── IP Blacklist Table ──────────────────────────────────────────────────────
+    await query(`
+    CREATE TABLE IF NOT EXISTS ip_blacklist (
+      ip            TEXT PRIMARY KEY,
+      reason        TEXT,
+      "createdAt"   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => { });
     await query(`
     CREATE INDEX IF NOT EXISTS idx_url_incidents_target
       ON url_incidents("targetId", "startedAt" DESC);
@@ -146,7 +283,42 @@ export async function initDb() {
       PRIMARY KEY ("apiId", stage, id, "fullTime")
     );
   `);
+    // Drop legacy PK/Unique constraints on gateway_logs if fullTime is missing
+    await query(`
+    DO $$
+    DECLARE
+        r RECORD;
+    BEGIN
+        FOR r IN (
+            SELECT constraint_name 
+            FROM information_schema.table_constraints 
+            WHERE table_name = 'gateway_logs' AND constraint_type IN ('PRIMARY KEY', 'UNIQUE')
+        ) LOOP
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.key_column_usage 
+                WHERE table_name = 'gateway_logs' 
+                  AND constraint_name = r.constraint_name 
+                  AND column_name = 'fullTime'
+            ) THEN
+                EXECUTE 'ALTER TABLE gateway_logs DROP CONSTRAINT ' || quote_ident(r.constraint_name);
+            END IF;
+        END LOOP;
+    END $$;
+  `).catch(() => { });
+    // Re-ensure primary key contains fullTime
+    await query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints 
+        WHERE table_name = 'gateway_logs' AND constraint_type = 'PRIMARY KEY'
+      ) THEN
+        ALTER TABLE gateway_logs ADD PRIMARY KEY ("apiId", stage, id, "fullTime");
+      END IF;
+    END $$;
+  `).catch(() => { });
     // Make gateway_logs a TimescaleDB hypertable (idempotent — errors are suppressed)
+    let isHypertable = false;
     try {
         await query(`
       SELECT create_hypertable('gateway_logs', 'fullTime',
@@ -154,40 +326,39 @@ export async function initDb() {
         migrate_data   => TRUE
       );
     `);
+        isHypertable = true;
         console.log('[DB] gateway_logs hypertable ready.');
     }
     catch (err) {
-        // Fails gracefully on plain PostgreSQL (without TimescaleDB extension)
-        console.warn('[DB] Hypertable creation skipped (TimescaleDB not available):', err.message);
+        console.warn('[DB] Hypertable creation skipped (TimescaleDB not available or already hypertable):', err.message);
     }
-    // Add 30-day retention policy (TimescaleDB only — silently skipped otherwise)
-    try {
-        await query(`
-      SELECT add_retention_policy('gateway_logs', INTERVAL '30 days',
-        if_not_exists => TRUE
-      );
-    `);
-        console.log('[DB] 30-day retention policy applied to gateway_logs.');
+    // Add retention and compression policies ONLY if hypertable is active
+    if (isHypertable) {
+        try {
+            await query(`
+        SELECT add_retention_policy('gateway_logs', INTERVAL '30 days',
+          if_not_exists => TRUE
+        );
+      `);
+            console.log('[DB] 30-day retention policy applied to gateway_logs.');
+        }
+        catch { /* Retention policy handled */ }
+        try {
+            await query(`
+        ALTER TABLE gateway_logs SET (
+          timescaledb.compress = true,
+          timescaledb.compress_segmentby = '"apiId", stage'
+        );
+      `);
+            await query(`
+        SELECT add_compression_policy('gateway_logs', INTERVAL '7 days',
+          if_not_exists => TRUE
+        );
+      `);
+            console.log('[DB] Hypertable compression policy (7-day window) applied to gateway_logs.');
+        }
+        catch { /* Compression policy handled */ }
     }
-    catch {
-        // Plain PostgreSQL — retention handled by periodic DELETE in the app
-    }
-    // Hypertable Compression Policy (segment by tenantId, apiId, stage to eliminate write amplification)
-    try {
-        await query(`
-      ALTER TABLE gateway_logs SET (
-        timescaledb.compress = true,
-        timescaledb.compress_segmentby = '"apiId", stage'
-      );
-    `);
-        await query(`
-      SELECT add_compression_policy('gateway_logs', INTERVAL '7 days',
-        if_not_exists => TRUE
-      );
-    `);
-        console.log('[DB] Hypertable compression policy (7-day window) applied to gateway_logs.');
-    }
-    catch { /* TimescaleDB compression policy handled gracefully */ }
     // ── Multi-Tenancy & Trace ID Column Schema Migrations ───────────────────────
     await query(`ALTER TABLE gateway_logs ADD COLUMN IF NOT EXISTS "tenantId" TEXT NOT NULL DEFAULT 'default-tenant';`).catch(() => { });
     await query(`ALTER TABLE gateway_logs ADD COLUMN IF NOT EXISTS "traceId" TEXT;`).catch(() => { });
@@ -212,6 +383,25 @@ export async function initDb() {
       PRIMARY KEY ("apiId", stage)
     );
   `);
+    // ── Background Monitored API Gateways Table ────────────────────────────────
+    await query(`
+    CREATE TABLE IF NOT EXISTS monitored_gateways (
+      id                TEXT PRIMARY KEY,
+      "gatewayId"       TEXT NOT NULL,
+      "gatewayName"     TEXT NOT NULL,
+      region            TEXT NOT NULL DEFAULT 'us-east-1',
+      stage             TEXT NOT NULL DEFAULT 'prod',
+      "connectionId"    TEXT,
+      "awsAccountName"  TEXT DEFAULT 'Default Account',
+      "pollIntervalSec" INTEGER NOT NULL DEFAULT 60,
+      "isEnabled"       BOOLEAN NOT NULL DEFAULT true,
+      "lastPolledAt"    TIMESTAMPTZ,
+      "lastStatus"      TEXT DEFAULT 'HEALTHY',
+      "createdAt"       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `).catch(() => { });
+    await query(`ALTER TABLE monitored_gateways ADD COLUMN IF NOT EXISTS "connectionId" TEXT;`).catch(() => { });
+    await query(`ALTER TABLE monitored_gateways ADD COLUMN IF NOT EXISTS "awsAccountName" TEXT DEFAULT 'Default Account';`).catch(() => { });
     // ── Alert rules ───────────────────────────────────────────────────────────
     await query(`
     CREATE TABLE IF NOT EXISTS alert_rules (
@@ -271,12 +461,16 @@ export async function initDb() {
       name                TEXT NOT NULL,
       "apiId"             TEXT NOT NULL,
       stage               TEXT NOT NULL DEFAULT '*',
+      route               TEXT NOT NULL DEFAULT '*',
+      method              TEXT NOT NULL DEFAULT '*',
       "targetSloPercent"  NUMERIC NOT NULL DEFAULT 99.9,
       "latencyTargetMs"   INTEGER NOT NULL DEFAULT 500,
       "rollingWindowDays" INTEGER NOT NULL DEFAULT 30,
       "createdAt"         TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+    await query(`ALTER TABLE slo_targets ADD COLUMN IF NOT EXISTS route TEXT NOT NULL DEFAULT '*';`).catch(() => { });
+    await query(`ALTER TABLE slo_targets ADD COLUMN IF NOT EXISTS method TEXT NOT NULL DEFAULT '*';`).catch(() => { });
     // ── Remediation Playbooks Table ──────────────────────────────────────────
     await query(`
     CREATE TABLE IF NOT EXISTS remediation_playbooks (

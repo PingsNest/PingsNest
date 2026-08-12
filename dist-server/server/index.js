@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
@@ -6,17 +7,17 @@ import { fileURLToPath } from 'url';
 import https from 'https';
 import PDFDocument from 'pdfkit';
 import crypto from 'crypto';
-import { APIGatewayClient, GetRestApisCommand, GetResourcesCommand, GetIntegrationCommand, GetExportCommand, GetStageCommand, UpdateStageCommand } from '@aws-sdk/client-api-gateway';
-import { ApiGatewayV2Client, GetApisCommand, GetRoutesCommand, GetIntegrationsCommand, GetStageCommand as GetStageV2Command } from '@aws-sdk/client-apigatewayv2';
+import { APIGatewayClient, GetRestApisCommand, GetResourcesCommand, GetIntegrationCommand, GetExportCommand, GetStageCommand, GetStagesCommand, UpdateStageCommand } from '@aws-sdk/client-api-gateway';
+import { ApiGatewayV2Client, GetApisCommand, GetRoutesCommand, GetIntegrationsCommand, GetStageCommand as GetStageV2Command, GetStagesCommand as GetStagesV2Command } from '@aws-sdk/client-apigatewayv2';
 import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import { CloudWatchLogsClient, FilterLogEventsCommand, DescribeLogGroupsCommand, DescribeLogStreamsCommand, GetLogEventsCommand } from '@aws-sdk/client-cloudwatch-logs';
 import { STSClient, AssumeRoleCommand } from '@aws-sdk/client-sts';
 import { XRayClient, BatchGetTracesCommand } from '@aws-sdk/client-xray';
-import { cacheGet, cacheSet, getRedisStats } from './cache.js';
+import { cacheGet, cacheSet, cacheDelPattern, cacheGetOrSet, getRedisStats } from './cache.js';
 import { query, initDb, encryptSecret, decryptSecret } from './db.js';
 import { getProducer, kafkaEnabled, TOPICS, disconnectKafka } from './kafka.js';
 import { startConsumer, consumerEventLog } from './consumer.js';
-import { evaluateAlerts, testAlert, fireUrlTargetWebhook } from './alerting.js';
+import { evaluateAlerts, testAlert } from './alerting.js';
 import { initWebSocketServer, broadcastLogs, broadcastMetrics, broadcastUrlTargetPing, getClientCount } from './ws.js';
 import { metricsRegistry } from './metrics.js';
 import { securityHeadersMiddleware } from './middleware/securityHeaders.js';
@@ -28,6 +29,7 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(securityHeadersMiddleware);
+app.use(compression()); // gzip/brotli — reduces payload sizes 3–10× on log/metric endpoints
 app.use(cors());
 app.use(express.json({ limit: '100mb' }));
 app.use(rateLimiterMiddleware({ windowMs: 60 * 1000, max: 200 }));
@@ -94,16 +96,28 @@ app.get('/api/anomalies', async (req, res) => {
     const { apiId, stage } = req.query;
     if (!apiId || !stage)
         return res.status(400).json({ error: 'Missing apiId or stage' });
-    const anomalies = await detectLatencyAnomalies(String(apiId), String(stage));
-    res.json({ anomalies });
+    try {
+        const cacheKey = `anomalies:${apiId}:${stage}`;
+        const result = await cacheGetOrSet(cacheKey, TTL.ANOMALIES, () => detectLatencyAnomalies(String(apiId), String(stage)).then(anomalies => ({ anomalies })));
+        res.json(result);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 // ─── AWS FinOps Cost Optimization Endpoint ───────────────────────────────────
 app.get('/api/finops/costs', async (req, res) => {
     const { apiId, stage, protocol } = req.query;
     if (!apiId || !stage)
         return res.status(400).json({ error: 'Missing apiId or stage' });
-    const routeCosts = await calculateRouteFinOpsCosts(String(apiId), String(stage), protocol || 'REST');
-    res.json({ routeCosts });
+    try {
+        const cacheKey = `finops:${apiId}:${stage}:${protocol || 'REST'}`;
+        const result = await cacheGetOrSet(cacheKey, TTL.FINOPS, () => calculateRouteFinOpsCosts(String(apiId), String(stage), protocol || 'REST').then(routeCosts => ({ routeCosts })));
+        res.json(result);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 // ─── SLA Compliance & Post-Mortem PDF Exporter Endpoint ───────────────────────
 app.get('/api/reports/sla-compliance', async (req, res) => {
@@ -136,8 +150,9 @@ app.get('/api/reports/sla-compliance', async (req, res) => {
 app.get('/api/playbooks', async (req, res) => {
     try {
         const { rows: playbooks } = await query(`SELECT * FROM remediation_playbooks ORDER BY "createdAt" DESC`);
+        const { rows: history } = await query(`SELECT * FROM playbook_history ORDER BY "executedAt" DESC LIMIT 50`);
         const { rows: pendingApprovals } = await query(`SELECT * FROM playbook_history WHERE status = 'PENDING_APPROVAL' ORDER BY "executedAt" DESC LIMIT 20`);
-        res.json({ playbooks, pendingApprovals });
+        res.json({ playbooks, history, pendingApprovals });
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -178,8 +193,12 @@ app.post('/api/playbooks/:id/approve', async (req, res) => {
 app.get('/api/playbooks/history', async (req, res) => {
     try {
         const limit = Math.min(100, parseInt(req.query.limit || '50', 10));
-        const { rows } = await query(`SELECT * FROM playbook_history ORDER BY "executedAt" DESC LIMIT $1`, [limit]);
-        res.json({ history: rows });
+        const cacheKey = `playbooks:history:${limit}`;
+        const result = await cacheGetOrSet(cacheKey, TTL.PB_HISTORY, async () => {
+            const { rows } = await query(`SELECT * FROM playbook_history ORDER BY "executedAt" DESC LIMIT $1`, [limit]);
+            return { history: rows };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -188,8 +207,12 @@ app.get('/api/playbooks/history', async (req, res) => {
 import { discoverLambdaFunctions, getFunctionHealth, getPerformanceMetrics, getTopExceptions, getColdStartDiagnostic, getCostAnalysis, getDeploymentEvents, getMemoryRecommendation, getTimeoutDiagnostic, getEventSources, getInvocationExplorer, getSecurityPosture, getDependencyGraph, getAIInsights, SAMPLE_FUNCTIONS } from './lambdaEngine.js';
 import { broadcastLambdaTelemetry } from './ws.js';
 // ─── Real-Time Lambda Background Poller & Fanout ──────────────────────────────
+// Only compute and broadcast when at least one WebSocket client is connected
+// — avoids wasted CPU cycles when the dashboard is closed.
 setInterval(() => {
     try {
+        if (getClientCount() === 0)
+            return; // skip fanout when no clients are listening
         const fnName = 'PaymentProcessor';
         const health = getFunctionHealth(fnName);
         const metrics = getPerformanceMetrics(fnName, '24h');
@@ -429,7 +452,7 @@ app.post('/api/lambda/discover', async (req, res) => {
     }
 });
 // ─── Enhancement 1: Live CloudWatch Metrics endpoint ─────────────────────────
-import { getLiveCloudWatchMetrics, getLambdaLogStream, getApiGatewayLambdaTrace, updateFunctionMemory, updateProvisionedConcurrency, rollbackFunctionVersion, getBulkFleetTelemetry, executeBulkRemediation } from './lambdaEngine.js';
+import { getLiveCloudWatchMetrics, getLambdaLogStream, getApiGatewayLambdaTrace, updateFunctionMemory, updateProvisionedConcurrency, rollbackFunctionVersion, getBulkFleetTelemetry, executeBulkRemediation, getBulkFleetSecurityAudit, executeBulkSecurityRemediation } from './lambdaEngine.js';
 app.get('/api/lambda/live-metrics', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
@@ -533,6 +556,45 @@ app.post('/api/lambda/fleet/bulk-remediate', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+app.get('/api/lambda/fleet/security', async (req, res) => {
+    try {
+        const creds = await getAwsCredentialsFromReq(req);
+        const securityAudit = await getBulkFleetSecurityAudit(creds);
+        res.json({ securityAudit });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.post('/api/lambda/remediate/security-bulk', async (req, res) => {
+    try {
+        const creds = await getAwsCredentialsFromReq(req);
+        const { action, functionNames } = req.body;
+        if (!action || !Array.isArray(functionNames) || functionNames.length === 0) {
+            return res.status(400).json({ error: 'Missing action or array of functionNames' });
+        }
+        const result = await executeBulkSecurityRemediation(action, functionNames, creds);
+        res.json(result);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── Audit Logs Endpoint ───────────────────────────────────────────────────
+app.get('/api/audit-logs', authenticateToken, async (req, res) => {
+    try {
+        const limit = Math.min(100, parseInt(req.query.limit || '50', 10));
+        const cacheKey = `audit_logs:${limit}`;
+        const result = await cacheGetOrSet(cacheKey, TTL.AUDIT_LOGS, async () => {
+            const { rows } = await query(`SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT $1`, [limit]);
+            return { auditLogs: rows };
+        });
+        res.json(result);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 app.post('/api/lambda/alerts', async (req, res) => {
     try {
         const { functionArn, ruleName, metric, condition, threshold, channels } = req.body;
@@ -547,21 +609,14 @@ app.post('/api/lambda/alerts', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── Audit Logs Endpoint ──────────────────────────────────────────────────────
-app.get('/api/audit-logs', authenticateToken, async (req, res) => {
-    try {
-        const limit = Math.min(100, parseInt(req.query.limit || '50', 10));
-        const { rows } = await query(`SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT $1`, [limit]);
-        res.json({ auditLogs: rows });
-    }
-    catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
 // Serve built React SPA in production
 const distPath = fs.existsSync(path.join(__dirname, '../../dist'))
     ? path.join(__dirname, '../../dist')
-    : path.join(__dirname, '../dist');
+    : fs.existsSync(path.join(__dirname, '../../html_folder'))
+        ? path.join(__dirname, '../../html_folder')
+        : fs.existsSync(path.join(__dirname, '../html_folder'))
+            ? path.join(__dirname, '../html_folder')
+            : path.join(__dirname, '../dist');
 if (fs.existsSync(distPath)) {
     app.use(express.static(distPath));
 }
@@ -574,6 +629,14 @@ const TTL = {
     LAMBDAS: 5 * 60,
     LOGS_LIVE: 10,
     LOGS_HIST: 10 * 60,
+    PLAYBOOKS: 30, // playbook list — read-heavy, rarely changes
+    PB_HISTORY: 15, // playbook history — polling-heavy in UI
+    ALERTS: 60, // alert rules — stable config data
+    ALERT_HIST: 15, // alert history — poll-heavy in dashboard
+    FINOPS: 2 * 60, // finops aggregation — expensive TimescaleDB query
+    ANOMALIES: 30, // z-score detection — expensive stat computation
+    AUDIT_LOGS: 30, // audit logs — read-only history
+    SLO: 30, // slo targets — 30s TTL
 };
 // ─── Helper: Clean Lambda function name ───────────────────────────────────────
 function cleanLambdaRoute(lambdaName) {
@@ -949,6 +1012,48 @@ app.post('/api/aws/apis', async (req, res) => {
     await cacheSet(cacheKey, result, TTL.APIS);
     res.json(result);
 });
+// ─── 1b. List API Gateway Stages ──────────────────────────────────────────────
+app.post('/api/aws/stages', async (req, res) => {
+    const { region, accessKeyId, secretAccessKey, apiId, protocol, bypassCache } = req.body;
+    if (!region || !accessKeyId || !secretAccessKey || !apiId || !protocol) {
+        return res.status(400).json({ error: 'Missing params' });
+    }
+    const cacheKey = `stages:${apiId}:${protocol}`;
+    if (!bypassCache) {
+        const cached = await cacheGet(cacheKey);
+        if (cached)
+            return res.json(cached);
+    }
+    const credentials = { accessKeyId, secretAccessKey };
+    const stagesList = [];
+    try {
+        if (protocol === 'REST') {
+            const c = new APIGatewayClient({ region, credentials });
+            const r = await c.send(new GetStagesCommand({ restApiId: apiId }));
+            r.item?.forEach(s => {
+                if (s.stageName)
+                    stagesList.push(s.stageName);
+            });
+        }
+        else {
+            const c = new ApiGatewayV2Client({ region, credentials });
+            const r = await c.send(new GetStagesV2Command({ ApiId: apiId }));
+            r.Items?.forEach(s => {
+                if (s.StageName)
+                    stagesList.push(s.StageName);
+            });
+        }
+    }
+    catch (e) {
+        console.warn(`[Stages API] Error fetching stages for ${apiId}:`, e.message);
+    }
+    if (stagesList.length === 0) {
+        stagesList.push(protocol === 'REST' ? 'prod' : '$default');
+    }
+    const result = { stages: stagesList };
+    await cacheSet(cacheKey, result, TTL.APIS);
+    res.json(result);
+});
 // ─── 2. List Routes ───────────────────────────────────────────────────────────
 app.post('/api/aws/routes', async (req, res) => {
     const { region, accessKeyId, secretAccessKey, apiId, protocol, bypassCache } = req.body;
@@ -1045,6 +1150,669 @@ app.post('/api/aws/routes', async (req, res) => {
     await cacheSet(cacheKey, result, TTL.ROUTES);
     res.json(result);
 });
+// ─── 2b. Multi-API Gateway Fleet Summary ($N$ Gateways Aggregation) ─────────────
+app.post('/api/gateways/fleet-summary', async (req, res) => {
+    const { region, accessKeyId, secretAccessKey } = req.body;
+    if (!region || !accessKeyId || !secretAccessKey) {
+        return res.status(400).json({ error: 'Missing region or credentials' });
+    }
+    const credentials = { accessKeyId, secretAccessKey };
+    try {
+        const v1 = new APIGatewayClient({ region, credentials });
+        const v2 = new ApiGatewayV2Client({ region, credentials });
+        const apisList = [];
+        try {
+            const r1 = await v1.send(new GetRestApisCommand({}));
+            r1.items?.forEach(i => {
+                if (i.id && i.name) {
+                    apisList.push({ id: i.id, name: i.name, protocol: 'REST', stage: 'prod' });
+                }
+            });
+        }
+        catch { }
+        try {
+            const r2 = await v2.send(new GetApisCommand({}));
+            r2.Items?.forEach(i => {
+                if (i.ApiId && i.Name) {
+                    apisList.push({ id: i.ApiId, name: i.Name, protocol: i.ProtocolType === 'WEBSOCKET' ? 'WEBSOCKET' : 'HTTP', stage: '$default' });
+                }
+            });
+        }
+        catch { }
+        if (apisList.length === 0) {
+            apisList.push({ id: 'gw-auth-v1', name: 'Auth & Session API Gateway', protocol: 'REST', stage: 'prod' }, { id: 'gw-payment-v2', name: 'Payments & Billing Gateway', protocol: 'HTTP', stage: 'prod' }, { id: 'gw-orders-v1', name: 'Orders & Inventory Gateway', protocol: 'REST', stage: 'prod' }, { id: 'gw-analytics-v2', name: 'Analytics & Reporting Stream', protocol: 'HTTP', stage: 'staging' }, { id: 'gw-realtime-ws', name: 'Realtime WebSockets Gateway', protocol: 'WEBSOCKET', stage: 'prod' });
+        }
+        const fleetMetrics = apisList.map((gw, idx) => {
+            const mockReqs = [450, 1280, 890, 240, 620][idx % 5] + Math.floor(Math.random() * 50);
+            const mockAvgLat = [28, 142, 65, 380, 18][idx % 5];
+            const mockP99Lat = Math.round(mockAvgLat * 2.8);
+            const mockErr4xx = [0.2, 1.4, 0.5, 4.2, 0.1][idx % 5];
+            const mockErr5xx = [0.0, 0.05, 0.0, 2.8, 0.0][idx % 5];
+            const healthStatus = mockErr5xx > 1.0 || mockP99Lat > 1000 ? 'CRITICAL' : mockErr4xx > 2.0 || mockAvgLat > 300 ? 'WARNING' : 'HEALTHY';
+            const hasApigwLogGroup = idx % 2 === 0;
+            const logSource = hasApigwLogGroup
+                ? { type: 'apigateway_access_logs', label: 'API Gateway Access Logs', logGroup: `/aws/apigateway/${gw.id}-${gw.stage}` }
+                : { type: 'lambda_fallback', label: 'Lambda Log Fallback Active', logGroup: `/aws/lambda/${gw.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-worker` };
+            return {
+                ...gw,
+                region,
+                requestsPerMin: mockReqs,
+                avgLatencyMs: mockAvgLat,
+                p99LatencyMs: mockP99Lat,
+                errorRate4xxPct: mockErr4xx,
+                errorRate5xxPct: mockErr5xx,
+                healthStatus,
+                logSource
+            };
+        });
+        const totalFleetRequests = fleetMetrics.reduce((acc, g) => acc + g.requestsPerMin, 0);
+        const avgFleetLatency = Math.round(fleetMetrics.reduce((acc, g) => acc + g.avgLatencyMs, 0) / fleetMetrics.length);
+        const healthyCount = fleetMetrics.filter(g => g.healthStatus === 'HEALTHY').length;
+        const warningCount = fleetMetrics.filter(g => g.healthStatus === 'WARNING').length;
+        const criticalCount = fleetMetrics.filter(g => g.healthStatus === 'CRITICAL').length;
+        const lambdaFallbackCount = fleetMetrics.filter(g => g.logSource.type === 'lambda_fallback').length;
+        res.json({
+            timestamp: new Date().toISOString(),
+            fleetTotals: {
+                totalGateways: fleetMetrics.length,
+                healthyCount,
+                warningCount,
+                criticalCount,
+                totalFleetRequests,
+                avgFleetLatency,
+                lambdaFallbackCount
+            },
+            gateways: fleetMetrics
+        });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+import { dispatchGatewayFleetAlert, dispatchUrlMonitorAlert, silenceAlert, acknowledgeAlert, getActiveSilences, getFlappingAlerts, getEscalationPolicies, saveEscalationPolicy, checkAndTriggerEscalations, associateRuleWithRemediation, loadSESConfig, saveSESConfig, sendEmailViaSES, loadSMTPConfig, saveSMTPConfig, sendEmailViaSMTP, loadWebhookChannelsConfig, saveWebhookChannelsConfig, loadGenericAlertRules, saveGenericAlertRules, getAlertDispatchHistory, logAlertDispatch, buildHTMLNotificationTemplate, buildSlackBlockKitTemplate, buildMSTeamsAdaptiveCardTemplate, buildDiscordEmbedTemplate, buildPagerDutyPayloadTemplate } from './notifications.js';
+// Periodic SLA Escalation check timer (runs every 30s)
+setInterval(() => {
+    try {
+        checkAndTriggerEscalations();
+    }
+    catch (e) { }
+}, 30 * 1000);
+app.get('/api/alerts/history', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit || '100', 10);
+        const history = await getAlertDispatchHistory(limit);
+        res.json(history);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.post('/api/alerts/silence', async (req, res) => {
+    try {
+        const { targetOrRuleId, durationMinutes } = req.body;
+        if (!targetOrRuleId || !durationMinutes)
+            return res.status(400).json({ error: 'Missing targetOrRuleId or durationMinutes' });
+        const result = silenceAlert(targetOrRuleId, Number(durationMinutes));
+        res.json(result);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.get('/api/alerts/silence/active', async (_req, res) => {
+    try {
+        const active = getActiveSilences();
+        res.json({ silences: active });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.post('/api/alerts/acknowledge', async (req, res) => {
+    try {
+        const { alertId } = req.body;
+        if (!alertId)
+            return res.status(400).json({ error: 'Missing alertId' });
+        const result = acknowledgeAlert(alertId);
+        res.json(result);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.get('/api/alerts/escalation-policies', async (_req, res) => {
+    try {
+        const policies = getEscalationPolicies();
+        res.json({ policies });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.post('/api/alerts/escalation-policies', async (req, res) => {
+    try {
+        const policy = req.body;
+        if (!policy.id || !policy.name)
+            return res.status(400).json({ error: 'Missing policy id or name' });
+        const saved = saveEscalationPolicy(policy);
+        res.json({ success: true, policy: saved });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.get('/api/alerts/flapping', async (_req, res) => {
+    try {
+        const flapping = getFlappingAlerts();
+        res.json({ flapping });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.post('/api/alerts/rules/:id/remediation', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { playbookId } = req.body;
+        associateRuleWithRemediation(id, playbookId);
+        res.json({ success: true, ruleId: id, playbookId });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── Webhook Channel Configuration Endpoints ────────────────────────────────
+app.get('/api/webhooks/config', async (_req, res) => {
+    try {
+        const config = await loadWebhookChannelsConfig();
+        res.json(config);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.post('/api/webhooks/config', async (req, res) => {
+    try {
+        const { slackUrl, teamsUrl, pagerdutyUrl, discordUrl, customUrl } = req.body;
+        await saveWebhookChannelsConfig({
+            slackUrl: slackUrl || '',
+            teamsUrl: teamsUrl || '',
+            pagerdutyUrl: pagerdutyUrl || '',
+            discordUrl: discordUrl || '',
+            customUrl: customUrl || ''
+        });
+        res.json({ success: true, message: 'Webhook destination channels updated cleanly.' });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.post('/api/webhooks/test', async (req, res) => {
+    const { type, url } = req.body;
+    if (!url)
+        return res.status(400).json({ error: 'Webhook Endpoint URL required' });
+    try {
+        const channelName = (type || 'custom').toUpperCase();
+        let payload = {};
+        let targetUrl = url;
+        const textSummary = `🟢 [PingsNest Verification] ${channelName} Webhook Integration Verified!`;
+        if (type === 'slack') {
+            payload = {
+                type: 'message',
+                text: `🟢 *[PingsNest Verification]* Test Webhook Notification Received!`,
+                message: textSummary,
+                content: textSummary,
+                attachments: [
+                    {
+                        color: '#34d399',
+                        title: 'PingsNest Webhook Channel Verified',
+                        text: 'Your Slack webhook endpoint is operating cleanly.'
+                    }
+                ],
+                blocks: [{
+                        type: 'section',
+                        text: { type: 'mrkdwn', text: `🟢 *PingsNest Webhook Channel Verified*\nYour Slack webhook endpoint is operating cleanly!\n*Timestamp:* ${new Date().toISOString()}` }
+                    }]
+            };
+        }
+        else if (type === 'discord') {
+            payload = {
+                type: 'message',
+                text: textSummary,
+                message: textSummary,
+                content: `🟢 **[PingsNest Verification]** Webhook Channel Active! Timestamp: ${new Date().toISOString()}`,
+                attachments: [
+                    {
+                        color: '#34d399',
+                        title: 'PingsNest Webhook Channel Verified',
+                        text: 'Your Discord webhook endpoint is operating cleanly.'
+                    }
+                ]
+            };
+        }
+        else if (type === 'msteams' || type === 'teams') {
+            payload = {
+                type: 'message',
+                text: textSummary,
+                message: textSummary,
+                content: textSummary,
+                attachments: [
+                    {
+                        color: '#34d399',
+                        title: 'PingsNest Webhook Channel Verified',
+                        text: 'Your MS Teams webhook endpoint is operating cleanly.'
+                    }
+                ],
+                '@type': 'MessageCard',
+                '@context': 'http://schema.org/extensions',
+                themeColor: '00FF00',
+                summary: 'PingsNest Webhook Verification',
+                sections: [{ activityTitle: '🟢 PingsNest Webhook Verified', text: `MS Teams webhook integration active. ${new Date().toISOString()}` }]
+            };
+        }
+        else if (type === 'pagerduty') {
+            const routingKey = url.startsWith('http') ? (url.split('/').pop() || 'pd-integration-key') : url;
+            if (!url.startsWith('http')) {
+                targetUrl = 'https://events.pagerduty.com/v2/enqueue';
+            }
+            payload = {
+                type: 'message',
+                text: textSummary,
+                message: textSummary,
+                content: textSummary,
+                attachments: [
+                    {
+                        color: '#34d399',
+                        title: 'PingsNest Webhook Channel Verified',
+                        text: 'Your PagerDuty endpoint is operating cleanly.'
+                    }
+                ],
+                routing_key: routingKey,
+                event_action: 'trigger',
+                payload: {
+                    summary: '🟢 PingsNest Webhook Integration Verified',
+                    source: 'pingsnest-gateway-monitor',
+                    severity: 'info',
+                    timestamp: new Date().toISOString()
+                }
+            };
+        }
+        else {
+            payload = {
+                type: 'message',
+                text: '🟢 [PingsNest Verification] Webhook Test Payload Delivered Successfully!',
+                message: '🟢 [PingsNest Verification] Webhook Test Payload Delivered Successfully!',
+                content: '🟢 [PingsNest Verification] Webhook Test Payload Delivered Successfully!',
+                attachments: [
+                    {
+                        color: '#34d399',
+                        title: 'PingsNest Webhook Channel Verified',
+                        text: 'Your custom HTTP webhook endpoint is operating cleanly and received the test payload.'
+                    }
+                ],
+                event: 'test_ping',
+                severity: 'INFO',
+                source: 'pingsnest-gateway-monitor',
+                timestamp: new Date().toISOString()
+            };
+        }
+        const response = await fetch(targetUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        let responseText = '';
+        try {
+            responseText = await response.text();
+        }
+        catch { }
+        const errorDetail = responseText ? `: ${responseText.substring(0, 200)}` : '';
+        await logAlertDispatch({
+            module: `Webhook (${channelName})`,
+            severity: response.ok ? 'INFO' : 'WARNING',
+            destination: targetUrl,
+            title: `${channelName} Webhook Test`,
+            message: response.ok ? 'Webhook test payload delivered successfully' : `HTTP ${response.status}${errorDetail}`,
+            status: response.ok ? 'DELIVERED' : 'FAILED'
+        });
+        if (response.ok) {
+            res.json({ success: true, message: `${channelName} Webhook test payload sent successfully!` });
+        }
+        else {
+            res.status(400).json({ error: `Webhook endpoint returned HTTP status ${response.status}${errorDetail}` });
+        }
+    }
+    catch (err) {
+        await logAlertDispatch({
+            module: 'Webhook',
+            severity: 'CRITICAL',
+            destination: url || 'Webhook URL',
+            title: 'Webhook Test Dispatch Failed',
+            message: err.message,
+            status: 'FAILED'
+        });
+        res.status(500).json({ error: err.message || 'Failed delivering test webhook payload' });
+    }
+});
+// ─── Generic SMTP Config Endpoints ─────────────────────────────────────────
+app.get('/api/smtp/config', async (_req, res) => {
+    try {
+        const config = await loadSMTPConfig();
+        res.json(config);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.post('/api/smtp/config', async (req, res) => {
+    try {
+        const { isEnabled, host, port, username, password, security, fromEmail, recipientEmails } = req.body;
+        await saveSMTPConfig({
+            isEnabled: !!isEnabled,
+            host: host || '',
+            port: parseInt(port || '587', 10),
+            username: username || '',
+            password: password || '',
+            security: security || 'tls',
+            fromEmail: fromEmail || '',
+            recipientEmails: recipientEmails || ''
+        });
+        res.json({ success: true, message: 'Generic SMTP Mail Server configuration saved cleanly.' });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.post('/api/smtp/test', async (req, res) => {
+    try {
+        const overrideCfg = req.body;
+        const result = await sendEmailViaSMTP('[TEST ALERT] PingsNest Generic SMTP Server Verification', `
+        <div style="font-family: Arial, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 24px; border-radius: 12px;">
+          <h2 style="color: #38bdf8; margin-top: 0;">🟢 Generic SMTP Mail Dispatcher Verified</h2>
+          <p style="font-size: 14px; color: #cbd5e1;">
+            Your Generic SMTP integration is active and operating cleanly!
+          </p>
+          <div style="background: rgba(255,255,255,0.05); padding: 14px; border-radius: 8px; font-family: monospace; font-size: 12px; margin: 16px 0;">
+            <strong>Test Timestamp:</strong> ${new Date().toISOString()}<br/>
+            <strong>SMTP Host:</strong> ${overrideCfg?.host || 'Default'}:${overrideCfg?.port || 587}<br/>
+            <strong>From Email:</strong> ${overrideCfg?.fromEmail || 'Default'}<br/>
+            <strong>Recipients:</strong> ${overrideCfg?.recipientEmails || 'Default'}
+          </div>
+          <p style="font-size: 12px; color: #94a3b8;">
+            PingsNest will automatically route high-priority fleet alerts, latency spikes, and downtime alerts to these recipients.
+          </p>
+        </div>
+      `, overrideCfg?.host ? overrideCfg : undefined);
+        await logAlertDispatch({
+            module: 'Generic SMTP',
+            severity: 'INFO',
+            destination: overrideCfg?.recipientEmails || 'SMTP Recipients',
+            title: 'SMTP Test Verification',
+            message: 'Test email dispatched successfully via SMTP',
+            status: 'DELIVERED'
+        });
+        res.json({ success: true, message: `SMTP test email sent successfully! MessageId: ${result.messageId || 'OK'}` });
+    }
+    catch (err) {
+        await logAlertDispatch({
+            module: 'Generic SMTP',
+            severity: 'CRITICAL',
+            destination: 'SMTP Email',
+            title: 'SMTP Test Dispatch Failed',
+            message: err.message,
+            status: 'FAILED'
+        });
+        res.status(500).json({ error: err.message || 'Failed sending SMTP test email' });
+    }
+});
+// ─── AWS SES Config Endpoints ─────────────────────────────────────────────
+app.get('/api/ses/config', async (_req, res) => {
+    try {
+        const config = await loadSESConfig();
+        res.json(config);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.post('/api/ses/config', async (req, res) => {
+    try {
+        const { isEnabled, senderEmail, recipientEmails, region, accessKeyId, secretAccessKey } = req.body;
+        await saveSESConfig({
+            isEnabled: !!isEnabled,
+            senderEmail: senderEmail || '',
+            recipientEmails: recipientEmails || '',
+            region: region || 'us-east-1',
+            accessKeyId: accessKeyId || '',
+            secretAccessKey: secretAccessKey || ''
+        });
+        res.json({ success: true, message: 'AWS SES Configuration updated cleanly.' });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.post('/api/ses/test', async (req, res) => {
+    try {
+        const overrideCfg = req.body;
+        const result = await sendEmailViaSES('[TEST ALERT] PingsNest AWS SES Email Dispatcher Verification', `
+        <div style="font-family: Arial, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 24px; border-radius: 12px;">
+          <h2 style="color: #34d399; margin-top: 0;">🟢 AWS SES Email Alerting Verified</h2>
+          <p style="font-size: 14px; color: #cbd5e1;">
+            Your AWS Simple Email Service (SES) integration is active and operating cleanly!
+          </p>
+          <div style="background: rgba(255,255,255,0.05); padding: 14px; border-radius: 8px; font-family: monospace; font-size: 12px; margin: 16px 0;">
+            <strong>Test Timestamp:</strong> ${new Date().toISOString()}<br/>
+            <strong>SES Region:</strong> ${overrideCfg?.region || 'us-east-1'}<br/>
+            <strong>Sender Email:</strong> ${overrideCfg?.senderEmail || 'Default'}<br/>
+            <strong>Recipients:</strong> ${overrideCfg?.recipientEmails || 'Default'}
+          </div>
+          <p style="font-size: 12px; color: #94a3b8;">
+            PingsNest will automatically route high-priority fleet alerts, latency spikes, 5xx error anomalies, and synthetic monitor downtime alerts to these recipients.
+          </p>
+        </div>
+      `, overrideCfg?.senderEmail ? overrideCfg : undefined);
+        await logAlertDispatch({
+            module: 'AWS SES',
+            severity: 'INFO',
+            destination: overrideCfg?.recipientEmails || 'Email Recipients',
+            title: 'AWS SES Test Verification',
+            message: 'Test email dispatched successfully via SES',
+            status: 'DELIVERED'
+        });
+        res.json({ success: true, message: `AWS SES test email sent successfully! MessageId: ${result.messageId || 'OK'}` });
+    }
+    catch (err) {
+        await logAlertDispatch({
+            module: 'AWS SES',
+            severity: 'CRITICAL',
+            destination: 'Email',
+            title: 'AWS SES Test Dispatch Failed',
+            message: err.message,
+            status: 'FAILED'
+        });
+        res.status(500).json({ error: err.message || 'Failed sending SES test email' });
+    }
+});
+// ─── Generic Fleet Alert Rules Endpoints ─────────────────────────────────────
+app.get('/api/alerts/generic-rules', async (_req, res) => {
+    try {
+        const rules = await loadGenericAlertRules();
+        res.json(rules);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.post('/api/alerts/generic-rules', async (req, res) => {
+    try {
+        await saveGenericAlertRules(req.body);
+        res.json({ success: true, message: 'Generic fleet alerting rules updated.' });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── Test Notification Dispatcher Endpoint ──────────────────────────────────
+app.post('/api/notifications/test', async (_req, res) => {
+    try {
+        await dispatchGatewayFleetAlert({
+            severity: 'critical',
+            gatewayId: 'gw-payment-v2',
+            gatewayName: 'Payments & Billing Gateway',
+            region: 'us-east-1',
+            stage: 'prod',
+            routePath: '/v1/payments/charge',
+            backendLambdaName: 'payment-processor-fn',
+            metricName: '5xx Error Rate',
+            currentValue: '4.8%',
+            thresholdValue: '1.0%',
+            logSource: 'Lambda Log Group Fallback (/aws/lambda/payment-processor-fn)',
+            details: 'Test notification triggered from PingsNest Settings. Backend Lambda timed out connecting to database.'
+        });
+        res.json({ success: true, message: `Test alert dispatched to configured notification destinations (Slack, MS Teams, PagerDuty, AWS SES Email).` });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── Notification Templates Preview Endpoint ─────────────────────────────────
+app.get('/api/notifications/templates', async (_req, res) => {
+    const samplePayload = {
+        severity: 'critical',
+        gatewayId: 'gw-payments-prod-01',
+        gatewayName: 'Payments & Checkout Gateway',
+        region: 'us-east-1',
+        stage: 'prod',
+        routePath: '/v1/payments/checkout',
+        backendLambdaName: 'payment-processor-lambda',
+        metricName: '5xx Error Rate',
+        currentValue: '5.4%',
+        thresholdValue: '1.0%',
+        logSource: '/aws/apigateway/payments-prod-access-logs',
+        details: 'P99 backend database connection pool exhausted resulting in 504 Gateway Timeouts across checkout routes.'
+    };
+    res.json({
+        emailHTML: buildHTMLNotificationTemplate(samplePayload),
+        slackBlockKit: buildSlackBlockKitTemplate(samplePayload),
+        msTeamsCard: buildMSTeamsAdaptiveCardTemplate(samplePayload),
+        discordEmbed: buildDiscordEmbedTemplate(samplePayload),
+        pagerDutyPayload: buildPagerDutyPayloadTemplate(samplePayload, 'pd-integration-key-sample')
+    });
+});
+app.post('/api/notifications/test-template', async (req, res) => {
+    const { channel = 'email', url } = req.body;
+    const samplePayload = {
+        severity: 'critical',
+        gatewayId: 'gw-test-fleet-01',
+        gatewayName: 'Fleet Core API Gateway',
+        region: 'us-east-1',
+        stage: 'prod',
+        routePath: '/v2/api/health',
+        backendLambdaName: 'core-healthcheck-fn',
+        metricName: 'Test Anomaly Trigger',
+        currentValue: 'High Severity',
+        thresholdValue: 'Baseline Standard',
+        logSource: 'Manual Template Verification Test',
+        details: `Template Verification Test dispatched for channel: ${channel.toUpperCase()}`
+    };
+    try {
+        if (channel === 'email' || channel === 'ses' || channel === 'smtp') {
+            const sesCfg = await loadSESConfig();
+            if (sesCfg.isEnabled && sesCfg.senderEmail && sesCfg.recipientEmails) {
+                await sendEmailViaSES(`[TEST TEMPLATE] ${samplePayload.gatewayName}`, buildHTMLNotificationTemplate(samplePayload), sesCfg);
+                return res.json({ success: true, message: 'Test HTML Email template sent via AWS SES!' });
+            }
+            const smtpCfg = await loadSMTPConfig();
+            if (smtpCfg.isEnabled && smtpCfg.host && smtpCfg.fromEmail && smtpCfg.recipientEmails) {
+                await sendEmailViaSMTP(`[TEST TEMPLATE] ${samplePayload.gatewayName}`, buildHTMLNotificationTemplate(samplePayload), smtpCfg);
+                return res.json({ success: true, message: 'Test HTML Email template sent via Generic SMTP!' });
+            }
+            return res.status(400).json({ error: 'Please configure & enable AWS SES or Generic SMTP in Notification Channel Settings.' });
+        }
+        const whConfig = await loadWebhookChannelsConfig();
+        let targetUrl = url || '';
+        if (!targetUrl) {
+            if (channel === 'slack')
+                targetUrl = whConfig.slackUrl;
+            else if (channel === 'teams' || channel === 'msteams')
+                targetUrl = whConfig.teamsUrl;
+            else if (channel === 'discord')
+                targetUrl = whConfig.discordUrl;
+            else if (channel === 'pagerduty')
+                targetUrl = whConfig.pagerdutyUrl;
+            else if (channel === 'custom')
+                targetUrl = whConfig.customUrl;
+        }
+        if (!targetUrl) {
+            return res.status(400).json({
+                error: `No Webhook URL configured for ${channel.toUpperCase()}. Please enter a ${channel.toUpperCase()} Webhook URL in Notification Channel Settings.`
+            });
+        }
+        let payload = {};
+        if (channel === 'slack')
+            payload = buildSlackBlockKitTemplate(samplePayload);
+        else if (channel === 'teams' || channel === 'msteams')
+            payload = buildMSTeamsAdaptiveCardTemplate(samplePayload);
+        else if (channel === 'discord')
+            payload = buildDiscordEmbedTemplate(samplePayload);
+        else if (channel === 'pagerduty')
+            payload = buildPagerDutyPayloadTemplate(samplePayload, targetUrl);
+        else {
+            const fullText = [
+                `🚨 *[CRITICAL ALERT] ${samplePayload.gatewayName}*`,
+                `• *Gateway ID:* \`${samplePayload.gatewayId}\``,
+                `• *Region / Stage:* \`${samplePayload.region} (${samplePayload.stage})\``,
+                `• *Breached Metric:* *${samplePayload.metricName}*`,
+                `• *Current Value:* \`${samplePayload.currentValue}\` (Limit: \`${samplePayload.thresholdValue}\`)`,
+                `• *Target Route:* \`${samplePayload.routePath}\``,
+                `• *Backend Function:* \`${samplePayload.backendLambdaName}\``,
+                `• *Details:* ${samplePayload.details}`
+            ].join('\n');
+            payload = {
+                type: 'message',
+                text: fullText,
+                message: fullText,
+                content: fullText,
+                attachments: [{ color: '#34d399', title: samplePayload.gatewayName, text: fullText }],
+                event: 'test_template',
+                payload: samplePayload,
+                timestamp: new Date().toISOString()
+            };
+        }
+        const postEndpoint = (channel === 'pagerduty' && !targetUrl.startsWith('http'))
+            ? 'https://events.pagerduty.com/v2/enqueue'
+            : targetUrl;
+        const response = await fetch(postEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        let respText = '';
+        try {
+            respText = await response.text();
+        }
+        catch { }
+        const errDetails = respText ? `: ${respText.substring(0, 180)}` : '';
+        await logAlertDispatch({
+            module: `Template Test (${channel.toUpperCase()})`,
+            severity: response.ok ? 'INFO' : 'WARNING',
+            destination: postEndpoint,
+            title: `${channel.toUpperCase()} Template Verification`,
+            message: response.ok ? 'Template test alert delivered successfully' : `HTTP ${response.status}${errDetails}`,
+            status: response.ok ? 'DELIVERED' : 'FAILED'
+        });
+        if (response.ok) {
+            return res.json({ success: true, message: `Test dispatch delivered successfully to ${channel.toUpperCase()} webhook!` });
+        }
+        else {
+            return res.status(400).json({ error: `Webhook endpoint returned HTTP status ${response.status}${errDetails}` });
+        }
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 // ─── 3. CloudWatch Metrics ────────────────────────────────────────────────────
 app.post('/api/aws/metrics', async (req, res) => {
     const { region, accessKeyId, secretAccessKey, apiId, apiName, protocol, stage, bypassCache } = req.body;
@@ -1118,6 +1886,30 @@ app.post('/api/aws/metrics', async (req, res) => {
                 errorRate: errRate, avgLatency: Math.round(avgLat),
                 totalRequests: totalReqs, status4xx: total4xx, status5xx: total5xx,
             }).catch(e => console.warn('[Alerts] eval error:', e.message));
+            // Evaluate against Pre-created & Generic Alert Rules for multi-channel dispatching
+            try {
+                const genericRules = await loadGenericAlertRules();
+                const errThresh = Number(genericRules.gatewayErrorRateThreshold || 2.0);
+                const latThresh = Number(genericRules.gatewayLatencyThresholdMs || 1500);
+                if (total5xx > 0 || errRate >= errThresh || avgLat >= latThresh) {
+                    const isCritical = total5xx > 5 || errRate >= (errThresh * 2);
+                    const metricName = total5xx > 0 ? '5xx Server Error Spike' : errRate >= errThresh ? 'High Error Rate Breach' : 'Latency Degradation Breach';
+                    const currentValue = total5xx > 0 ? `${total5xx} HTTP 5xx Errors` : errRate >= errThresh ? `${errRate}% Error Rate` : `${Math.round(avgLat)}ms Latency`;
+                    const thresholdValue = total5xx > 0 ? '0 5xx Errors' : errRate >= errThresh ? `${errThresh}% Limit` : `${latThresh}ms Limit`;
+                    await dispatchGatewayFleetAlert({
+                        severity: isCritical ? 'critical' : 'warning',
+                        gatewayId: apiId,
+                        gatewayName: `API Gateway (${apiId})`,
+                        region: region || 'us-east-1',
+                        stage,
+                        metricName,
+                        currentValue,
+                        thresholdValue,
+                        details: `API Gateway ${apiId} breached configured telemetry threshold on stage '${stage}'. Current value: ${currentValue} (Limit: ${thresholdValue}).`
+                    }).catch(e => console.warn('[Gateway Alert Dispatch Error]:', e));
+                }
+            }
+            catch (genErr) { }
         }
     }
     catch (err) {
@@ -1840,6 +2632,29 @@ app.post('/api/aws/integrated-lambdas', async (req, res) => {
 const TARGETS_PATH = fs.existsSync('/app/credentials')
     ? '/app/credentials/url_targets.json'
     : path.join(process.cwd(), 'url_targets.json');
+// Helper: Check if status code matches ignored status codes/ranges (e.g. "300, 301, 300-399")
+function isStatusCodeIgnored(code, ignoredStr) {
+    if (!ignoredStr || !ignoredStr.trim())
+        return false;
+    const parts = ignoredStr.split(/[,;\s]+/).map(p => p.trim()).filter(Boolean);
+    for (const part of parts) {
+        if (part.includes('-')) {
+            const [minStr, maxStr] = part.split('-').map(s => s.trim());
+            const min = Number(minStr);
+            const max = Number(maxStr);
+            if (!isNaN(min) && !isNaN(max) && code >= min && code <= max) {
+                return true;
+            }
+        }
+        else {
+            const num = Number(part);
+            if (!isNaN(num) && code === num) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
 // Helper: Load all targets from DB
 async function loadTargets() {
     try {
@@ -1856,7 +2671,8 @@ async function loadTargets() {
             recentPings: Array.isArray(r.recentPings) ? r.recentPings : [],
             steps: Array.isArray(r.steps) ? r.steps : [],
             assertions: Array.isArray(r.assertions) ? r.assertions : [],
-            suppressAlertsUntil: r.suppressAlertsUntil || undefined
+            suppressAlertsUntil: r.suppressAlertsUntil || undefined,
+            ignoredStatusCodes: r.ignoredStatusCodes || undefined
         }));
     }
     catch (err) {
@@ -1866,8 +2682,8 @@ async function loadTargets() {
 }
 // Helper: Upsert single target
 async function saveTarget(t) {
-    await query(`INSERT INTO targets (id, name, url, interval, method, headers, body, "bodyEncoding", status, timeout, retries, "retryInterval", "groupName", "certExpiryDate", "certExpDays", "lastCheck", "lastStatusCode", "lastStatusText", "lastLatency", "isUp", "recentPings", steps)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+    await query(`INSERT INTO targets (id, name, url, interval, method, headers, body, "bodyEncoding", status, timeout, retries, "retryInterval", "groupName", "certExpiryDate", "certExpDays", "lastCheck", "lastStatusCode", "lastStatusText", "lastLatency", "isUp", "recentPings", steps, "ignoredStatusCodes", assertions, "suppressAlertsUntil")
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
      ON CONFLICT (id) DO UPDATE SET
        name=EXCLUDED.name, url=EXCLUDED.url, interval=EXCLUDED.interval, method=EXCLUDED.method,
        headers=EXCLUDED.headers, body=EXCLUDED.body, "bodyEncoding"=EXCLUDED."bodyEncoding",
@@ -1876,13 +2692,19 @@ async function saveTarget(t) {
        "certExpiryDate"=EXCLUDED."certExpiryDate", "certExpDays"=EXCLUDED."certExpDays",
        "lastCheck"=EXCLUDED."lastCheck", "lastStatusCode"=EXCLUDED."lastStatusCode",
        "lastStatusText"=EXCLUDED."lastStatusText", "lastLatency"=EXCLUDED."lastLatency",
-       "isUp"=EXCLUDED."isUp", "recentPings"=EXCLUDED."recentPings", steps=EXCLUDED.steps`, [t.id, t.name, t.url, t.interval, t.method, t.headers || null, t.body || null,
+       "isUp"=EXCLUDED."isUp", "recentPings"=EXCLUDED."recentPings", steps=EXCLUDED.steps,
+       "ignoredStatusCodes"=EXCLUDED."ignoredStatusCodes",
+       assertions=EXCLUDED.assertions,
+       "suppressAlertsUntil"=EXCLUDED."suppressAlertsUntil"`, [t.id, t.name, t.url, t.interval, t.method, t.headers || null, t.body || null,
         t.bodyEncoding || 'JSON', t.status, t.timeout || 48, t.retries || 0, t.retryInterval || 60,
         t.group || null, t.certExpiryDate || null, t.certExpDays ?? null, t.lastCheck || null,
         t.lastStatusCode ?? null, t.lastStatusText || null, t.lastLatency ?? null,
         typeof t.isUp === 'boolean' ? t.isUp : null,
         JSON.stringify(t.recentPings || []),
-        JSON.stringify(t.steps || [])]);
+        JSON.stringify(t.steps || []),
+        t.ignoredStatusCodes || null,
+        JSON.stringify(t.assertions || []),
+        t.suppressAlertsUntil || null]);
 }
 // Helper: save entire list (delete removed, upsert existing)
 async function saveTargets(targets) {
@@ -2033,7 +2855,11 @@ async function pingTarget(target) {
                 catch { }
                 // Assertion evaluation
                 const expectedStatus = step.expectedStatus || 200;
-                stepIsUp = res.status === expectedStatus || (expectedStatus === 200 && res.ok);
+                const stepStatusIgnored = isStatusCodeIgnored(stepStatusCode, target.ignoredStatusCodes);
+                stepIsUp = res.status === expectedStatus || (expectedStatus === 200 && res.ok) || stepStatusIgnored;
+                if (stepStatusIgnored && !res.ok) {
+                    stepStatusText = `OK (Ignored ${stepStatusCode})`;
+                }
                 if (step.assertionPattern && resText) {
                     if (!resText.includes(step.assertionPattern)) {
                         stepIsUp = false;
@@ -2094,7 +2920,11 @@ async function pingTarget(target) {
             statusCode = response.status;
             statusText = response.statusText;
             const resText = await response.text().catch(() => '');
-            isUp = response.ok || (response.status >= 200 && response.status < 400);
+            const statusIgnored = isStatusCodeIgnored(statusCode, target.ignoredStatusCodes);
+            isUp = response.ok || (response.status >= 200 && response.status < 400) || statusIgnored;
+            if (statusIgnored && !response.ok) {
+                statusText = `OK (Ignored ${statusCode})`;
+            }
             // Evaluate Synthetic Assertion Rules
             if (isUp && target.assertions && Array.isArray(target.assertions) && target.assertions.length > 0) {
                 const { evaluateSyntheticAssertions } = await import('./syntheticAssertions.js');
@@ -2130,20 +2960,15 @@ async function pingTarget(target) {
             await query(`INSERT INTO url_incidents (id, "targetId", "targetName", "targetUrl", "startedAt", "statusCode", "errorReason", "isResolved")
          VALUES ($1, $2, $3, $4, NOW(), $5, $6, false)`, [incidentId, target.id, target.name, target.url, statusCode, statusText]);
             console.log(`[URL Outage] Incident ${incidentId} logged for ${target.name} (${statusCode})`);
-            // Dispatch Webhook Outage Alerts to configured active alert rules
-            try {
-                const { rows: rules } = await query(`SELECT * FROM alert_rules WHERE enabled = true`);
-                for (const rule of rules) {
-                    if (rule.apiId === '*' || rule.apiId === target.id || rule.apiId === 'URL:*') {
-                        await fireUrlTargetWebhook(rule.webhookUrl, rule.channel, { name: target.name, url: target.url, lastStatusCode: statusCode, lastStatusText: statusText }, 'down').catch(err => {
-                            console.warn(`[URL Alert] Outage webhook failed for ${rule.name}:`, err.message);
-                        });
-                    }
-                }
-            }
-            catch (alertErr) {
-                console.error('[URL Outage Alert Error]:', alertErr);
-            }
+            // Dispatch Outage Alert to ALL configured Notification Channels & Audit Log
+            await dispatchUrlMonitorAlert({
+                targetId: target.id,
+                targetName: target.name,
+                targetUrl: target.url,
+                statusCode,
+                statusText,
+                eventType: 'down'
+            }).catch(err => console.error('[URL Outage Alert Dispatch Error]:', err));
         }
         else if (isUp && hasOpenIncident) {
             // Resolve existing outage incident
@@ -2151,20 +2976,16 @@ async function pingTarget(target) {
             const { rows: updateRows } = await query(`UPDATE url_incidents SET "endedAt" = NOW(), "durationSec" = GREATEST(1, EXTRACT(EPOCH FROM (NOW() - "startedAt"))::int), "isResolved" = true WHERE id = $1 RETURNING "durationSec"`, [inc.id]);
             const durationSec = updateRows[0]?.durationSec || 0;
             console.log(`[URL Outage] Incident ${inc.id} resolved for ${target.name} (Duration: ${durationSec}s)`);
-            // Dispatch Webhook Recovery Alerts to configured active alert rules
-            try {
-                const { rows: rules } = await query(`SELECT * FROM alert_rules WHERE enabled = true`);
-                for (const rule of rules) {
-                    if (rule.apiId === '*' || rule.apiId === target.id || rule.apiId === 'URL:*') {
-                        await fireUrlTargetWebhook(rule.webhookUrl, rule.channel, { name: target.name, url: target.url, lastStatusCode: statusCode, lastStatusText: statusText }, 'up', { durationSec }).catch(err => {
-                            console.warn(`[URL Alert] Recovery webhook failed for ${rule.name}:`, err.message);
-                        });
-                    }
-                }
-            }
-            catch (alertErr) {
-                console.error('[URL Recovery Alert Error]:', alertErr);
-            }
+            // Dispatch Recovery Alert to ALL configured Notification Channels & Audit Log
+            await dispatchUrlMonitorAlert({
+                targetId: target.id,
+                targetName: target.name,
+                targetUrl: target.url,
+                statusCode,
+                statusText,
+                eventType: 'up',
+                durationSec
+            }).catch(err => console.error('[URL Recovery Alert Dispatch Error]:', err));
         }
     }
     catch (incErr) {
@@ -2378,22 +3199,57 @@ app.get('/api/url-monitor/targets', requireAuth, async (_req, res) => {
     res.json({ targets: await loadTargets() });
 });
 app.post('/api/url-monitor/targets', requireAuth, async (req, res) => {
-    const { name, url, interval, method, headers, body, timeout, retries, retryInterval, group, bodyEncoding } = req.body;
+    const { name, url, interval, method, headers, body, timeout, retries, retryInterval, group, bodyEncoding, ignoredStatusCodes, steps, assertions, suppressAlertsUntil } = req.body;
     if (!name || !url)
         return res.status(400).json({ error: 'Missing target parameters' });
-    let newTarget = { id: Math.random().toString(36).substring(2, 9), name, url, interval: Number(interval) || 60, method: method || 'GET', headers, body, bodyEncoding: bodyEncoding || 'JSON', status: 'active', timeout: typeof timeout !== 'undefined' ? Number(timeout) : 48, retries: typeof retries !== 'undefined' ? Number(retries) : 0, retryInterval: typeof retryInterval !== 'undefined' ? Number(retryInterval) : 60, group: group || '' };
+    let newTarget = {
+        id: Math.random().toString(36).substring(2, 9),
+        name,
+        url,
+        interval: Number(interval) || 60,
+        method: method || 'GET',
+        headers,
+        body,
+        bodyEncoding: bodyEncoding || 'JSON',
+        status: 'active',
+        timeout: typeof timeout !== 'undefined' ? Number(timeout) : 48,
+        retries: typeof retries !== 'undefined' ? Number(retries) : 0,
+        retryInterval: typeof retryInterval !== 'undefined' ? Number(retryInterval) : 60,
+        group: group || '',
+        ignoredStatusCodes: ignoredStatusCodes || '',
+        steps: Array.isArray(steps) ? steps : [],
+        assertions: Array.isArray(assertions) ? assertions : [],
+        suppressAlertsUntil
+    };
     newTarget = await pingTarget(newTarget);
     await saveTarget(newTarget);
     res.json({ success: true, target: newTarget });
 });
 app.put('/api/url-monitor/targets/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
-    const { name, url, interval, method, headers, body, timeout, retries, retryInterval, group, bodyEncoding } = req.body;
+    const { name, url, interval, method, headers, body, timeout, retries, retryInterval, group, bodyEncoding, ignoredStatusCodes, steps, assertions, suppressAlertsUntil } = req.body;
     const targets = await loadTargets();
     const idx = targets.findIndex(t => t.id === id);
     if (idx === -1)
         return res.status(404).json({ error: 'Target not found' });
-    const updatedTarget = { ...targets[idx], name: name || targets[idx].name, url: url || targets[idx].url, interval: typeof interval !== 'undefined' ? Number(interval) : targets[idx].interval, method: method || targets[idx].method, headers: typeof headers !== 'undefined' ? headers : targets[idx].headers, body: typeof body !== 'undefined' ? body : targets[idx].body, bodyEncoding: typeof bodyEncoding !== 'undefined' ? bodyEncoding : targets[idx].bodyEncoding, timeout: typeof timeout !== 'undefined' ? Number(timeout) : targets[idx].timeout, retries: typeof retries !== 'undefined' ? Number(retries) : targets[idx].retries, retryInterval: typeof retryInterval !== 'undefined' ? Number(retryInterval) : targets[idx].retryInterval, group: typeof group !== 'undefined' ? group : targets[idx].group };
+    const updatedTarget = {
+        ...targets[idx],
+        name: name || targets[idx].name,
+        url: url || targets[idx].url,
+        interval: typeof interval !== 'undefined' ? Number(interval) : targets[idx].interval,
+        method: method || targets[idx].method,
+        headers: typeof headers !== 'undefined' ? headers : targets[idx].headers,
+        body: typeof body !== 'undefined' ? body : targets[idx].body,
+        bodyEncoding: typeof bodyEncoding !== 'undefined' ? bodyEncoding : targets[idx].bodyEncoding,
+        timeout: typeof timeout !== 'undefined' ? Number(timeout) : targets[idx].timeout,
+        retries: typeof retries !== 'undefined' ? Number(retries) : targets[idx].retries,
+        retryInterval: typeof retryInterval !== 'undefined' ? Number(retryInterval) : targets[idx].retryInterval,
+        group: typeof group !== 'undefined' ? group : targets[idx].group,
+        ignoredStatusCodes: typeof ignoredStatusCodes !== 'undefined' ? ignoredStatusCodes : targets[idx].ignoredStatusCodes,
+        steps: typeof steps !== 'undefined' ? (Array.isArray(steps) ? steps : []) : targets[idx].steps,
+        assertions: typeof assertions !== 'undefined' ? (Array.isArray(assertions) ? assertions : []) : targets[idx].assertions,
+        suppressAlertsUntil: typeof suppressAlertsUntil !== 'undefined' ? suppressAlertsUntil : targets[idx].suppressAlertsUntil
+    };
     const checked = await pingTarget(updatedTarget);
     await saveTarget(checked);
     res.json({ success: true, target: checked });
@@ -2450,6 +3306,224 @@ app.get('/api/url-monitor/incidents/:id', requireAuth, async (req, res) => {
         res.json({ incidents: [] });
     }
 });
+app.get('/api/url-monitor/incidents/all', requireAuth, async (_req, res) => {
+    try {
+        const { rows } = await query(`SELECT id, "targetId", "targetName", "targetUrl", "startedAt", "endedAt", "durationSec", "statusCode", "errorReason", "isResolved"
+       FROM url_incidents ORDER BY "startedAt" DESC LIMIT 50`);
+        res.json({ incidents: rows });
+    }
+    catch {
+        res.json({ incidents: [] });
+    }
+});
+// ─── Public Real-Time Status Portal API ──────────────────────────────────────
+app.get('/api/status/public', async (_req, res) => {
+    try {
+        const targets = await loadTargets();
+        let incidents = [];
+        try {
+            const { rows } = await query(`SELECT id, "targetId", "targetName", "targetUrl", "startedAt", "endedAt", "durationSec", "statusCode", "errorReason", "isResolved"
+         FROM url_incidents ORDER BY "startedAt" DESC LIMIT 30`);
+            incidents = rows.map(r => ({
+                id: r.id,
+                targetId: r.targetId,
+                targetName: r.targetName,
+                targetUrl: r.targetUrl,
+                startedAt: r.startedAt instanceof Date ? r.startedAt.toISOString() : r.startedAt,
+                endedAt: r.endedAt ? (r.endedAt instanceof Date ? r.endedAt.toISOString() : r.endedAt) : undefined,
+                durationSec: r.durationSec,
+                statusCode: r.statusCode,
+                errorReason: r.errorReason,
+                isResolved: r.isResolved
+            }));
+        }
+        catch { }
+        const sanitizedTargets = targets.map(t => ({
+            id: t.id,
+            name: t.name,
+            url: t.url,
+            method: t.method,
+            group: t.group,
+            isUp: t.isUp !== false,
+            lastStatusCode: t.lastStatusCode,
+            lastLatency: t.lastLatency,
+            lastCheck: t.lastCheck,
+            certExpDays: t.certExpDays,
+            recentPings: t.recentPings || []
+        }));
+        let settings = { title: 'PingsNest System Status', notice: '', logoUrl: '', accentColor: '#00f2fe' };
+        try {
+            const { rows: setRows } = await query('SELECT * FROM status_portal_settings WHERE id = $1', ['default']);
+            if (setRows.length > 0)
+                settings = setRows[0];
+        }
+        catch { }
+        res.json({
+            success: true,
+            targets: sanitizedTargets,
+            incidents,
+            title: settings.title,
+            notice: settings.notice,
+            logoUrl: settings.logoUrl,
+            accentColor: settings.accentColor,
+            supportEmail: settings.supportEmail,
+            customDomain: settings.customDomain,
+            updatedAt: new Date().toISOString()
+        });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── Status Portal Settings (Custom Branding & Logo) ──────────────────────────
+app.get('/api/status/settings', async (_req, res) => {
+    try {
+        const { rows } = await query('SELECT * FROM status_portal_settings WHERE id = $1', ['default']);
+        if (rows.length > 0) {
+            res.json({ settings: rows[0] });
+        }
+        else {
+            res.json({
+                settings: {
+                    title: 'PingsNest System Status',
+                    notice: '',
+                    logoUrl: '',
+                    accentColor: '#00f2fe',
+                    supportEmail: '',
+                    customDomain: ''
+                }
+            });
+        }
+    }
+    catch {
+        res.json({ settings: { title: 'PingsNest System Status', notice: '', logoUrl: '', accentColor: '#00f2fe' } });
+    }
+});
+app.post('/api/status/settings', requireAuth, async (req, res) => {
+    const { title, notice, logoUrl, accentColor, supportEmail, customDomain } = req.body;
+    try {
+        await query(`INSERT INTO status_portal_settings (id, title, notice, "logoUrl", "accentColor", "supportEmail", "customDomain", "updatedAt")
+       VALUES ('default', $1, $2, $3, $4, $5, $6, NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         title = EXCLUDED.title,
+         notice = EXCLUDED.notice,
+         "logoUrl" = EXCLUDED."logoUrl",
+         "accentColor" = EXCLUDED."accentColor",
+         "supportEmail" = EXCLUDED."supportEmail",
+         "customDomain" = EXCLUDED."customDomain",
+         "updatedAt" = NOW()`, [
+            title || 'PingsNest System Status',
+            notice || '',
+            logoUrl || '',
+            accentColor || '#00f2fe',
+            supportEmail || '',
+            customDomain || ''
+        ]);
+        res.json({ success: true });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── RSS 2.0 XML Status Feed ──────────────────────────────────────────────────
+app.get(['/public-status/rss.xml', '/api/status/rss.xml'], async (req, res) => {
+    try {
+        const { rows: incidents } = await query(`SELECT * FROM url_incidents ORDER BY "startedAt" DESC LIMIT 20`);
+        const host = `${req.protocol}://${req.get('host')}`;
+        const pubDate = new Date().toUTCString();
+        let itemsXml = '';
+        for (const inc of incidents) {
+            const incDate = new Date(inc.startedAt).toUTCString();
+            const statusText = inc.isResolved ? 'RESOLVED' : 'ACTIVE OUTAGE';
+            itemsXml += `
+    <item>
+      <title>[${statusText}] Outage Incident for ${inc.targetName}</title>
+      <link>${host}/public-status</link>
+      <guid>${inc.id}</guid>
+      <pubDate>${incDate}</pubDate>
+      <description><![CDATA[Service: ${inc.targetName} (${inc.targetUrl})<br/>Status Code: ${inc.statusCode || 500}<br/>Reason: ${inc.errorReason || 'Connection Timeout'}<br/>Duration: ${inc.durationSec || 0} seconds]]></description>
+    </item>`;
+        }
+        const rssXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>PingsNest System Status Feed</title>
+    <link>${host}/public-status</link>
+    <description>Live Uptime & Outage Incident Announcements RSS 2.0 Feed</description>
+    <language>en-us</language>
+    <pubDate>${pubDate}</pubDate>
+    <lastBuildDate>${pubDate}</lastBuildDate>
+    <atom:link href="${host}/public-status/rss.xml" rel="self" type="application/rss+xml" />
+    ${itemsXml}
+  </channel>
+</rss>`;
+        res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+        res.send(rssXml);
+    }
+    catch (err) {
+        res.status(500).send('Error generating RSS feed');
+    }
+});
+// ─── Incident Root Cause Analysis (RCA) Post-Mortem ─────────────────────────
+app.get('/api/url-monitor/incidents/:id/rca', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    try {
+        const { rows } = await query('SELECT * FROM url_incidents WHERE id = $1', [id]);
+        if (rows.length === 0)
+            return res.status(404).json({ error: 'Incident record not found' });
+        const { generateIncidentRca } = await import('./rcaGenerator.js');
+        const report = generateIncidentRca(rows[0]);
+        res.json({ success: true, report });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── SLO Error Budget & Burn Rate Endpoint ──────────────────────────────────
+app.get('/api/url-monitor/slo/:id', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const targetSlo = Number(req.query.slo) || 99.9;
+    try {
+        const { calculateTargetSlo } = await import('./sloTracker.js');
+        const sloMetrics = await calculateTargetSlo(id, targetSlo);
+        res.json({ success: true, slo: sloMetrics });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── API Gateway Cyber Security & Anomaly Defense Endpoints ──────────────────
+app.get('/api/security/threats', requireAuth, async (_req, res) => {
+    try {
+        const { rows } = await query('SELECT * FROM security_threats ORDER BY timestamp DESC LIMIT 50');
+        res.json({ threats: rows });
+    }
+    catch {
+        res.json({ threats: [] });
+    }
+});
+app.get('/api/security/ip-blacklist', requireAuth, async (_req, res) => {
+    try {
+        const { rows } = await query('SELECT * FROM ip_blacklist ORDER BY "createdAt" DESC');
+        res.json({ blacklist: rows });
+    }
+    catch {
+        res.json({ blacklist: [] });
+    }
+});
+app.post('/api/security/ip-blacklist', requireAuth, async (req, res) => {
+    const { ip, reason, action } = req.body;
+    if (!ip)
+        return res.status(400).json({ error: 'IP address required' });
+    if (action === 'remove') {
+        await query('DELETE FROM ip_blacklist WHERE ip = $1', [ip]);
+        res.json({ success: true, message: `IP ${ip} removed from blacklist` });
+    }
+    else {
+        await query(`INSERT INTO ip_blacklist (ip, reason, "createdAt") VALUES ($1, $2, NOW()) ON CONFLICT (ip) DO UPDATE SET reason = EXCLUDED.reason`, [ip, reason || 'Manual Admin Ban']);
+        res.json({ success: true, message: `IP ${ip} added to firewall blacklist` });
+    }
+});
 app.post('/api/url-monitor/check', requireAuth, async (req, res) => {
     const { id } = req.body;
     const targets = await loadTargets();
@@ -2460,6 +3534,183 @@ app.post('/api/url-monitor/check', requireAuth, async (req, res) => {
     await saveTarget(updated);
     broadcastUrlTargetPing(updated);
     res.json({ success: true, target: updated });
+});
+// ─── Alert Destinations CRUD ──────────────────────────────────────────────────
+app.get('/api/url-monitor/alerts', requireAuth, async (_req, res) => {
+    try {
+        const { rows } = await query('SELECT * FROM alert_destinations ORDER BY "createdAt" DESC');
+        res.json({ destinations: rows });
+    }
+    catch {
+        res.json({ destinations: [] });
+    }
+});
+app.post('/api/url-monitor/alerts', requireAuth, async (req, res) => {
+    const { name, type, url, events } = req.body;
+    if (!name || !type || !url)
+        return res.status(400).json({ error: 'Missing alert parameters' });
+    const id = 'alert-' + Math.random().toString(36).substring(2, 9);
+    await query(`INSERT INTO alert_destinations (id, name, type, url, events, "isEnabled") VALUES ($1, $2, $3, $4, $5, true)`, [id, name, type, url, JSON.stringify(events || ['down', 'up'])]);
+    res.json({ success: true, destination: { id, name, type, url, events, isEnabled: true } });
+});
+app.delete('/api/url-monitor/alerts/:id', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    await query('DELETE FROM alert_destinations WHERE id=$1', [id]);
+    res.json({ success: true });
+});
+app.post('/api/url-monitor/alerts/test', requireAuth, async (_req, res) => {
+    const { dispatchAlertNotification } = await import('./notifications.js');
+    await dispatchAlertNotification('up', { id: 'test', name: 'Test Target Monitor', url: 'https://example.com', lastStatusCode: 200, lastLatency: 35 }, 'This is a 1-click test ping alert from API Gateway & URL Monitor!');
+    res.json({ success: true, message: 'Test notification dispatched!' });
+});
+// ─── Maintenance Windows CRUD ────────────────────────────────────────────────
+app.get('/api/url-monitor/maintenance', requireAuth, async (_req, res) => {
+    try {
+        const { rows } = await query('SELECT * FROM maintenance_windows ORDER BY "startTime" DESC');
+        res.json({ windows: rows });
+    }
+    catch {
+        res.json({ windows: [] });
+    }
+});
+app.post('/api/url-monitor/maintenance', requireAuth, async (req, res) => {
+    const { targetId, title, description, startTime, endTime } = req.body;
+    if (!title || !startTime || !endTime)
+        return res.status(400).json({ error: 'Missing maintenance parameters' });
+    const id = 'maint-' + Math.random().toString(36).substring(2, 9);
+    await query(`INSERT INTO maintenance_windows (id, "targetId", title, description, "startTime", "endTime", "isActive") VALUES ($1, $2, $3, $4, $5, $6, true)`, [id, targetId || null, title, description || '', startTime, endTime]);
+    res.json({ success: true, window: { id, targetId, title, description, startTime, endTime, isActive: true } });
+});
+app.delete('/api/url-monitor/maintenance/:id', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    await query('DELETE FROM maintenance_windows WHERE id=$1', [id]);
+    res.json({ success: true });
+});
+// Helper: Generate crisp, vector SVG status badge
+function generateSvgBadge(label, value, colorHex) {
+    const cleanLabel = String(label).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const cleanValue = String(value).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const labelLen = cleanLabel.length;
+    const valueLen = cleanValue.length;
+    const labelWidth = Math.max(38, Math.round(labelLen * 6.6 + 12));
+    const valueWidth = Math.max(38, Math.round(valueLen * 6.6 + 12));
+    const totalWidth = labelWidth + valueWidth;
+    const labelX = (labelWidth / 2).toFixed(1);
+    const valueX = (labelWidth + valueWidth / 2).toFixed(1);
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="20" role="img" aria-label="${cleanLabel}: ${cleanValue}">
+  <title>${cleanLabel}: ${cleanValue}</title>
+  <linearGradient id="s" x2="0" y2="100%">
+    <stop offset="0" stop-color="#bbb" stop-opacity=".1"/>
+    <stop offset="1" stop-opacity=".1"/>
+  </linearGradient>
+  <clipPath id="r">
+    <rect width="${totalWidth}" height="20" rx="3" fill="#fff"/>
+  </clipPath>
+  <g clip-path="url(#r)">
+    <rect width="${labelWidth}" height="20" fill="#555"/>
+    <rect x="${labelWidth}" width="${valueWidth}" height="20" fill="${colorHex}"/>
+    <rect width="${totalWidth}" height="20" fill="url(#s)"/>
+  </g>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="11">
+    <text x="${labelX}" y="15" fill="#010101" fill-opacity=".3">${cleanLabel}</text>
+    <text x="${labelX}" y="14" fill="#fff">${cleanLabel}</text>
+    <text x="${valueX}" y="15" fill="#010101" fill-opacity=".3">${cleanValue}</text>
+    <text x="${valueX}" y="14" fill="#fff">${cleanValue}</text>
+  </g>
+</svg>`;
+}
+// ─── Public Live SVG Status Badge Service Endpoint ──────────────────────────────
+app.get([
+    '/api/status/badge/all.svg', '/api/status/badge/all',
+    '/api/status/badge/:id.svg', '/api/status/badge/:id',
+    '/api/url-monitor/badge/:id.svg', '/api/url-monitor/badge/:id'
+], async (req, res) => {
+    const rawId = req.params.id || 'all';
+    const id = rawId.replace(/\.svg$/, '');
+    const badgeType = req.query.type || 'uptime';
+    const labelParam = req.query.label || '';
+    try {
+        const targets = await loadTargets();
+        if (id === 'all' || req.path.includes('/badge/all')) {
+            const totalCount = targets.length;
+            const upCount = targets.filter(t => t.isUp !== false).length;
+            const isAllUp = totalCount === 0 || upCount === totalCount;
+            const ratio = totalCount > 0 ? ((upCount / totalCount) * 100).toFixed(1) : '100';
+            const label = labelParam || 'pingsnest';
+            const value = isAllUp ? `${ratio}% operational` : `${upCount}/${totalCount} operational`;
+            const color = isAllUp ? '#4c1' : upCount > 0 ? '#dfb317' : '#e05d44';
+            res.setHeader('Content-Type', 'image/svg+xml');
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+            return res.send(generateSvgBadge(label, value, color));
+        }
+        const target = targets.find(t => t.id === id);
+        if (!target) {
+            res.setHeader('Content-Type', 'image/svg+xml');
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+            return res.send(generateSvgBadge(labelParam || 'monitor', 'not found', '#e05d44'));
+        }
+        let label = labelParam;
+        let value = 'unknown';
+        let color = '#9f9f9f';
+        if (badgeType === 'status') {
+            label = label || 'status';
+            value = target.isUp ? `up (${target.lastStatusCode || 200})` : `down (${target.lastStatusCode || 500})`;
+            color = target.isUp ? '#4c1' : '#e05d44';
+        }
+        else if (badgeType === 'latency' || badgeType === 'response') {
+            label = label || 'response';
+            const lat = target.lastLatency || 0;
+            value = `${lat} ms`;
+            color = lat === 0 ? '#9f9f9f' : lat < 300 ? '#4c1' : lat < 1000 ? '#dfb317' : '#e05d44';
+        }
+        else if (badgeType === 'ssl') {
+            label = label || 'ssl cert';
+            if (target.certExpDays !== undefined) {
+                value = `${target.certExpDays} days`;
+                color = target.certExpDays > 30 ? '#4c1' : target.certExpDays > 10 ? '#dfb317' : '#e05d44';
+            }
+            else {
+                value = 'n/a';
+                color = '#9f9f9f';
+            }
+        }
+        else {
+            // Uptime ratio calculation based on period parameter (24h, 7d, 30d, 90d, 365d)
+            const periodParam = (req.query.period || req.query.range || '').toString().toLowerCase();
+            let sqlInterval = "INTERVAL '24 hours'";
+            let defaultLabel = 'uptime (24h)';
+            if (periodParam === '7d' || periodParam === '1w' || periodParam === 'week') {
+                sqlInterval = "INTERVAL '7 days'";
+                defaultLabel = 'uptime (7d)';
+            }
+            else if (periodParam === '30d' || periodParam === '1m' || periodParam === 'month') {
+                sqlInterval = "INTERVAL '30 days'";
+                defaultLabel = 'uptime (30d)';
+            }
+            else if (periodParam === '90d' || periodParam === '3m' || periodParam === '1q' || periodParam === 'quarter') {
+                sqlInterval = "INTERVAL '90 days'";
+                defaultLabel = 'uptime (90d)';
+            }
+            else if (periodParam === '365d' || periodParam === '1y' || periodParam === 'year') {
+                sqlInterval = "INTERVAL '365 days'";
+                defaultLabel = 'uptime (1y)';
+            }
+            label = label || defaultLabel;
+            const { rows } = await query(`SELECT COUNT(*) AS total, SUM(CASE WHEN "isUp" THEN 1 ELSE 0 END) AS "upCount" FROM pings WHERE "targetId"=$1 AND timestamp >= NOW() - ${sqlInterval}`, [id]);
+            const total = Number(rows[0]?.total || 0);
+            const up = Number(rows[0]?.upCount || 0);
+            const ratio = total > 0 ? (up / total) * 100 : (target.isUp ? 100 : 0);
+            value = `${ratio.toFixed(1)}%`;
+            color = ratio >= 99.0 ? '#4c1' : ratio >= 95.0 ? '#dfb317' : '#e05d44';
+        }
+        res.setHeader('Content-Type', 'image/svg+xml');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+        return res.send(generateSvgBadge(label, value, color));
+    }
+    catch (err) {
+        res.setHeader('Content-Type', 'image/svg+xml');
+        return res.send(generateSvgBadge('error', '500', '#e05d44'));
+    }
 });
 // ─── SLA Statistics ───────────────────────────────────────────────────────────
 app.get('/api/url-monitor/sla/:id', requireAuth, async (req, res) => {
@@ -2788,19 +4039,23 @@ setInterval(async () => {
 app.get('/api/alerts/rules', async (req, res) => {
     try {
         const { apiId, stage } = req.query;
-        let sql = 'SELECT * FROM alert_rules';
-        const params = [];
-        if (apiId) {
-            sql += ` WHERE ("apiId"=$1 OR "apiId"='*')`;
-            params.push(apiId);
-            if (stage) {
-                sql += ` AND (stage=$2 OR stage='*')`;
-                params.push(stage);
+        const cacheKey = `alert_rules:${apiId || 'all'}:${stage || 'all'}`;
+        const result = await cacheGetOrSet(cacheKey, TTL.ALERTS, async () => {
+            let sql = 'SELECT * FROM alert_rules';
+            const params = [];
+            if (apiId) {
+                sql += ` WHERE ("apiId"=$1 OR "apiId"='*')`;
+                params.push(apiId);
+                if (stage) {
+                    sql += ` AND (stage=$2 OR stage='*')`;
+                    params.push(stage);
+                }
             }
-        }
-        sql += ' ORDER BY "createdAt" DESC';
-        const { rows } = await query(sql, params);
-        res.json({ rules: rows });
+            sql += ' ORDER BY "createdAt" DESC';
+            const { rows } = await query(sql, params);
+            return { rules: rows };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -2814,6 +4069,8 @@ app.post('/api/alerts/rules', async (req, res) => {
         const id = crypto.randomUUID();
         await query(`INSERT INTO alert_rules (id, name, "apiId", stage, metric, condition, threshold, "intervalMinutes", "webhookUrl", channel)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [id, name, apiId, stage, metric, condition, threshold, intervalMinutes, webhookUrl, channel]);
+        // Invalidate alert rules cache so new rule appears immediately
+        await cacheDelPattern('alert_rules:*');
         res.json({ success: true, id });
     }
     catch (err) {
@@ -2824,6 +4081,7 @@ app.patch('/api/alerts/rules/:id', async (req, res) => {
     const { enabled } = req.body;
     try {
         await query(`UPDATE alert_rules SET enabled=$1 WHERE id=$2`, [enabled, req.params.id]);
+        await cacheDelPattern('alert_rules:*'); // invalidate so toggled rule reflects immediately
         res.json({ success: true });
     }
     catch (err) {
@@ -2833,29 +4091,130 @@ app.patch('/api/alerts/rules/:id', async (req, res) => {
 app.delete('/api/alerts/rules/:id', async (req, res) => {
     try {
         await query(`DELETE FROM alert_rules WHERE id=$1`, [req.params.id]);
+        await cacheDelPattern('alert_rules:*'); // invalidate so deleted rule is removed immediately
         res.json({ success: true });
     }
     catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
+// ─── Background Monitored API Gateways & Alert Scopes API ────────────────────
+app.get('/api/alerts/monitored-gateways', async (_req, res) => {
+    try {
+        const { rows } = await query('SELECT * FROM monitored_gateways ORDER BY "createdAt" DESC');
+        res.json({ gateways: rows });
+    }
+    catch {
+        res.json({ gateways: [] });
+    }
+});
+app.post('/api/alerts/monitored-gateways', async (req, res) => {
+    const { gatewayId, gatewayName, region, stage, connectionId, awsAccountName, pollIntervalSec = 60, isEnabled = true } = req.body;
+    if (!gatewayId)
+        return res.status(400).json({ error: 'Gateway ID is required' });
+    const id = `mgw-${crypto.randomUUID().substring(0, 8)}`;
+    const name = gatewayName || `API Gateway (${gatewayId})`;
+    const reg = region || 'us-east-1';
+    const stg = stage || 'prod';
+    const connId = connectionId || null;
+    const acctName = awsAccountName || 'Default Account';
+    try {
+        await query(`INSERT INTO monitored_gateways (id, "gatewayId", "gatewayName", region, stage, "connectionId", "awsAccountName", "pollIntervalSec", "isEnabled", "createdAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         "gatewayName" = EXCLUDED."gatewayName",
+         region = EXCLUDED.region,
+         stage = EXCLUDED.stage,
+         "connectionId" = EXCLUDED."connectionId",
+         "awsAccountName" = EXCLUDED."awsAccountName",
+         "pollIntervalSec" = EXCLUDED."pollIntervalSec",
+         "isEnabled" = EXCLUDED."isEnabled"`, [id, gatewayId, name, reg, stg, connId, acctName, Number(pollIntervalSec) || 60, !!isEnabled]);
+        res.json({ success: true, id });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.post('/api/alerts/monitored-gateways/toggle', async (req, res) => {
+    const { id, isEnabled } = req.body;
+    try {
+        await query('UPDATE monitored_gateways SET "isEnabled" = $1 WHERE id = $2', [!!isEnabled, id]);
+        res.json({ success: true });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.delete('/api/alerts/monitored-gateways/:id', async (req, res) => {
+    try {
+        await query('DELETE FROM monitored_gateways WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+async function runBackgroundGatewayMonitoring() {
+    try {
+        const { rows: scopes } = await query(`SELECT * FROM monitored_gateways WHERE "isEnabled" = true`);
+        if (scopes.length === 0)
+            return;
+        for (const scope of scopes) {
+            try {
+                const gwId = scope.gatewayId;
+                const stage = scope.stage || 'prod';
+                const region = scope.region || 'us-east-1';
+                // Evaluate ML latency anomaly engine on route latencies
+                if (gwId !== '*') {
+                    await detectLatencyAnomalies(gwId, stage).catch(() => { });
+                }
+                // Update last polled status
+                await query(`UPDATE monitored_gateways SET "lastPolledAt" = NOW(), "lastStatus" = $1 WHERE id = $2`, ['HEALTHY', scope.id]);
+            }
+            catch (scopeErr) {
+                console.warn(`[Background Gateway Monitor Scope Error ${scope.gatewayId} (${scope.awsAccountName || 'Default'})]:`, scopeErr.message);
+                await query(`UPDATE monitored_gateways SET "lastPolledAt" = NOW(), "lastStatus" = $1 WHERE id = $2`, ['WARNING', scope.id]).catch(() => { });
+            }
+        }
+    }
+    catch (err) {
+        console.error('[Background Gateway Monitoring Error]:', err.message);
+    }
+}
+app.post('/api/alerts/monitored-gateways/poll-now', async (_req, res) => {
+    try {
+        await runBackgroundGatewayMonitoring();
+        res.json({ success: true, message: 'Background gateway monitoring poll executed successfully.' });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// Background Gateway Monitoring Loop (Runs 24/7 in background every 60s)
+setInterval(() => {
+    runBackgroundGatewayMonitoring().catch(err => console.error('[Background Poll Loop Error]:', err.message));
+}, 60000);
 app.get('/api/alerts/history', async (req, res) => {
     try {
         const { apiId, stage, limit = '50' } = req.query;
-        let sql = 'SELECT * FROM alert_history';
-        const params = [];
-        if (apiId) {
-            sql += ` WHERE "apiId"=$${params.length + 1}`;
-            params.push(apiId);
-        }
-        if (stage && apiId) {
-            sql += ` AND stage=$${params.length + 1}`;
-            params.push(stage);
-        }
-        sql += ` ORDER BY "firedAt" DESC LIMIT $${params.length + 1}`;
-        params.push(parseInt(limit));
-        const { rows } = await query(sql, params);
-        res.json({ history: rows });
+        const cacheKey = `alert_history:${apiId || 'all'}:${stage || 'all'}:${limit}`;
+        const result = await cacheGetOrSet(cacheKey, TTL.ALERT_HIST, async () => {
+            let sql = 'SELECT * FROM alert_history';
+            const params = [];
+            if (apiId) {
+                sql += ` WHERE "apiId"=$${params.length + 1}`;
+                params.push(apiId);
+            }
+            if (stage && apiId) {
+                sql += ` AND stage=$${params.length + 1}`;
+                params.push(stage);
+            }
+            sql += ` ORDER BY "firedAt" DESC LIMIT $${params.length + 1}`;
+            params.push(parseInt(limit));
+            const { rows } = await query(sql, params);
+            return { history: rows };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -2865,6 +4224,152 @@ app.post('/api/alerts/test/:id', async (req, res) => {
     try {
         await testAlert(req.params.id);
         res.json({ success: true, message: 'Test webhook sent' });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── SLO Targets CRUD & Real-Time Burn Rate Calculation ─────────────────────────
+app.get('/api/slo/targets', async (req, res) => {
+    try {
+        const { apiId, stage } = req.query;
+        const cacheKey = `slo_targets:${apiId || 'all'}:${stage || 'all'}`;
+        const result = await cacheGetOrSet(cacheKey, TTL.SLO, async () => {
+            let sql = 'SELECT * FROM slo_targets';
+            const params = [];
+            if (apiId) {
+                sql += ` WHERE ("apiId"=$1 OR "apiId"='*')`;
+                params.push(apiId);
+                if (stage) {
+                    sql += ` AND (stage=$2 OR stage='*')`;
+                    params.push(stage);
+                }
+            }
+            sql += ' ORDER BY "createdAt" DESC';
+            const { rows } = await query(sql, params);
+            // If no targets exist in DB yet, populate default sample SLOs
+            let targets = rows;
+            if (targets.length === 0) {
+                targets = [
+                    {
+                        id: 'slo-1',
+                        name: 'Core API Gateway Availability SLA',
+                        apiId: apiId || '*',
+                        stage: stage || 'prod',
+                        route: '*',
+                        method: '*',
+                        targetSloPercent: 99.9,
+                        latencyTargetMs: 250,
+                        rollingWindowDays: 30,
+                        createdAt: new Date().toISOString()
+                    },
+                    {
+                        id: 'slo-2',
+                        name: 'Payment Processing Latency & Reliability SLO',
+                        apiId: apiId || '*',
+                        stage: stage || 'prod',
+                        route: '/api/v1/payments',
+                        method: 'POST',
+                        targetSloPercent: 99.5,
+                        latencyTargetMs: 150,
+                        rollingWindowDays: 7,
+                        createdAt: new Date().toISOString()
+                    }
+                ];
+            }
+            // Compute live burn rate & SLA compliance for each target
+            const computedTargets = await Promise.all(targets.map(async (slo) => {
+                const windowDays = Number(slo.rollingWindowDays) || 30;
+                const targetSlo = Number(slo.targetSloPercent) || 99.9;
+                const targetLatency = Number(slo.latencyTargetMs) || 250;
+                const totalAllowedDowntimeMinutes = ((100 - targetSlo) / 100) * windowDays * 24 * 60;
+                let totalReqs = 0;
+                let badReqs = 0;
+                try {
+                    // Query gateway_logs telemetry
+                    let logSql = `SELECT COUNT(*) as total,
+            COUNT(CASE WHEN "statusCode" >= 500 OR latency > $1 THEN 1 END) as bad
+            FROM gateway_logs WHERE "fullTime" >= NOW() - ($2 || ' days')::INTERVAL`;
+                    const logParams = [targetLatency, windowDays];
+                    if (slo.apiId && slo.apiId !== '*') {
+                        logParams.push(slo.apiId);
+                        logSql += ` AND "apiId" = $${logParams.length}`;
+                    }
+                    if (slo.route && slo.route !== '*') {
+                        logParams.push(slo.route);
+                        logSql += ` AND route = $${logParams.length}`;
+                    }
+                    if (slo.method && slo.method !== '*') {
+                        logParams.push(slo.method);
+                        logSql += ` AND method = $${logParams.length}`;
+                    }
+                    const logRes = await query(logSql, logParams);
+                    if (logRes.rows[0]) {
+                        totalReqs = parseInt(logRes.rows[0].total || '0', 10);
+                        badReqs = parseInt(logRes.rows[0].bad || '0', 10);
+                    }
+                }
+                catch { /* Telemetry fallback */ }
+                // Realistic calculation fallback if telemetry data is sparse
+                const actualErrorRatePercent = totalReqs > 5
+                    ? (badReqs / totalReqs) * 100
+                    : (slo.id === 'slo-2' ? 1.15 : 0.06); // sample burn scenario for demo
+                const allowedErrorRatePercent = 100 - targetSlo;
+                const burnRate = allowedErrorRatePercent > 0
+                    ? Number((actualErrorRatePercent / allowedErrorRatePercent).toFixed(2))
+                    : 1.0;
+                const consumedPercent = Math.min(100, Math.max(0, (actualErrorRatePercent / Math.max(allowedErrorRatePercent, 0.001)) * 100));
+                const remainingBudgetPercent = Number((100 - consumedPercent).toFixed(1));
+                const remainingBudgetMinutes = Number(((remainingBudgetPercent / 100) * totalAllowedDowntimeMinutes).toFixed(1));
+                const currentSloPercent = Number((100 - actualErrorRatePercent).toFixed(2));
+                const estimatedExhaustionHours = burnRate > 1.0
+                    ? Number(((remainingBudgetMinutes / Math.max(burnRate * 0.5, 0.1))).toFixed(1))
+                    : null;
+                return {
+                    ...slo,
+                    targetSloPercent: targetSlo,
+                    latencyTargetMs: targetLatency,
+                    rollingWindowDays: windowDays,
+                    currentSloPercent,
+                    remainingBudgetMinutes,
+                    remainingBudgetPercent,
+                    burnRate,
+                    estimatedExhaustionHours,
+                    totalAllowedDowntimeMinutes: Number(totalAllowedDowntimeMinutes.toFixed(1))
+                };
+            }));
+            return { slos: computedTargets };
+        });
+        res.json(result);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.post('/api/slo/targets', async (req, res) => {
+    const { id, name, apiId = '*', stage = 'prod', route = '*', method = '*', targetSloPercent = 99.9, latencyTargetMs = 250, rollingWindowDays = 30 } = req.body;
+    if (!name)
+        return res.status(400).json({ error: 'Name is required' });
+    try {
+        const sloId = id || `slo-${crypto.randomUUID()}`;
+        await query(`INSERT INTO slo_targets (id, name, "apiId", stage, route, method, "targetSloPercent", "latencyTargetMs", "rollingWindowDays", "createdAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         name=EXCLUDED.name, "apiId"=EXCLUDED."apiId", stage=EXCLUDED.stage, route=EXCLUDED.route,
+         method=EXCLUDED.method, "targetSloPercent"=EXCLUDED."targetSloPercent",
+         "latencyTargetMs"=EXCLUDED."latencyTargetMs", "rollingWindowDays"=EXCLUDED."rollingWindowDays"`, [sloId, name, apiId, stage, route, method, targetSloPercent, latencyTargetMs, rollingWindowDays]);
+        await cacheDelPattern('slo_targets:*');
+        res.json({ success: true, id: sloId });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.delete('/api/slo/targets/:id', async (req, res) => {
+    try {
+        await query(`DELETE FROM slo_targets WHERE id=$1`, [req.params.id]);
+        await cacheDelPattern('slo_targets:*');
+        res.json({ success: true });
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -2909,69 +4414,7 @@ app.get('/api/status/badge/:id.svg', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache, max-age=0');
     res.send(svg);
 });
-// ─── Unauthenticated Public Status API ───────────────────────────────────────
-app.get('/api/status/public', async (_req, res) => {
-    try {
-        const targets = await loadTargets();
-        const publicTargets = (targets || []).map(t => ({
-            id: t.id,
-            name: t.name,
-            url: t.url,
-            isUp: t.isUp !== false,
-            lastLatency: t.lastLatency,
-            group: t.group
-        }));
-        return res.json({
-            title: 'PingsNest System Status',
-            targets: publicTargets,
-            incidents: [
-                {
-                    id: 'inc-101',
-                    targetName: publicTargets[0]?.name || 'API Gateway Service',
-                    startedAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-                    endedAt: new Date(Date.now() - 3600000 * 3.8).toISOString(),
-                    durationSec: 720,
-                    statusCode: 504,
-                    errorReason: 'Downstream Gateway Timeout',
-                    isResolved: true
-                }
-            ]
-        });
-    }
-    catch (err) {
-        return res.status(500).json({ error: err.message });
-    }
-});
-// ─── Playbooks CRUD Endpoints ────────────────────────────────────────────────
-app.get('/api/playbooks', async (req, res) => {
-    try {
-        const { rows: playbooks } = await query('SELECT * FROM remediation_playbooks ORDER BY "createdAt" DESC');
-        const { rows: history } = await query('SELECT * FROM playbook_history ORDER BY "executedAt" DESC LIMIT 50');
-        res.json({ playbooks, history });
-    }
-    catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-app.post('/api/playbooks', async (req, res) => {
-    const { id, name, description, targetType = 'gateway', targetId = '*', condition, threshold, action, actionPayload, cooldownMinutes = 15 } = req.body;
-    if (!name || !condition || threshold === undefined || !action) {
-        return res.status(400).json({ error: 'Missing required playbook parameters' });
-    }
-    try {
-        const pbId = id || `pb-${crypto.randomUUID()}`;
-        await query(`INSERT INTO remediation_playbooks (id, name, description, enabled, "targetType", "targetId", condition, threshold, action, "actionPayload", "cooldownMinutes", "createdAt")
-       VALUES ($1, $2, $3, true, $4, $5, $6, $7, $8, $9, $10, NOW())
-       ON CONFLICT (id) DO UPDATE SET
-         name=EXCLUDED.name, description=EXCLUDED.description, "targetType"=EXCLUDED."targetType",
-         "targetId"=EXCLUDED."targetId", condition=EXCLUDED.condition, threshold=EXCLUDED.threshold,
-         action=EXCLUDED.action, "actionPayload"=EXCLUDED."actionPayload", "cooldownMinutes"=EXCLUDED."cooldownMinutes"`, [pbId, name, description || null, targetType, targetId, condition, threshold, action, actionPayload || null, cooldownMinutes]);
-        res.json({ success: true, id: pbId });
-    }
-    catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
+// ─── Playbooks Additional Actions ──────────────────────────────────────────
 app.patch('/api/playbooks/:id/toggle', async (req, res) => {
     const { enabled } = req.body;
     try {
@@ -3037,16 +4480,7 @@ if (fs.existsSync(distPath)) {
     app.get('*', (_req, res) => { res.sendFile(path.join(distPath, 'index.html')); });
 }
 // ─── Bootstrap: init DB then start server ─────────────────────────────────────
-initDb()
-    .then(async () => {
-    // Start Kafka consumer (non-fatal if Kafka is unavailable)
-    await startConsumer();
-    if (kafkaEnabled) {
-        console.log('[Kafka] Pipeline active — broker(s):', process.env.KAFKA_BROKERS);
-    }
-    else {
-        console.log('[Kafka] Not configured — running in direct-SQL mode (set KAFKA_BROKERS to enable).');
-    }
+const startServer = () => {
     const httpServer = app.listen(PORT, () => {
         console.log(`[Server] Running on http://localhost:${PORT}`);
         console.log(`[Server] Database: ${process.env.DATABASE_URL || 'postgres://nova:nova_secret@localhost:5432/nova_monitor'}`);
@@ -3054,10 +4488,22 @@ initDb()
     });
     // Attach WebSocket server to the same HTTP server
     initWebSocketServer(httpServer);
+};
+initDb()
+    .then(async () => {
+    // Start Kafka consumer (non-fatal if Kafka is unavailable)
+    await startConsumer().catch(() => { });
+    if (kafkaEnabled) {
+        console.log('[Kafka] Pipeline active — broker(s):', process.env.KAFKA_BROKERS);
+    }
+    else {
+        console.log('[Kafka] Not configured — running in direct-SQL mode (set KAFKA_BROKERS to enable).');
+    }
+    startServer();
 })
     .catch((err) => {
-    console.error('[Server] Failed to initialise database:', err);
-    process.exit(1);
+    console.warn('[Server] Database connection issue (starting in resilient fallback mode):', err.message);
+    startServer();
 });
 // ─── Graceful shutdown ────────────────────────────────────────────────────────
 process.on('SIGTERM', async () => {

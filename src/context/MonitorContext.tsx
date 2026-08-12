@@ -38,6 +38,7 @@ export interface APIRouteItem {
   path: string;
   lambdaName?: string;
   integrationType?: string;
+  integrationUri?: string;
 }
 
 
@@ -49,6 +50,7 @@ export interface UrlTargetSummary {
   isUp?: boolean;
   lastStatusCode?: number;
   lastLatency?: number;
+  recentPings?: { isUp: boolean; latency: number; timestamp: string }[];
 }
 
 export interface AWSAccountProfile {
@@ -84,6 +86,9 @@ export interface MonitorContextType {
   setSelectedGateway: (gateway: APIGatewayItem | null) => void;
   fetchAvailableGateways: (credentials: { accessKeyId: string; secretAccessKey: string; region: string }) => Promise<APIGatewayItem[]>;
   loadingGateways: boolean;
+  availableStages: string[];
+  loadingStages: boolean;
+  fetchAvailableStages: (gateway: APIGatewayItem, credentials?: { accessKeyId: string; secretAccessKey: string; region: string }) => Promise<string[]>;
   awsError: string | null;
   setAwsError: (err: string | null) => void;
   metricsError: string | null;
@@ -104,6 +109,7 @@ export interface MonitorContextType {
   routes: APIRouteItem[];
   loadingRoutes: boolean;
   logs: RequestLog[];
+  setLogs: React.Dispatch<React.SetStateAction<RequestLog[]>>;
   loadingLogs: boolean;
   clearLogs: () => void;
   clearSavedCredentials: () => Promise<void>;
@@ -223,6 +229,8 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [availableGateways, setAvailableGateways] = useState<APIGatewayItem[]>([]);
   const [selectedGateway, setSelectedGateway] = useState<APIGatewayItem | null>(null);
   const [loadingGateways, setLoadingGateways] = useState(false);
+  const [availableStages, setAvailableStages] = useState<string[]>([]);
+  const [loadingStages, setLoadingStages] = useState(false);
   const [awsError, setAwsError] = useState<string | null>(null);
   const [metricsError, setMetricsError] = useState<string | null>(null);
   const [availableLogGroups, setAvailableLogGroups] = useState<string[]>([]);
@@ -254,7 +262,42 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
     status5xx: 0
   });
 
-  const chartDataRef = useRef<{ label: string; values: number[] }[]>([]);  // 1. Fetch available gateways in account
+  const chartDataRef = useRef<{ label: string; values: number[] }[]>([]);
+
+  // Fetch deployed stages for a specific API Gateway
+  const fetchAvailableStages = async (gateway: APIGatewayItem, creds?: { accessKeyId: string; secretAccessKey: string; region: string }): Promise<string[]> => {
+    setLoadingStages(true);
+    const credentials = creds || { accessKeyId: awsConfig.accessKeyId, secretAccessKey: awsConfig.secretAccessKey, region: awsConfig.region };
+    try {
+      const response = await fetch('/api/aws/stages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          region: credentials.region,
+          accessKeyId: credentials.accessKeyId,
+          secretAccessKey: credentials.secretAccessKey,
+          apiId: gateway.id,
+          protocol: gateway.protocol
+        })
+      });
+      const data = await response.json();
+      const list = data.stages || [gateway.protocol === 'REST' ? 'prod' : '$default'];
+      setAvailableStages(list);
+      if (list.length > 0) {
+        setAwsConfig(prev => ({ ...prev, stage: list[0] }));
+      }
+      return list;
+    } catch (err) {
+      console.error('Failed fetching stages:', err);
+      const fallback = [gateway.protocol === 'REST' ? 'prod' : '$default'];
+      setAvailableStages(fallback);
+      return fallback;
+    } finally {
+      setLoadingStages(false);
+    }
+  };
+
+  // 1. Fetch available gateways in account
   const fetchAvailableGateways = async (credentials: { accessKeyId: string; secretAccessKey: string; region: string }): Promise<APIGatewayItem[]> => {
     setLoadingGateways(true);
     setAwsError(null);
@@ -287,7 +330,8 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
           body: JSON.stringify(credentials)
         }).catch(e => console.warn('Persistence save error:', e));
 
-        // Fetch available log groups
+        // Fetch available stages & log groups
+        await fetchAvailableStages(data.apis[0], credentials);
         await fetchAvailableLogGroups(credentials);
       } else {
         setAwsError('No active API Gateways found in the selected region. Verify region context.');
@@ -437,6 +481,11 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
     logsModeRef.current = logsMode;
   }, [logsMode]);
 
+  const currentScopeRef = useRef('');
+  useEffect(() => {
+    currentScopeRef.current = `${awsConfig.region}:${selectedGateway?.id}:${awsConfig.stage}:${awsConfig.customLogGroup}`;
+  }, [awsConfig.region, selectedGateway?.id, awsConfig.stage, awsConfig.customLogGroup]);
+
   // 4. Fetch CloudWatch log streams
   const fetchLogs = async (customStart?: number, customEnd?: number, bypassCache?: boolean) => {
     if (!selectedGateway) return;
@@ -445,6 +494,8 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (logsModeRef.current === 'history' && !customStart) {
       return;
     }
+
+    const scopeAtStart = `${awsConfig.region}:${selectedGateway.id}:${awsConfig.stage}:${awsConfig.customLogGroup}`;
 
     setLoadingLogs(true);
     try {
@@ -465,6 +516,12 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
         })
       });
       const data = await response.json();
+
+      // If gateway/stage/scope changed while fetch was in-flight, discard stale result
+      if (currentScopeRef.current !== scopeAtStart) {
+        return;
+      }
+
       if (response.ok) {
         const incoming: RequestLog[] = data.logs || [];
         setIsStoredFallback(!!data.isStoredFallback);
@@ -473,20 +530,23 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
           // Do not overwrite logs if user switched to history mode while fetch was in-flight
           if (logsModeRef.current === 'history') return;
 
-          // Live mode: merge new entries into existing list (preserve history)
-          setLogs(prev => {
-            const existingIds = new Set(prev.map(l => l.id));
-            const truly_new = incoming.filter(l => !existingIds.has(l.id));
-            if (truly_new.length === 0 && data.isStoredFallback) {
-              // First load fallback: use stored logs as the base
-              return incoming;
-            }
-            if (truly_new.length === 0) return prev; // nothing changed
-            // Prepend new, keep full history (sorted newest first)
-            const merged = [...truly_new, ...prev];
-            merged.sort((a, b) => new Date(b.fullTime).getTime() - new Date(a.fullTime).getTime());
-            return merged;
-          });
+          if (bypassCache) {
+            // Scope change / Sync Logs / explicit refresh: replace logs completely
+            setLogs(incoming);
+          } else {
+            // Live background poll: merge new entries into existing list
+            setLogs(prev => {
+              const existingIds = new Set(prev.map(l => l.id));
+              const truly_new = incoming.filter(l => !existingIds.has(l.id));
+              if (truly_new.length === 0 && data.isStoredFallback) {
+                return incoming;
+              }
+              if (truly_new.length === 0) return prev;
+              const merged = [...truly_new, ...prev];
+              merged.sort((a, b) => new Date(b.fullTime).getTime() - new Date(a.fullTime).getTime());
+              return merged;
+            });
+          }
         } else {
           // History mode: replace entirely
           setLogs(incoming);
@@ -668,8 +728,11 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     if (!selectedGateway) return;
 
+    // Reset logs array so logs from previous gateway/stage are not mixed
+    setLogs([]);
+
     if (logsMode === 'live') {
-      fetchLogs(); // Trigger fetch immediately when window/mode changes
+      fetchLogs(undefined, undefined, true); // Trigger fetch immediately when gateway/stage changes
     }
 
     const metricsTimer = setInterval(refreshRealMetrics, 25000);
@@ -683,7 +746,7 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
       clearInterval(metricsTimer);
       if (logsTimer) clearInterval(logsTimer);
     };
-  }, [selectedGateway, awsConfig.region, awsConfig.stage, awsConfig.customLogGroup, logsMode, liveWindow]);
+  }, [selectedGateway?.id, awsConfig.region, awsConfig.stage, awsConfig.customLogGroup, logsMode, liveWindow]);
 
   const [urlTargets, setUrlTargets] = useState<UrlTargetSummary[]>([]);
   const [selectedUrlTarget, setSelectedUrlTarget] = useState<UrlTargetSummary | null>(null);
@@ -738,6 +801,9 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setSelectedGateway,
         fetchAvailableGateways,
         loadingGateways,
+        availableStages,
+        loadingStages,
+        fetchAvailableStages,
         awsError,
         setAwsError,
         metricsError,
@@ -758,6 +824,7 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
         routes,
         loadingRoutes,
         logs,
+        setLogs,
         loadingLogs,
         clearLogs,
         clearSavedCredentials,

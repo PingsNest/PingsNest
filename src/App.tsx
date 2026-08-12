@@ -5,7 +5,6 @@ import { RoutePerformance } from './components/RoutePerformance';
 import { LiveLogs } from './components/LiveLogs';
 import { Settings } from './components/Settings';
 import { UrlMonitor } from './components/UrlMonitor';
-import { Alerts } from './components/Alerts';
 import { SystemHealth } from './components/SystemHealth';
 import { SloManager } from './components/SloManager';
 
@@ -14,19 +13,43 @@ import { Playbooks } from './components/Playbooks';
 import { PublicStatusPage } from './components/PublicStatusPage';
 import { LambdaMonitor } from './components/LambdaMonitor';
 import type { ViewSubTab } from './components/LambdaMonitor';
-import { UnifiedTopologyMesh } from './components/UnifiedTopologyMesh';
+import { TopologyMesh } from './components/TopologyMesh';
+import { CustomDashboard } from './components/CustomDashboard';
+import { WelcomePage } from './components/WelcomePage';
 
-import { LayoutDashboard, Route, Terminal, Settings as SettingsIcon, ShieldAlert, Cpu, Key, Globe, Activity, AlertTriangle, Bell, Server, Target, Palette, Network, ShieldCheck, Zap, Building2, Shield, Layers, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Route, Terminal, Settings as SettingsIcon, ShieldAlert, Cpu, Key, Globe, Activity, AlertTriangle, Bell, Server, Target, Palette, Network, ShieldCheck, Zap, Building2, Shield, Layers, Menu, X, ChevronDown, ChevronRight, ChevronLeft, Users } from 'lucide-react';
 
 import './App.css';
 
-type TabType = 'overview' | 'routes' | 'logs' | 'alerts' | 'slo' | 'system' | 'url-monitor' | 'settings' | 'users' | 'topology' | 'status_portal' | 'playbooks' | 'lambda';
+type TabType = 'welcome' | 'overview' | 'dashboard' | 'routes' | 'logs' | 'alerts' | 'slo' | 'system' | 'url-monitor' | 'settings' | 'users' | 'topology' | 'status_portal' | 'playbooks' | 'lambda';
 
 
 function MainAppShell() {
   const [currentTheme, setCurrentTheme] = useState<string>(() => localStorage.getItem('nova_app_theme') || 'cyberpunk');
   const [lambdaSubTab, setLambdaSubTab] = useState<ViewSubTab>('overview');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState<boolean>(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => localStorage.getItem('nova_sidebar_collapsed') === 'true');
+
+  const toggleSidebar = () => setSidebarCollapsed(prev => {
+    const next = !prev;
+    localStorage.setItem('nova_sidebar_collapsed', String(next));
+    return next;
+  });
+
+  // Collapsible sidebar accordion sections state
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({
+    'api-gateway': true,
+    'lambda': true,
+    'url': true,
+    'settings': true,
+  });
+
+  const toggleSection = (sectionKey: string) => {
+    setOpenSections(prev => ({
+      ...prev,
+      [sectionKey]: !prev[sectionKey]
+    }));
+  };
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', currentTheme);
@@ -35,12 +58,13 @@ function MainAppShell() {
 
   const {
     awsConfig,
+    setAwsConfig,
     availableGateways,
     selectedGateway,
     setSelectedGateway,
-    urlTargets,
-    selectedUrlTarget,
-    setSelectedUrlTarget,
+    availableStages,
+    loadingStages,
+    fetchAvailableStages,
     overallStats,
     wsConnected,
     accountProfiles,
@@ -66,7 +90,32 @@ function MainAppShell() {
   const [changePassError, setChangePassError] = useState('');
   const [isChangingPass, setIsChangingPass] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<TabType>(selectedGateway ? 'overview' : 'url-monitor');
+  const [activeTab, setActiveTabRaw] = useState<TabType>(() => {
+    const saved = localStorage.getItem('nova_active_tab') as TabType | null;
+    const validTabs: TabType[] = ['overview','dashboard','routes','logs','alerts','slo','system','url-monitor','settings','users','topology','status_portal','playbooks','lambda'];
+    return saved && validTabs.includes(saved) ? saved : (selectedGateway ? 'overview' : 'url-monitor');
+  });
+
+  // First-time welcome page — shown once per browser session after first login
+  const [showWelcome, setShowWelcome] = useState<boolean>(() => !localStorage.getItem('nova_visited'));
+
+  const setActiveTab = (tab: TabType) => {
+    setActiveTabRaw(tab);
+    localStorage.setItem('nova_active_tab', tab);
+  };
+
+  // Auto-expand parent section if activeTab changes
+  useEffect(() => {
+    if (['overview', 'dashboard', 'routes', 'logs', 'slo', 'topology', 'playbooks'].includes(activeTab)) {
+      setOpenSections(prev => prev['api-gateway'] ? prev : { ...prev, 'api-gateway': true });
+    } else if (activeTab === 'lambda') {
+      setOpenSections(prev => prev['lambda'] ? prev : { ...prev, 'lambda': true });
+    } else if (['url-monitor', 'status_portal', 'system'].includes(activeTab)) {
+      setOpenSections(prev => prev['url'] ? prev : { ...prev, 'url': true });
+    } else if (['settings', 'users', 'alerts'].includes(activeTab)) {
+      setOpenSections(prev => prev['settings'] ? prev : { ...prev, 'settings': true });
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     if (token) {
@@ -505,9 +554,20 @@ function MainAppShell() {
       />
 
       {/* 1. Sidebar Navigation */}
-      <aside className={`sidebar-container ${mobileSidebarOpen ? 'mobile-open' : ''}`}>
+      <aside className={`sidebar-container ${mobileSidebarOpen ? 'mobile-open' : ''} ${sidebarCollapsed ? 'collapsed' : ''}`}>
+
+        {/* Collapse toggle button */}
+        <button
+          className={`sidebar-collapse-btn ${sidebarCollapsed ? 'collapsed' : ''}`}
+          onClick={toggleSidebar}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          <ChevronLeft size={13} />
+        </button>
+
         {/* Brand Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '32px', paddingLeft: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '32px', paddingLeft: '4px', minWidth: 0 }}>
           <div
             style={{
               width: '32px',
@@ -522,11 +582,12 @@ function MainAppShell() {
           >
             <Cpu size={16} color="#060913" />
           </div>
-          <span style={{ fontSize: '20px', fontWeight: 800, fontFamily: 'var(--font-heading)', letterSpacing: '0.05em', color: 'var(--text-primary)' }}>
+          <span className="sidebar-brand-name" style={{ fontSize: '20px', fontWeight: 800, fontFamily: 'var(--font-heading)', letterSpacing: '0.05em', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
             PingsNest
           </span>
 
           <span
+            className="sidebar-brand-badge"
             style={{
               fontSize: '9px',
               fontWeight: 700,
@@ -542,214 +603,268 @@ function MainAppShell() {
         </div>
 
         {/* Tab Selection Navigation */}
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, overflowY: 'auto' }}>
-          {/* Section 1: API Gateway Monitoring */}
-          <div style={{
-            fontSize: '10px',
-            fontWeight: 800,
-            color: 'var(--color-aws)',
-            letterSpacing: '0.08em',
-            padding: '12px 12px 6px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px'
-          }}>
-            <Cpu size={12} /> API GATEWAY MONITORING
-          </div>
-
-          <button
-            onClick={() => { setActiveTab('overview'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'overview' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <LayoutDashboard size={18} />
-            Gateway Overview
-          </button>
+        <nav style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, overflowY: 'auto', paddingRight: '2px' }}>
           
-          <button
-            onClick={() => { setActiveTab('routes'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'routes' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <Route size={18} />
-            Routes & Integrations
-          </button>
+          {/* Section 1: API Gateway Monitoring */}
+          <div className="nav-section-group">
+            <button
+              type="button"
+              className="nav-section-header"
+              onClick={() => toggleSection('api-gateway')}
+              aria-expanded={openSections['api-gateway']}
+            >
+              <div className="nav-section-title-wrap">
+                <Cpu size={13} color="var(--color-aws)" />
+                <span style={{ color: 'var(--text-secondary)', fontWeight: 800 }}>API GATEWAY MONITORING</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span className="nav-section-badge">7</span>
+                {openSections['api-gateway'] ? (
+                  <ChevronDown size={14} className="nav-section-chevron" />
+                ) : (
+                  <ChevronRight size={14} className="nav-section-chevron" />
+                )}
+              </div>
+            </button>
 
-          <button
-            onClick={() => { setActiveTab('logs'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'logs' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <Terminal size={18} />
-            Real-Time Logs
-          </button>
+            {openSections['api-gateway'] && (
+              <div className="nav-section-body animate-fade-in">
+                <button
+                  onClick={() => { setActiveTab('overview'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'overview' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <LayoutDashboard size={18} />
+                  <span className="sidebar-text">Gateway Overview</span>
+                </button>
 
-          <button
-            onClick={() => { setActiveTab('alerts'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'alerts' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <Bell size={18} />
-            Alert Management
-          </button>
+                <button
+                  onClick={() => { setActiveTab('dashboard'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'dashboard' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <Palette size={18} color="var(--color-primary)" />
+                  <span className="sidebar-text">My Custom Dashboard</span>
+                </button>
 
-          <button
-            onClick={() => { setActiveTab('slo'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'slo' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <Target size={18} />
-            SLO & Error Budgets
-          </button>
+                <button
+                  onClick={() => { setActiveTab('routes'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'routes' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <Route size={18} />
+                  <span className="sidebar-text">Routes &amp; Integrations</span>
+                </button>
 
-          <button
-            onClick={() => { setActiveTab('topology'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'topology' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <Network size={18} />
-            Topology Mesh
-          </button>
+                <button
+                  onClick={() => { setActiveTab('logs'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'logs' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <Terminal size={18} />
+                  <span className="sidebar-text">Real-Time Logs</span>
+                </button>
 
-          <button
-            onClick={() => { setActiveTab('playbooks'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'playbooks' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <Zap size={18} />
-            Automated Playbooks
-          </button>
+                <button
+                  onClick={() => { setActiveTab('slo'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'slo' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <Target size={18} />
+                  <span className="sidebar-text">SLO &amp; Error Budgets</span>
+                </button>
 
-          {/* Section 2: Lambda Serverless Monitoring (Module 3) */}
-          <div style={{
-            fontSize: '10px',
-            fontWeight: 800,
-            color: '#a855f7',
-            letterSpacing: '0.08em',
-            padding: '18px 12px 6px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            borderTop: '1px solid rgba(255, 255, 255, 0.05)',
-            marginTop: '8px'
-          }}>
-            <Cpu size={12} /> LAMBDA MONITORING
+                <button
+                  onClick={() => { setActiveTab('topology'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'topology' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <Network size={18} />
+                  <span className="sidebar-text">Topology Mesh</span>
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('playbooks'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'playbooks' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <Zap size={18} />
+                  <span className="sidebar-text">Automated Playbooks</span>
+                </button>
+              </div>
+            )}
           </div>
 
-          <button
-            onClick={() => { setActiveTab('lambda'); setLambdaSubTab('overview'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'lambda' && lambdaSubTab === 'overview' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <Activity size={18} />
-            Serverless Overview
-          </button>
+          {/* Section 2: Lambda Serverless Monitoring */}
+          <div className="nav-section-group">
+            <button
+              type="button"
+              className="nav-section-header"
+              onClick={() => toggleSection('lambda')}
+              aria-expanded={openSections['lambda']}
+            >
+              <div className="nav-section-title-wrap">
+                <Cpu size={13} color="var(--color-purple)" />
+                <span style={{ color: 'var(--text-secondary)', fontWeight: 800 }}>LAMBDA MONITORING</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span className="nav-section-badge">5</span>
+                {openSections['lambda'] ? (
+                  <ChevronDown size={14} className="nav-section-chevron" />
+                ) : (
+                  <ChevronRight size={14} className="nav-section-chevron" />
+                )}
+              </div>
+            </button>
 
-          <button
-            onClick={() => { setActiveTab('lambda'); setLambdaSubTab('table'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'lambda' && lambdaSubTab === 'table' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <Layers size={18} />
-            Function Fleet Catalog
-          </button>
+            {openSections['lambda'] && (
+              <div className="nav-section-body animate-fade-in">
+                <button
+                  onClick={() => { setActiveTab('lambda'); setLambdaSubTab('overview'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'lambda' && lambdaSubTab === 'overview' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <Activity size={18} />
+                  <span className="sidebar-text">Serverless Overview</span>
+                </button>
 
-          <button
-            onClick={() => { setActiveTab('lambda'); setLambdaSubTab('live_triggering'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'lambda' && lambdaSubTab === 'live_triggering' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <Zap size={18} color="#ff9900" />
-            Live Triggering Lambdas
-          </button>
+                <button
+                  onClick={() => { setActiveTab('lambda'); setLambdaSubTab('table'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'lambda' && lambdaSubTab === 'table' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <Layers size={18} />
+                  <span className="sidebar-text">Function Fleet Catalog</span>
+                </button>
 
-          <button
-            onClick={() => { setActiveTab('lambda'); setLambdaSubTab('triggers'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'lambda' && lambdaSubTab === 'triggers' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <Network size={18} />
-            Triggers & Topology
-          </button>
+                <button
+                  onClick={() => { setActiveTab('lambda'); setLambdaSubTab('live_triggering'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'lambda' && lambdaSubTab === 'live_triggering' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <Zap size={18} color="#ff9900" />
+                  <span className="sidebar-text">Live Triggering Lambdas</span>
+                </button>
 
-          <button
-            onClick={() => { setActiveTab('lambda'); setLambdaSubTab('security'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'lambda' && lambdaSubTab === 'security' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <Shield size={18} />
-            Security & Compliance
-          </button>
+
+
+                <button
+                  onClick={() => { setActiveTab('lambda'); setLambdaSubTab('security'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'lambda' && lambdaSubTab === 'security' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <Shield size={18} />
+                  <span className="sidebar-text">Security &amp; Compliance</span>
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Section 3: URL & Endpoint Monitoring */}
-          <div style={{
-            fontSize: '10px',
-            fontWeight: 800,
-            color: 'var(--color-primary)',
-            letterSpacing: '0.08em',
-            padding: '18px 12px 6px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            borderTop: '1px solid rgba(255, 255, 255, 0.05)',
-            marginTop: '8px'
-          }}>
-            <Globe size={12} /> URL & ENDPOINT MONITORING
+          <div className="nav-section-group">
+            <button
+              type="button"
+              className="nav-section-header"
+              onClick={() => toggleSection('url')}
+              aria-expanded={openSections['url']}
+            >
+              <div className="nav-section-title-wrap">
+                <Globe size={13} color="var(--color-primary)" />
+                <span style={{ color: 'var(--text-secondary)', fontWeight: 800 }}>URL & ENDPOINT MONITORING</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span className="nav-section-badge">3</span>
+                {openSections['url'] ? (
+                  <ChevronDown size={14} className="nav-section-chevron" />
+                ) : (
+                  <ChevronRight size={14} className="nav-section-chevron" />
+                )}
+              </div>
+            </button>
+
+            {openSections['url'] && (
+              <div className="nav-section-body animate-fade-in">
+                <button
+                  onClick={() => { setActiveTab('url-monitor'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'url-monitor' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <Globe size={18} />
+                  <span className="sidebar-text">URL Monitor</span>
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('status_portal'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'status_portal' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <ShieldCheck size={18} />
+                  <span className="sidebar-text">Status Portal</span>
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('system'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'system' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <Server size={18} />
+                  <span className="sidebar-text">System Health</span>
+                </button>
+              </div>
+            )}
           </div>
 
-          <button
-            onClick={() => { setActiveTab('url-monitor'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'url-monitor' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <Globe size={18} />
-            URL Monitor
-          </button>
+          {/* Section 4: Settings & Administration */}
+          <div className="nav-section-group">
+            <button
+              type="button"
+              className="nav-section-header"
+              onClick={() => toggleSection('settings')}
+              aria-expanded={openSections['settings']}
+            >
+              <div className="nav-section-title-wrap">
+                <SettingsIcon size={13} color="var(--text-muted)" />
+                <span style={{ color: 'var(--text-secondary)', fontWeight: 800 }}>SETTINGS & ADMIN</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span className="nav-section-badge">3</span>
+                {openSections['settings'] ? (
+                  <ChevronDown size={14} className="nav-section-chevron" />
+                ) : (
+                  <ChevronRight size={14} className="nav-section-chevron" />
+                )}
+              </div>
+            </button>
 
-          <button
-            onClick={() => { setActiveTab('status_portal'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'status_portal' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <ShieldCheck size={18} />
-            Status Portal
-          </button>
-
-          <button
-            onClick={() => { setActiveTab('system'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'system' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <Server size={18} />
-            System Health
-          </button>
-
-
-          {/* Section 3: Settings & Platform Administration */}
-          <div style={{
-            fontSize: '10px',
-            fontWeight: 800,
-            color: 'var(--text-secondary)',
-            letterSpacing: '0.08em',
-            padding: '18px 12px 6px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            borderTop: '1px solid rgba(255, 255, 255, 0.05)',
-            marginTop: '8px'
-          }}>
-            <SettingsIcon size={12} /> SETTINGS & ADMIN
+            {openSections['settings'] && (
+              <div className="nav-section-body animate-fade-in">
+                <button
+                  onClick={() => { setActiveTab('settings'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'settings' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <SettingsIcon size={18} />
+                  <span className="sidebar-text">Application Settings</span>
+                </button>
+                <button
+                  onClick={() => { setActiveTab('users'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'users' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <Users size={18} color="#8b5cf6" />
+                  <span className="sidebar-text">User Management &amp; RBAC</span>
+                </button>
+                <button
+                  onClick={() => { setActiveTab('alerts'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'alerts' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <Bell size={18} color="#3b82f6" />
+                  <span className="sidebar-text">Alert Management</span>
+                </button>
+              </div>
+            )}
           </div>
-
-          <button
-            onClick={() => { setActiveTab('settings'); setMobileSidebarOpen(false); }}
-            className={`tab-link ${activeTab === 'settings' ? 'active' : ''}`}
-            style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-          >
-            <SettingsIcon size={18} />
-            Application Settings
-          </button>
-
 
         </nav>
 
@@ -778,11 +893,11 @@ function MainAppShell() {
                   boxShadow: wsConnected ? 'var(--glow-success)' : 'var(--glow-cyan)'
                 }}
               />
-              <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+              <span className="sidebar-footer-text" style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                 {wsConnected ? 'WebSocket Push Active' : 'Telemetry Polling Live'}
               </span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: '6px' }}>
+            <div className="sidebar-gateway-meta" style={{ display: 'flex', flexDirection: 'column', gap: '2px', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: '6px' }}>
               <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>SELECTED GATEWAY</span>
               <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--color-aws)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {selectedGateway.name}
@@ -809,11 +924,11 @@ function MainAppShell() {
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <AlertTriangle size={12} color="var(--color-aws)" />
-              <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-aws)' }}>
+              <span className="sidebar-footer-text" style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-aws)', whiteSpace: 'nowrap' }}>
                 AWS Offline
               </span>
             </div>
-            <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+            <span className="sidebar-footer-text" style={{ fontSize: '10px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
               Click to connect AWS credentials.
             </span>
           </div>
@@ -841,34 +956,26 @@ function MainAppShell() {
               alignItems: 'center',
               justifyContent: 'center',
               fontWeight: 700,
-              fontSize: '10px'
+              fontSize: '10px',
+              flexShrink: 0
             }}>
               {(authUsername || 'A').charAt(0).toUpperCase()}
             </div>
-            <span style={{ fontWeight: 600 }}>{authUsername || 'Admin'}</span>
+            <span className="sidebar-footer-text sidebar-text" style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{authUsername || 'Admin'}</span>
           </div>
           <button
             onClick={handleLogout}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--color-error)',
-              cursor: 'pointer',
-              fontWeight: 650,
-              padding: '2px 6px',
-              borderRadius: '4px',
-              transition: 'all 0.15s ease'
-            }}
+            style={{ background: 'none', border: 'none', color: 'var(--color-error)', cursor: 'pointer', fontWeight: 650, padding: '2px 6px', borderRadius: '4px', transition: 'all 0.15s ease', flexShrink: 0 }}
             onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.08)'}
             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
           >
-            Sign Out
+            <span className="sidebar-footer-text" style={{ whiteSpace: 'nowrap' }}>Sign Out</span>
           </button>
         </div>
       </aside>
 
       {/* 2. Main Dashboard Content Frame */}
-      <main className="main-content-frame">
+      <main className={`main-content-frame${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
         {/* Main Header */}
         <header
           style={{
@@ -885,7 +992,15 @@ function MainAppShell() {
                 {activeTab === 'logs' ? 'CloudWatch Logs Stream' : activeTab === 'routes' ? 'Routes & Performance' : activeTab === 'url-monitor' ? 'URL Uptime Monitor' : activeTab === 'lambda' ? 'Lambda Serverless Monitoring' : activeTab}
               </h2>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                {selectedGateway ? `AWS API Gateway live scope: ${selectedGateway.name}` : 'AWS API Gateway live scope (not connected)'}
+                {activeTab === 'lambda'
+                  ? 'AWS Lambda Serverless Telemetry Scope'
+                  : ['url-monitor', 'status_portal', 'system'].includes(activeTab)
+                  ? 'Global Synthetic HTTP Uptime & Endpoint Scope'
+                  : ['settings', 'users', 'alerts'].includes(activeTab)
+                  ? 'System Configuration, RBAC & Alert Management Scope'
+                  : selectedGateway
+                  ? `AWS API Gateway live scope: ${selectedGateway.name}`
+                  : 'AWS API Gateway live scope (not connected)'}
               </p>
             </div>
 
@@ -907,6 +1022,71 @@ function MainAppShell() {
                 >
                   <ShieldAlert size={12} />
                   High Error Ratio Triggered
+                </div>
+              )}
+
+              {/* Global API Gateway Selector & Stage Switcher (Shown exclusively on API Gateway Monitoring tabs) */}
+              {['dashboard', 'routes', 'logs', 'slo', 'topology', 'playbooks'].includes(activeTab) && availableGateways && availableGateways.length > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
+                  <Server size={14} color="var(--color-primary)" />
+                  <select
+                    value={selectedGateway?.id || ''}
+                    onChange={(e) => {
+                      const found = availableGateways.find((g: any) => g.id === e.target.value);
+                      if (found) {
+                        setSelectedGateway(found);
+                        fetchAvailableStages(found);
+                      }
+                    }}
+                    style={{
+                      backgroundColor: 'rgba(0, 242, 254, 0.08)',
+                      border: '1px solid rgba(0, 242, 254, 0.25)',
+                      borderRadius: '8px',
+                      color: 'var(--color-primary)',
+                      padding: '4px 10px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      outline: 'none'
+                    }}
+                    title="Switch Selected API Gateway"
+                  >
+                    {availableGateways.map((g: any) => (
+                      <option key={g.id} value={g.id} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+                        {g.name} ({g.protocol})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Global API Gateway Stage Switcher */}
+              {['dashboard', 'routes', 'logs', 'slo', 'topology', 'playbooks'].includes(activeTab) && selectedGateway && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
+                  <Layers size={14} color="var(--color-success)" />
+                  <select
+                    value={awsConfig.stage || ''}
+                    onChange={(e) => setAwsConfig((prev: any) => ({ ...prev, stage: e.target.value }))}
+                    disabled={loadingStages}
+                    style={{
+                      backgroundColor: 'rgba(16, 185, 129, 0.08)',
+                      border: '1px solid rgba(16, 185, 129, 0.25)',
+                      borderRadius: '8px',
+                      color: 'var(--color-success)',
+                      padding: '4px 10px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      outline: 'none'
+                    }}
+                    title="Switch Deployed Gateway Stage"
+                  >
+                    {(availableStages && availableStages.length > 0 ? availableStages : [awsConfig.stage || 'prod']).map((s: string) => (
+                      <option key={s} value={s} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+                        Stage: {s}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
 
@@ -932,7 +1112,7 @@ function MainAppShell() {
                   >
                     {accountProfiles.map((p: any) => (
                       <option key={p.id} value={p.id} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
-                        🏢 {p.name} ({p.region})
+                        {p.name} ({p.region})
                       </option>
                     ))}
                   </select>
@@ -957,11 +1137,16 @@ function MainAppShell() {
                   }}
                   title="Switch Visual Theme"
                 >
-                  <option value="cyberpunk">🌌 Cyberpunk Cyan</option>
-                  <option value="dracula">🟪 Dracula Violet</option>
-                  <option value="emerald">🌲 Emerald Matrix</option>
-                  <option value="amber">🌋 Sunset Amber</option>
-                  <option value="light">☀️ Nordic Light</option>
+                  <option value="cyberpunk">Cyberpunk Cyan</option>
+                  <option value="dracula">Dracula Violet</option>
+                  <option value="emerald">Emerald Matrix</option>
+                  <option value="amber">Sunset Amber</option>
+                  <option value="light">Nordic Light</option>
+                  <option value="synthwave">Synthwave Neon</option>
+                  <option value="tokyo-night">Tokyo Night</option>
+                  <option value="solarized">Solarized Dark</option>
+                  <option value="monokai">Monokai Gold</option>
+                  <option value="sapphire">Midnight Sapphire</option>
                 </select>
               </div>
 
@@ -973,141 +1158,38 @@ function MainAppShell() {
               )}
             </div>
           </div>
-
-
-          {/* Dual Scope Selectors Bar */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '16px',
-            flexWrap: 'wrap',
-            padding: '12px 16px',
-            borderRadius: '12px',
-            backgroundColor: 'rgba(255, 255, 255, 0.02)',
-            border: '1px solid var(--border-main)'
-          }}>
-            {/* 1. API Gateway Scope Selector */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: '280px' }}>
-              <div style={{
-                padding: '8px',
-                borderRadius: '8px',
-                backgroundColor: 'rgba(255, 153, 0, 0.1)',
-                border: '1px solid rgba(255, 153, 0, 0.25)',
-                display: 'flex',
-                alignItems: 'center'
-              }}>
-                <Cpu size={16} color="var(--color-aws)" />
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
-                <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--color-aws)', letterSpacing: '0.05em' }}>
-                  AWS API GATEWAY SCOPE
-                </span>
-                {availableGateways && availableGateways.length > 0 ? (
-                  <select
-                    className="input-field"
-                    value={selectedGateway?.id || ''}
-                    onChange={(e) => {
-                      const gw = availableGateways.find((g: any) => g.id === e.target.value);
-                      if (gw) setSelectedGateway(gw);
-                    }}
-                    style={{ fontSize: '12px', padding: '4px 8px', height: '28px' }}
-                  >
-                    {availableGateways.map((gw: any) => (
-                      <option key={gw.id} value={gw.id}>
-                        {gw.name} ({gw.protocol})
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                    {selectedGateway ? selectedGateway.name : 'AWS Credentials Required'}
-                  </span>
-                )}
-              </div>
-              {awsConfig.stage && (
-                <span style={{
-                  padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 700,
-                  backgroundColor: 'rgba(255, 153, 0, 0.1)', color: 'var(--color-aws)', border: '1px solid rgba(255, 153, 0, 0.2)'
-                }}>
-                  Stage: {awsConfig.stage}
-                </span>
-              )}
-            </div>
-
-            <div style={{ width: '1px', height: '32px', backgroundColor: 'var(--border-main)' }} />
-
-            {/* 2. URL Endpoint Scope Selector */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: '280px' }}>
-              <div style={{
-                padding: '8px',
-                borderRadius: '8px',
-                backgroundColor: 'rgba(0, 242, 254, 0.1)',
-                border: '1px solid rgba(0, 242, 254, 0.25)',
-                display: 'flex',
-                alignItems: 'center'
-              }}>
-                <Globe size={16} color="var(--color-primary)" />
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
-                <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--color-primary)', letterSpacing: '0.05em' }}>
-                  MONITORED URL ENDPOINT
-                </span>
-                {urlTargets && urlTargets.length > 0 ? (
-                  <select
-                    className="input-field"
-                    value={selectedUrlTarget?.id || ''}
-                    onChange={(e) => {
-                      const target = urlTargets.find((t: any) => t.id === e.target.value);
-                      if (target) {
-                        setSelectedUrlTarget(target);
-                        setActiveTab('url-monitor');
-                      }
-                    }}
-                    style={{ fontSize: '12px', padding: '4px 8px', height: '28px' }}
-                  >
-                    {urlTargets.map((target: any) => (
-                      <option key={target.id} value={target.id}>
-                        {target.name} — {target.url}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                    No URL Targets Configured
-                  </span>
-                )}
-              </div>
-              {selectedUrlTarget && (
-                <span style={{
-                  padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 700,
-                  backgroundColor: selectedUrlTarget.isUp ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                  color: selectedUrlTarget.isUp ? 'var(--color-success)' : 'var(--color-error)',
-                  border: `1px solid ${selectedUrlTarget.isUp ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)'}`
-                }}>
-                  {selectedUrlTarget.isUp ? `UP (${selectedUrlTarget.lastStatusCode || 200})` : 'DOWN'}
-                </span>
-              )}
-            </div>
-          </div>
         </header>
 
+        {/* Welcome landing page — first-time visitors only (full-screen overlay) */}
+        {showWelcome && (
+          <WelcomePage
+            onEnter={(tab) => {
+              localStorage.setItem('nova_visited', '1');
+              setShowWelcome(false);
+              if (tab) setActiveTab(tab as TabType);
+            }}
+          />
+        )}
+
         {/* Tab Body Content */}
+        {!showWelcome && (
         <section style={{ flex: 1 }}>
           {activeTab === 'overview' && (selectedGateway ? <Overview /> : renderGatewayRequiredFallback())}
+          {activeTab === 'dashboard' && <CustomDashboard />}
           {activeTab === 'routes' && (selectedGateway ? <RoutePerformance /> : renderGatewayRequiredFallback())}
           {activeTab === 'logs' && (selectedGateway ? <LiveLogs token={token} /> : renderGatewayRequiredFallback())}
-          {activeTab === 'alerts' && <Alerts />}
+          {activeTab === 'alerts' && <Settings initialSubTab="alerts" userRole={userRole} />}
           {activeTab === 'slo' && <SloManager apiId={selectedGateway?.id} />}
-          {activeTab === 'topology' && <UnifiedTopologyMesh />}
+          {activeTab === 'topology' && <TopologyMesh />}
           {activeTab === 'playbooks' && <Playbooks />}
-          {activeTab === 'lambda' && <LambdaMonitor activeSubTab={lambdaSubTab} />}
+          {activeTab === 'lambda' && <LambdaMonitor activeSubTab={lambdaSubTab} onNavigateTab={(tab) => setActiveTab(tab as any)} />}
           {activeTab === 'system' && <SystemHealth />}
-
           {activeTab === 'url-monitor' && <UrlMonitor token={token} onLogout={handleLogout} />}
           {activeTab === 'status_portal' && <StatusPortal />}
           {activeTab === 'settings' && <Settings initialSubTab="aws" userRole={userRole} />}
           {activeTab === 'users' && <Settings initialSubTab="users" userRole={userRole} />}
         </section>
+        )}
 
       </main>
     </div>
