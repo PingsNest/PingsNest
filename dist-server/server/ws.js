@@ -10,7 +10,7 @@ try {
     subClient = new Redis(REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false });
     pubClient.connect().catch(() => { });
     subClient.connect().then(() => {
-        subClient?.subscribe('ws:fanout:logs', 'ws:fanout:metrics', 'ws:fanout:alert', 'ws:fanout:ping', (err) => {
+        subClient?.subscribe('ws:fanout:logs', 'ws:fanout:metrics', 'ws:fanout:alert', 'ws:fanout:ping', 'ws:fanout:lambda', (err) => {
             if (!err)
                 console.log('[WS Redis Pub/Sub] Subscribed to multi-pod fanout channels.');
         });

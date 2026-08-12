@@ -479,12 +479,14 @@ const DeepDiagnosticModal: React.FC<DeepDiagnosticModalProps> = ({ data, onClose
 // ─────────────────────────────────────────────
 export const TopologyMesh: React.FC = () => {
   const { availableGateways, selectedGateway, awsConfig, availableLogGroups, routes, loadingRoutes, fetchRoutes } = useMonitor();
-  const [methodFilter, setMethodFilter] = useState('ALL');
-  const [searchQuery, setSearchQuery]   = useState('');
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [selectedId, setSelectedId]     = useState<string | null>(null);
+  const [methodFilter, setMethodFilter]           = useState('ALL');
+  const [integrationFilter, setIntegrationFilter] = useState('ALL');
+  const [sortBy, setSortBy]                       = useState<'path-asc' | 'path-desc' | 'method' | 'integration'>('path-asc');
+  const [searchQuery, setSearchQuery]             = useState('');
+  const [isRefreshing, setIsRefreshing]           = useState(false);
+  const [selectedId, setSelectedId]               = useState<string | null>(null);
   const [diagnosticModalData, setDiagnosticModalData] = useState<InspectorData | null>(null);
-  const [zoomLevel, setZoomLevel]       = useState(1);
+  const [zoomLevel, setZoomLevel]                 = useState(1);
 
   useEffect(() => {
     if (selectedGateway) fetchRoutes(true);
@@ -498,20 +500,41 @@ export const TopologyMesh: React.FC = () => {
     [availableLogGroups]
   );
 
-  // Filtered routes
+  // Filtered and sorted routes
   const filteredRoutes = useMemo(() => {
-    let r = routes ?? [];
+    let r = [...(routes ?? [])];
     if (methodFilter !== 'ALL') r = r.filter(rt => rt.method.toUpperCase() === methodFilter);
+    if (integrationFilter !== 'ALL') {
+      if (integrationFilter === 'LAMBDA') {
+        r = r.filter(rt => rt.integrationType?.includes('AWS') || rt.lambdaName || (rt.integrationUri && rt.integrationUri.includes('arn:aws:lambda')));
+      } else if (integrationFilter === 'HTTP') {
+        r = r.filter(rt => rt.integrationType?.includes('HTTP'));
+      } else if (integrationFilter === 'MOCK') {
+        r = r.filter(rt => rt.integrationType === 'MOCK');
+      }
+    }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       r = r.filter(rt =>
         rt.path.toLowerCase().includes(q) ||
         rt.method.toLowerCase().includes(q) ||
-        (rt.lambdaName?.toLowerCase().includes(q))
+        (rt.lambdaName?.toLowerCase().includes(q)) ||
+        (rt.integrationType?.toLowerCase().includes(q)) ||
+        (rt.integrationUri?.toLowerCase().includes(q))
       );
     }
+    // Apply sorting
+    if (sortBy === 'path-asc') {
+      r.sort((a, b) => a.path.localeCompare(b.path));
+    } else if (sortBy === 'path-desc') {
+      r.sort((a, b) => b.path.localeCompare(a.path));
+    } else if (sortBy === 'method') {
+      r.sort((a, b) => a.method.localeCompare(b.method));
+    } else if (sortBy === 'integration') {
+      r.sort((a, b) => (a.integrationType || '').localeCompare(b.integrationType || ''));
+    }
     return r;
-  }, [routes, methodFilter, searchQuery]);
+  }, [routes, methodFilter, integrationFilter, searchQuery, sortBy]);
 
   // Resolve lambda name for a route
   const resolveLambda = (rt: typeof filteredRoutes[0]): string | undefined => {
@@ -782,44 +805,89 @@ export const TopologyMesh: React.FC = () => {
         </div>
       </div>
 
-      {/* ── Filter bar ─────────────────────────── */}
+      {/* ── Filter & Search Controls bar ─────────────────────────── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {/* HTTP method chips */}
+        {/* Method chips + Integration filter + Sort dropdown + Search box */}
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px',
+          display: 'flex', alignItems: 'center', gap: 12, padding: '8px 14px',
           borderRadius: 10, backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-main)', flexWrap: 'wrap',
         }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 800, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-            <Filter size={12} color="var(--color-primary)" /> METHOD:
-          </span>
-          {availableMethods.map(m => {
-            const isActive = methodFilter === m;
-            const mc = m === 'ALL' ? null : methodStyle(m);
-            return (
-              <button
-                key={m}
-                onClick={() => setMethodFilter(m)}
-                style={{
-                  padding: '2px 10px', fontSize: 10, fontWeight: 800, borderRadius: 6, cursor: 'pointer', border: 'none',
-                  transition: 'all 0.15s',
-                  backgroundColor: isActive ? (mc?.bg ?? 'rgba(0,242,254,0.12)') : 'transparent',
-                  color: isActive ? (mc?.text ?? 'var(--color-primary)') : 'var(--text-muted)',
-                  outline: isActive ? `1px solid ${mc?.border ?? 'rgba(0,242,254,0.35)'}` : '1px solid transparent',
-                }}
-              >{m}</button>
-            );
-          })}
+          {/* Method chips */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 800, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+              <Filter size={12} color="var(--color-primary)" /> METHOD:
+            </span>
+            {availableMethods.map(m => {
+              const isActive = methodFilter === m;
+              const mc = m === 'ALL' ? null : methodStyle(m);
+              return (
+                <button
+                  key={m}
+                  onClick={() => setMethodFilter(m)}
+                  style={{
+                    padding: '2px 9px', fontSize: 10, fontWeight: 800, borderRadius: 6, cursor: 'pointer', border: 'none',
+                    transition: 'all 0.15s',
+                    backgroundColor: isActive ? (mc?.bg ?? 'rgba(0,242,254,0.12)') : 'transparent',
+                    color: isActive ? (mc?.text ?? 'var(--color-primary)') : 'var(--text-muted)',
+                    outline: isActive ? `1px solid ${mc?.border ?? 'rgba(0,242,254,0.35)'}` : '1px solid transparent',
+                  }}
+                >{m}</button>
+              );
+            })}
+          </div>
+
+          {/* Divider */}
+          <div style={{ height: 16, width: 1, backgroundColor: 'var(--border-main)' }} />
+
+          {/* Integration Type Dropdown Filter */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+              INTEGRATION:
+            </span>
+            <select
+              className="input-field"
+              value={integrationFilter}
+              onChange={e => setIntegrationFilter(e.target.value)}
+              style={{ fontSize: 11, height: 28, padding: '2px 8px', borderRadius: 6, appearance: 'none', cursor: 'pointer' }}
+            >
+              <option value="ALL">All Integrations</option>
+              <option value="LAMBDA">AWS Lambda Functions</option>
+              <option value="HTTP">HTTP / Proxy Targets</option>
+              <option value="MOCK">Mock Integrations</option>
+            </select>
+          </div>
+
+          {/* Divider */}
+          <div style={{ height: 16, width: 1, backgroundColor: 'var(--border-main)' }} />
+
+          {/* Sort By Dropdown */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+              SORT:
+            </span>
+            <select
+              className="input-field"
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value as any)}
+              style={{ fontSize: 11, height: 28, padding: '2px 8px', borderRadius: 6, appearance: 'none', cursor: 'pointer' }}
+            >
+              <option value="path-asc">Path (A → Z)</option>
+              <option value="path-desc">Path (Z → A)</option>
+              <option value="method">HTTP Method</option>
+              <option value="integration">Integration Type</option>
+            </select>
+          </div>
 
           {/* Search box */}
           <div style={{ position: 'relative', marginLeft: 'auto' }}>
-            <Search size={12} color="var(--text-muted)" style={{ position: 'absolute', left: 8, top: 7 }} />
+            <Search size={12} color="var(--text-muted)" style={{ position: 'absolute', left: 8, top: 8 }} />
             <input
               type="text"
               className="input-field"
-              placeholder="Search routes / lambdas…"
+              placeholder="Search route path / lambda / integration…"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              style={{ paddingLeft: 26, fontSize: 11, height: 28, width: 220 }}
+              style={{ paddingLeft: 26, fontSize: 11, height: 28, width: 230 }}
             />
           </div>
         </div>

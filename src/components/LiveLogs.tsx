@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useMonitor } from '../context/MonitorContext';
 import type { RequestLog } from '../context/MonitorContext';
 import { TraceViewer } from './TraceViewer';
-import { Play, Pause, Trash2, Search, ShieldCheck, Terminal, Globe, AlertTriangle, Radio, History, Calendar, Maximize2, X, Copy, CheckCheck, Clock, RefreshCw, Zap, Download } from 'lucide-react';
+import { Play, Pause, Trash2, Search, ShieldCheck, Terminal, Globe, AlertTriangle, Radio, History, Calendar, Maximize2, X, Copy, CheckCheck, Clock, RefreshCw, Zap, Download, Server, Layers } from 'lucide-react';
 
 
 
@@ -13,12 +13,19 @@ interface LiveLogsProps {
 export const LiveLogs: React.FC<LiveLogsProps> = ({ token }) => {
   const {
     logs,
+    setLogs,
     clearLogs,
     loadingLogs,
     logsAccessDenied,
     logsError,
+    availableGateways,
     selectedGateway,
+    setSelectedGateway,
+    availableStages,
+    loadingStages,
+    fetchAvailableStages,
     awsConfig,
+    setAwsConfig,
     logsMode,
     setLogsMode,
     fetchLogs,
@@ -31,6 +38,62 @@ export const LiveLogs: React.FC<LiveLogsProps> = ({ token }) => {
   const [isPaused, setIsPaused] = useState(false);
   const [isBypassing, setIsBypassing] = useState(false);
   const [useLocalTimezone, setUseLocalTimezone] = useState(true);
+
+  // Buffered Module Scope Setup States
+  const [pendingGatewayId, setPendingGatewayId] = React.useState<string>(selectedGateway?.id || '');
+  const [pendingStage, setPendingStage] = React.useState<string>(awsConfig?.stage || '');
+  const [pendingLogSource, setPendingLogSource] = React.useState<string>(awsConfig?.customLogGroup === '__lambdas__' ? '__lambdas__' : 'apigateway_default');
+  const [pendingStagesList, setPendingStagesList] = React.useState<string[]>(availableStages || []);
+  const [loadingPendingStages, setLoadingPendingStages] = React.useState(false);
+
+  React.useEffect(() => {
+    if (selectedGateway?.id) setPendingGatewayId(selectedGateway.id);
+  }, [selectedGateway?.id]);
+
+  React.useEffect(() => {
+    if (awsConfig?.stage) setPendingStage(awsConfig.stage);
+  }, [awsConfig?.stage]);
+
+  React.useEffect(() => {
+    if (availableStages && availableStages.length > 0) setPendingStagesList(availableStages);
+  }, [availableStages]);
+
+  const isScopeDirty = 
+    pendingGatewayId !== selectedGateway?.id ||
+    pendingStage !== awsConfig?.stage ||
+    pendingLogSource !== (awsConfig?.customLogGroup === '__lambdas__' ? '__lambdas__' : 'apigateway_default');
+
+  const handleGatewayChange = async (newGwId: string) => {
+    setPendingGatewayId(newGwId);
+    const found = availableGateways?.find((g: any) => g.id === newGwId);
+    if (found) {
+      setLoadingPendingStages(true);
+      try {
+        const stages = await fetchAvailableStages(found);
+        setPendingStagesList(stages);
+        if (stages && stages.length > 0) setPendingStage(stages[0]);
+      } catch (e) {
+        console.error('Error fetching stages for pending gateway:', e);
+      } finally {
+        setLoadingPendingStages(false);
+      }
+    }
+  };
+
+  const handleApplySyncScope = async () => {
+    setLogs([]);
+    const found = availableGateways?.find((g: any) => g.id === pendingGatewayId);
+    if (found) {
+      setSelectedGateway(found);
+    }
+    setAwsConfig((prev: any) => ({
+      ...prev,
+      gatewayId: pendingGatewayId,
+      stage: pendingStage,
+      customLogGroup: pendingLogSource === '__lambdas__' ? '__lambdas__' : undefined
+    }));
+    await fetchLogs(undefined, undefined, true);
+  };
 
   // Request Tester States
   const [isTesterOpen, setIsTesterOpen] = useState(false);
@@ -156,17 +219,17 @@ export const LiveLogs: React.FC<LiveLogsProps> = ({ token }) => {
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
 
-  // Auto-fetch logs when switching modes or changing history preset
+  // Auto-fetch logs when switching modes or changing history preset (Buffered scope changes require clicking Sync Logs)
   React.useEffect(() => {
     if (logsMode === 'live') {
-      fetchLogs();
+      fetchLogs(undefined, undefined, true);
     } else if (logsMode === 'history' && historyPreset !== 'custom') {
       let offset = 60 * 60 * 1000;
       if (historyPreset === '6h') offset = 6 * 60 * 60 * 1000;
       else if (historyPreset === '12h') offset = 12 * 60 * 60 * 1000;
       else if (historyPreset === '24h') offset = 24 * 60 * 60 * 1000;
       else if (historyPreset === '3d') offset = 3 * 24 * 60 * 60 * 1000;
-      fetchLogs(Date.now() - offset, Date.now());
+      fetchLogs(Date.now() - offset, Date.now(), true);
     }
   }, [logsMode, historyPreset]);
 
@@ -294,6 +357,120 @@ export const LiveLogs: React.FC<LiveLogsProps> = ({ token }) => {
       {/* Logs Table Container */}
       <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', overflow: 'hidden' }}>
         
+        {/* Module-Specific Log Scope Controls: Gateway, Stage, Log Source & Sync Logs Button */}
+        <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'var(--bg-input)', border: `1px solid ${isScopeDirty ? 'var(--color-primary)' : 'var(--border-main)'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', transition: 'all 0.2s ease' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            
+            {/* Gateway Selector */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
+              <Server size={13} color="var(--color-primary)" />
+              <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)' }}>Gateway:</span>
+              <select
+                value={pendingGatewayId}
+                onChange={(e) => handleGatewayChange(e.target.value)}
+                style={{
+                  backgroundColor: 'var(--bg-card)',
+                  border: '1px solid var(--border-main)',
+                  borderRadius: '6px',
+                  color: 'var(--color-primary)',
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  outline: 'none'
+                }}
+              >
+                {(availableGateways || []).map((g: any) => (
+                  <option key={g.id} value={g.id}>{g.name} ({g.protocol})</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Stage Selector */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
+              <Layers size={13} color="var(--color-success)" />
+              <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)' }}>Stage:</span>
+              <select
+                value={pendingStage}
+                onChange={(e) => setPendingStage(e.target.value)}
+                disabled={loadingPendingStages || loadingStages}
+                style={{
+                  backgroundColor: 'var(--bg-card)',
+                  border: '1px solid var(--border-main)',
+                  borderRadius: '6px',
+                  color: 'var(--color-success)',
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  outline: 'none'
+                }}
+              >
+                {(pendingStagesList && pendingStagesList.length > 0 ? pendingStagesList : [pendingStage || 'prod']).map((s: string) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Log Source Selector */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
+              <Terminal size={13} color="#818cf8" />
+              <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)' }}>Source:</span>
+              <select
+                value={pendingLogSource}
+                onChange={(e) => setPendingLogSource(e.target.value)}
+                style={{
+                  backgroundColor: 'var(--bg-card)',
+                  border: '1px solid var(--border-main)',
+                  borderRadius: '6px',
+                  color: '#818cf8',
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  outline: 'none'
+                }}
+              >
+                <option value="apigateway_default">API Gateway Default Access Logs (/aws/apigateway/...)</option>
+                <option value="__lambdas__">Integrated Route Lambdas (/aws/lambda/...)</option>
+              </select>
+            </div>
+
+            {/* SYNC LOGS ACTION BUTTON */}
+            <button
+              onClick={handleApplySyncScope}
+              disabled={loadingLogs}
+              style={{
+                padding: '5px 14px',
+                fontSize: '11px',
+                fontWeight: 700,
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                backgroundColor: isScopeDirty ? 'var(--color-primary)' : 'rgba(0, 242, 254, 0.12)',
+                color: isScopeDirty ? '#000000' : 'var(--color-primary)',
+                border: '1px solid var(--color-primary)',
+                boxShadow: isScopeDirty ? '0 0 12px rgba(0, 242, 254, 0.35)' : 'none',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <RefreshCw size={12} className={loadingLogs ? 'spin' : ''} />
+              {loadingLogs ? 'Syncing Logs...' : isScopeDirty ? 'Sync Logs (Apply Scope)' : 'Sync Logs'}
+            </button>
+
+          </div>
+
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+            {isScopeDirty ? (
+              <span style={{ color: 'var(--color-warning)', fontWeight: 700 }}>Unsaved Scope Changes — Click Sync Logs</span>
+            ) : (
+              <span>Active Target: <strong style={{ color: 'var(--text-secondary)' }}>{awsConfig?.customLogGroup === '__lambdas__' ? 'Integrated Route Lambdas' : `/aws/apigateway/${selectedGateway?.id || 'gateway'}-${awsConfig?.stage}`}</strong></span>
+            )}
+          </div>
+        </div>
+
         {/* Controls Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
           <div>

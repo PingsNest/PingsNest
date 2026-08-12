@@ -2,14 +2,16 @@ import React, { useState, useMemo } from 'react';
 import { useMonitor } from '../context/MonitorContext';
 import { MetricCard } from './MetricCard';
 import { AreaChart, DonutChart } from './CustomChart';
-import { Activity, Clock, Cpu, Server, AlertTriangle, RefreshCw, Search } from 'lucide-react';
+import { Activity, Clock, Cpu, Server, AlertTriangle, RefreshCw, Search, Layers, LayoutGrid } from 'lucide-react';
+import { MultiGatewayFleetView } from './MultiGatewayFleetView';
 
 export const Overview: React.FC = () => {
   const [loadingMetrics, setLoadingMetrics] = useState(false);
   const [searchRouteQuery, setSearchRouteQuery] = useState('');
   const [visibleRoutesCount, setVisibleRoutesCount] = useState(6);
+  const [viewMode, setViewMode] = useState<'fleet' | 'single'>('fleet');
 
-  const { overallStats, chartData, selectedGateway, routes, metricsAccessDenied, refreshRealMetrics, awsConfig, availableGateways } = useMonitor() as any;
+  const { overallStats, chartData, selectedGateway, setSelectedGateway, routes, metricsAccessDenied, refreshRealMetrics, awsConfig, availableGateways } = useMonitor() as any;
 
   const handleRefreshMetrics = async () => {
     setLoadingMetrics(true);
@@ -59,6 +61,58 @@ export const Overview: React.FC = () => {
 
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      
+      {/* Top View Selector Bar (Fleet Matrix vs Single Gateway) */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+        <div style={{ display: 'flex', background: 'var(--bg-card)', padding: '4px', borderRadius: '10px', border: '1px solid var(--border-main)', gap: '4px' }}>
+          <button
+            onClick={() => setViewMode('fleet')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 14px',
+              borderRadius: '8px',
+              border: viewMode === 'fleet' ? '1px solid var(--color-primary)' : '1px solid transparent',
+              background: viewMode === 'fleet' ? 'rgba(0, 242, 254, 0.12)' : 'transparent',
+              color: viewMode === 'fleet' ? 'var(--color-primary)' : 'var(--text-muted)',
+              fontWeight: viewMode === 'fleet' ? 800 : 600,
+              fontSize: '12px',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <Layers size={14} /> Multi-Gateway Fleet Matrix (N Gateways)
+          </button>
+          <button
+            onClick={() => setViewMode('single')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 14px',
+              borderRadius: '8px',
+              border: viewMode === 'single' ? '1px solid var(--color-primary)' : '1px solid transparent',
+              background: viewMode === 'single' ? 'rgba(0, 242, 254, 0.12)' : 'transparent',
+              color: viewMode === 'single' ? 'var(--color-primary)' : 'var(--text-muted)',
+              fontWeight: viewMode === 'single' ? 800 : 600,
+              fontSize: '12px',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <LayoutGrid size={14} /> Single Gateway Deep-Dive ({selectedGateway?.name || 'Selected'})
+          </button>
+        </div>
+      </div>
+
+      {viewMode === 'fleet' ? (
+        <MultiGatewayFleetView onSelectGateway={(gw) => {
+          setSelectedGateway(gw);
+          setViewMode('single');
+        }} />
+      ) : (
+        <>
       
       {/* Telemetry Status Banner */}
       <div
@@ -288,7 +342,7 @@ export const Overview: React.FC = () => {
               display: 'flex', flexDirection: 'column', gap: 6
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>🏢 {r.region}</span>
+                <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>{r.region}</span>
                 <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 3, backgroundColor: 'rgba(16,185,129,0.15)', color: '#34d399', border: '1px solid rgba(16,185,129,0.3)' }}>{r.status}</span>
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between' }}>
@@ -397,6 +451,8 @@ export const Overview: React.FC = () => {
         </div>
 
       </div>
+      </>
+      )}
 
     </div>
   );
