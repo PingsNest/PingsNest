@@ -1,0 +1,9 @@
+services:
+  pingsnest-launch:
+    build:
+      context: ./html_folder/launch
+      dockerfile: Dockerfile
+    container_name: pingsnest-launch-countdown
+    ports:
+      - "8080:80"
+    restart: unless-stopped
