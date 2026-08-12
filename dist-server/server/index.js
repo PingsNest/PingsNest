@@ -122,6 +122,24 @@ app.get('/api/finops/costs', async (req, res) => {
 // ─── SLA Compliance & Post-Mortem PDF Exporter Endpoint ───────────────────────
 app.get('/api/reports/sla-compliance', async (req, res) => {
     try {
+        // Query actual telemetry data from database
+        let totalRequests = 0;
+        let availabilityPct = 100.0;
+        let mttrMinutes = 0;
+        try {
+            const { rows: logRows } = await query(`SELECT COUNT(*) AS total FROM gateway_logs`);
+            totalRequests = Number(logRows[0]?.total || 0);
+            const { rows: incRows } = await query(`SELECT COUNT(*) AS count, COALESCE(AVG("durationSec"), 0) AS avg_sec, COALESCE(SUM("durationSec"), 0) AS total_down
+         FROM url_incidents WHERE "startedAt" >= NOW() - INTERVAL '30 days'`);
+            const totalDownSec = Number(incRows[0]?.total_down || 0);
+            const avgSec = Number(incRows[0]?.avg_sec || 0);
+            mttrMinutes = Math.round((avgSec / 60) * 10) / 10;
+            const windowSec = 30 * 24 * 3600;
+            availabilityPct = Math.max(0, Math.min(100, Math.round((1 - totalDownSec / windowSec) * 10000) / 100));
+        }
+        catch {
+            // Fallback if DB tables not initialized yet
+        }
         const doc = new PDFDocument({ margin: 40 });
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', 'attachment; filename=SLA_Compliance_Report.pdf');
@@ -133,10 +151,10 @@ app.get('/api/reports/sla-compliance', async (req, res) => {
         doc.fontSize(14).text('Executive Summary');
         doc.fontSize(10).text('This certificate verifies system operational availability against target Service Level Objectives (SLOs).');
         doc.moveDown();
-        doc.fontSize(12).text('SLO Compliance Target: 99.9%');
-        doc.fontSize(12).text('Actual Achieved Availability: 99.98%');
-        doc.fontSize(12).text('Total Measured Requests: 1,452,090');
-        doc.fontSize(12).text('Mean Time To Resolution (MTTR): 4.2 minutes');
+        doc.fontSize(12).text('SLO Compliance Target: 99.90%');
+        doc.fontSize(12).text(`Actual Achieved Availability: ${availabilityPct.toFixed(2)}%`);
+        doc.fontSize(12).text(`Total Measured Requests: ${totalRequests.toLocaleString()}`);
+        doc.fontSize(12).text(`Mean Time To Resolution (MTTR): ${mttrMinutes > 0 ? mttrMinutes + ' minutes' : 'N/A (0 incidents)'}`);
         doc.moveDown(2);
         doc.fontSize(14).text('Certification Authorization');
         doc.fontSize(10).text('Verified by Automated SRE Observability Engine & TimescaleDB Telemetry Audit.');

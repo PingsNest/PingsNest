@@ -17,7 +17,7 @@ import { TopologyMesh } from './components/TopologyMesh';
 import { CustomDashboard } from './components/CustomDashboard';
 import { WelcomePage } from './components/WelcomePage';
 
-import { LayoutDashboard, Route, Terminal, Settings as SettingsIcon, ShieldAlert, Cpu, Key, Globe, Activity, AlertTriangle, Bell, Server, Target, Palette, Network, ShieldCheck, Zap, Building2, Shield, Layers, Menu, X, ChevronDown, ChevronRight, ChevronLeft, Users } from 'lucide-react';
+import { LayoutDashboard, Route, Terminal, Settings as SettingsIcon, ShieldAlert, Cpu, Key, Globe, Activity, AlertTriangle, Bell, Server, Target, Palette, Network, ShieldCheck, Zap, Building2, Shield, Layers, Menu, X, ChevronDown, ChevronRight, ChevronLeft, Users, GitFork } from 'lucide-react';
 
 import './App.css';
 
@@ -1118,6 +1118,31 @@ function MainAppShell() {
                   </select>
                 </div>
               )}
+
+              {/* Fork & Use on GitHub Link */}
+              <a
+                href="https://github.com/PingsNest/PingsNest"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  backgroundColor: 'rgba(0, 242, 254, 0.08)',
+                  border: '1px solid rgba(0, 242, 254, 0.25)',
+                  color: 'var(--color-primary)',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  textDecoration: 'none',
+                  transition: 'all 0.2s ease'
+                }}
+                title="Fork PingsNest on GitHub and use the product"
+              >
+                <GitFork size={13} color="var(--color-primary)" />
+                <span>Fork on GitHub</span>
+              </a>
 
               {/* Quick Theme Selector Dropdown */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
