@@ -83,8 +83,8 @@ For full technical specifications, database schemas, and API documentation, insp
 
 1. **Clone the Repository**:
    ```bash
-   git clone https://github.com/your-username/pingsnest.git
-   cd pingsnest
+   git clone https://github.com/PingsNest/PingsNest.git
+   cd PingsNest
    ```
 
 2. **Install Dependencies**:
@@ -92,22 +92,15 @@ For full technical specifications, database schemas, and API documentation, insp
    npm install
    ```
 
-3. **Configure Environment Variables**:
-   Copy `.env.example` (or set environment variables):
-   ```bash
-   # Optional: Configure AWS credentials in environment or via UI Settings tab
-   export AWS_REGION="us-east-1"
-   export AWS_ACCESS_KEY_ID="your-key-id"
-   export AWS_SECRET_ACCESS_KEY="your-secret-key"
-   ```
-
-4. **Start Development Server**:
+3. **Start Application**:
    ```bash
    npm run dev
    ```
    - **Frontend Dashboard**: `http://localhost:5173`
    - **Backend API**: `http://localhost:3001`
    - **Default Login**: `admin` / `admin`
+
+> **Zero-Config Setup**: PingsNest works out-of-the-box with built-in default fallbacks for local database, cache, and server configuration. AWS credentials and account connection profiles can be added directly inside the UI (**Settings -> AWS Scope**).
 
 ---
 
@@ -127,16 +120,18 @@ The service will be accessible at `http://localhost:3001`.
 
 ---
 
-## ⚙️ Environment Variables
+## ⚙️ Configuration & Hardcoded Defaults
 
-| Variable | Default | Description |
+PingsNest includes pre-configured defaults in the application engine. All options are optional and can be overridden via environment variables if desired:
+
+| Parameter | Built-in Default | Description |
 | :--- | :--- | :--- |
 | `PORT` | `3001` | Express server HTTP port |
 | `DATABASE_URL` | `postgres://nova:nova_secret@localhost:5432/nova_monitor` | PostgreSQL / TimescaleDB connection URL |
 | `REDIS_URL` | `redis://localhost:6379` | Redis cache connection string |
-| `KAFKA_BROKERS` | `""` | Kafka broker list (e.g. `localhost:9092`). Direct SQL fallback used if empty. |
-| `AWS_REGION` | `us-east-1` | Default AWS region for CloudWatch & API Gateway API calls |
-| `JWT_SECRET` | `nova_jwt_secret_2026` | Secret key used for JWT authentication tokens |
+| `KAFKA_BROKERS` | `""` *(Disabled / Direct SQL fallback)* | Kafka broker list |
+| `AWS_REGION` | `us-east-1` | Default AWS region |
+| `JWT_SECRET` | `nova_jwt_secret_2026` | Default JWT authentication secret |
 
 ---
 
