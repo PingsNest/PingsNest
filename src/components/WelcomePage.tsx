@@ -27,7 +27,7 @@ function useCounter(target: number, duration = 1800, start = false) {
 }
 
 // ── Feature data ─────────────────────────────────────────────────────────────
-const FEATURES = [
+export const FEATURES = [
   {
     icon: <Activity size={22} />,
     color: '#00f2fe',
@@ -112,17 +112,74 @@ const MARQUEE_ITEMS = [
 // ── Component ─────────────────────────────────────────────────────────────────
 export function WelcomePage({ onEnter }: WelcomePageProps) {
   const [visible, setVisible] = useState(false);
-  const [hoveredCard, setHoveredCard] = useState<number | null>(null);
+  const [activePill, setActivePill] = useState<string>('circuit');
   const heroRef = useRef<HTMLDivElement>(null);
 
   const fns    = useCounter(537,  1600, visible);
   const uptime = useCounter(9998, 2000, visible);
   const latency = useCounter(12,  1200, visible);
 
+  // Live simulation states for Z-Pattern dashboards
+  const [cbTimer, setCbTimer] = useState<number>(18);
+  const [reqCount, setReqCount] = useState<number>(584291);
+  const [avgLat, setAvgLat] = useState<number>(14);
+  const [burnRate1, setBurnRate1] = useState<number>(0.84);
+  const [burnRate2, setBurnRate2] = useState<number>(0.92);
+  const [logs, setLogs] = useState<Array<{ id: number; method: string; path: string; status: number; lat: number; time: string }>>([
+    { id: 1, method: 'POST', path: '/v1/reports/download', status: 200, lat: 14, time: '09:00:18 PM' },
+    { id: 2, method: 'POST', path: '/v1/reports/download', status: 200, lat: 18, time: '09:00:15 PM' },
+    { id: 3, method: 'GET', path: '/v1/specifications/get', status: 200, lat: 12, time: '09:00:00 PM' },
+    { id: 4, method: 'GET', path: '/v1/analytics/realtime', status: 200, lat: 24, time: '08:59:51 PM' },
+  ]);
+
   useEffect(() => {
     const t = setTimeout(() => setVisible(true), 80);
     return () => clearTimeout(t);
   }, []);
+
+  // Circuit breaker timer
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCbTimer(prev => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Telemetry stats timer
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setReqCount(prev => prev + Math.floor(Math.random() * 8) + 2);
+      setAvgLat(14 + Math.floor(Math.random() * 4) - 2);
+      setBurnRate1(+(0.84 + (Math.random() * 0.04 - 0.02)).toFixed(2));
+      setBurnRate2(+(0.92 + (Math.random() * 0.04 - 0.02)).toFixed(2));
+    }, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Log streaming timer
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const paths = ['/v1/reports/download', '/v1/specifications/get', '/v1/storage/presigned_url', '/v1/analytics/realtime'];
+      const p = paths[Math.floor(Math.random() * paths.length)];
+      const m = Math.random() > 0.4 ? 'POST' : 'GET';
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString();
+
+      setLogs(prev => [
+        { id: Date.now(), method: m, path: p, status: 200, lat: Math.floor(Math.random() * 15) + 10, time: timeStr },
+        ...prev.slice(0, 4)
+      ]);
+    }, 2400);
+    return () => clearInterval(interval);
+  }, []);
+
+  const triggerTestLog = () => {
+    const now = new Date();
+    setLogs(prev => [
+      { id: Date.now(), method: 'POST', path: '/test/synthetic-request', status: 200, lat: 62, time: now.toLocaleTimeString() },
+      ...prev.slice(0, 4)
+    ]);
+  };
 
   return (
     <div style={{
@@ -384,68 +441,314 @@ export function WelcomePage({ onEnter }: WelcomePageProps) {
         </div>
 
         {/* ── Section heading ───────────────────────────────────────────────── */}
-        <div style={{ textAlign: 'center', marginBottom: '48px' }}>
+        <div style={{ textAlign: 'center', marginBottom: '32px' }}>
           <p style={{ fontSize: '11px', fontWeight: 800, color: 'var(--color-primary)', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: '10px' }}>
-            Platform Capabilities
+            Live Observability Suite
           </p>
           <h2 style={{ fontSize: 'clamp(24px, 4vw, 36px)', fontWeight: 800, letterSpacing: '-0.5px', margin: 0, lineHeight: 1.25 }}>
-            Everything you need to run AWS<br />
-            <span style={{ color: 'var(--text-muted)', fontWeight: 500, fontSize: '90%' }}>infrastructure with confidence</span>
+            Real Product Dashboard View<br />
+            <span style={{ color: 'var(--text-muted)', fontWeight: 500, fontSize: '90%' }}>precise telemetry &amp; fault tolerance in action</span>
           </h2>
         </div>
 
-        {/* ── Feature grid ─────────────────────────────────────────────────── */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-          gap: '16px',
-        }}>
-          {FEATURES.map((f, i) => (
+        {/* ── Top Feature Modules Selector Pills Bar ────────────────────────────── */}
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '40px' }}>
+          {[
+            { id: 'mesh', label: '🕸️ Service Mesh Topology' },
+            { id: 'synthetic', label: '🧪 URL & Synthetic Monitor' },
+            { id: 'alerts', label: '🚨 24/7 Multi-Account Alerts' },
+            { id: 'rbac', label: '👥 User Management & RBAC' },
+            { id: 'circuit', label: '⚡ Circuit Breakers' },
+            { id: 'finops', label: '💰 AWS FinOps' },
+            { id: 'tuner', label: '🔥 Lambda Tuner' },
+            { id: 'otlp', label: '🔭 OTLP Traces' },
+          ].map(p => (
             <button
-              key={f.tab}
-              className="w-feature-card"
-              onClick={() => onEnter(f.tab)}
-              onMouseEnter={() => setHoveredCard(i)}
-              onMouseLeave={() => setHoveredCard(null)}
+              key={p.id}
+              onClick={() => setActivePill(p.id)}
               style={{
-                background: hoveredCard === i
-                  ? `linear-gradient(135deg, ${f.glow}, rgba(255,255,255,0.02))`
-                  : 'rgba(255,255,255,0.028)',
-                border: `1px solid ${hoveredCard === i ? f.border : 'rgba(255,255,255,0.07)'}`,
-                borderRadius: '18px', padding: '28px 26px',
-                textAlign: 'left',
-                boxShadow: hoveredCard === i ? `0 16px 48px ${f.glow}` : 'none',
-                display: 'flex', flexDirection: 'column', gap: '18px',
+                background: activePill === p.id ? 'linear-gradient(135deg, rgba(0,242,254,0.2), rgba(112,0,255,0.25))' : 'rgba(255,255,255,0.04)',
+                border: `1px solid ${activePill === p.id ? 'var(--color-primary)' : 'rgba(255,255,255,0.1)'}`,
+                color: activePill === p.id ? '#fff' : 'var(--text-muted)',
+                padding: '8px 18px', borderRadius: '30px', fontSize: '12px', fontWeight: 700, cursor: 'pointer',
+                boxShadow: activePill === p.id ? '0 0 20px rgba(0,242,254,0.3)' : 'none',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div style={{
-                  width: '48px', height: '48px', borderRadius: '13px',
-                  background: f.glow, border: `1px solid ${f.border}`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: f.color,
-                }}>
-                  {f.icon}
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '23px', fontWeight: 900, color: f.color, lineHeight: 1 }}>{f.stat}</div>
-                  <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 500, marginTop: '2px' }}>{f.statLabel}</div>
-                </div>
-              </div>
-
-              <div>
-                <div style={{ fontSize: '15.5px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '7px' }}>{f.title}</div>
-                <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6 }}>{f.desc}</div>
-              </div>
-
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: '5px', marginTop: 'auto',
-                fontSize: '12px', fontWeight: 700, color: f.color,
-              }}>
-                Open module <ArrowRight size={13} />
-              </div>
+              {p.label}
             </button>
           ))}
+        </div>
+
+        {/* ── 5 Z-Pattern Live Dashboard Showcase Rows ───────────────────────── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '80px' }}>
+
+          {/* Row 1: Circuit Breaker State Inspector (Demo Left, Info Right) */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '48px', alignItems: 'center' }}>
+            <div style={{ background: '#060913', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '18px', overflow: 'hidden', boxShadow: '0 20px 50px rgba(0,0,0,0.7)' }}>
+              <div style={{ background: 'rgba(10,15,30,0.9)', padding: '12px 18px', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>API Gateway Monitor — Production Console Simulation</span>
+                <span style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)', color: '#10b981', padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span className="w-pulse-dot" style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }} /> Live Interactive Playground
+                </span>
+              </div>
+              <div style={{ padding: '22px' }}>
+                <h3 style={{ fontSize: '18px', fontWeight: 800, color: '#fff', margin: '0 0 4px' }}>Circuit Breaker State Inspector</h3>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 16px' }}>Monitors outbound connections. Auto-trips to OPEN after 5 consecutive failures, recovers via HALF_OPEN probe.</p>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+                  <div style={{ background: 'rgba(13,20,38,0.6)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '12px', padding: '14px' }}>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '8px' }}>stripe-payment-sdk</div>
+                    <span style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)', padding: '2px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 800 }}>CLOSED</span>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '8px' }}>Failures: 0 / 5 threshold</div>
+                    <div style={{ fontSize: '10px', color: '#10b981', marginTop: '2px' }}>All requests flowing normally</div>
+                  </div>
+
+                  <div style={{ background: 'rgba(244,63,94,0.04)', border: '1px solid rgba(244,63,94,0.35)', borderRadius: '12px', padding: '14px' }}>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '8px' }}>legacy-auth-service</div>
+                    <span style={{ background: 'rgba(244,63,94,0.15)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.3)', padding: '2px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 800 }}>OPEN</span>
+                    <div style={{ fontSize: '11px', color: '#f43f5e', fontWeight: 700, marginTop: '8px' }}>Failures: 5 / 5 · Blocked</div>
+                    <div style={{ fontSize: '10px', color: '#f43f5e', fontWeight: 700, marginTop: '2px' }}>Reset in: {cbTimer}s</div>
+                  </div>
+
+                  <div style={{ background: 'rgba(255,153,0,0.04)', border: '1px solid rgba(255,153,0,0.35)', borderRadius: '12px', padding: '14px' }}>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '8px' }}>external-webhook-target</div>
+                    <span style={{ background: 'rgba(255,153,0,0.15)', color: '#ff9900', border: '1px solid rgba(255,153,0,0.3)', padding: '2px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 800 }}>HALF_OPEN</span>
+                    <div style={{ fontSize: '11px', color: '#ff9900', marginTop: '8px' }}>Probe: 1 / 2 successes</div>
+                    <div style={{ fontSize: '10px', color: '#ff9900', marginTop: '2px' }}>Probing — recovery in progress</div>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>Source: <strong style={{ color: 'var(--color-primary)' }}>server/circuitBreaker.ts</strong> · Threshold: 5 failures · Reset: 30s</span>
+                  <button onClick={() => setCbTimer(30)} style={{ padding: '4px 10px', borderRadius: '6px', background: 'rgba(0,242,254,0.12)', border: '1px solid var(--color-primary)', color: 'var(--color-primary)', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>Reset Breaker</button>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--color-primary)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Circuit Breakers</span>
+              <h3 style={{ fontSize: '28px', fontWeight: 800, margin: '8px 0 14px', lineHeight: 1.2 }}>Automated Fault Isolation</h3>
+              <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.7, margin: '0 0 20px' }}>
+                Prevent cascading system outages across microservices. PingsNest auto-trips unhealthy targets upon 5 consecutive error spikes and automatically executes probe checks.
+              </p>
+              <button onClick={() => onEnter('overview')} style={{ padding: '10px 20px', borderRadius: '10px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', fontSize: '13px', fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                Open Interactive Dashboard <ArrowRight size={14} />
+              </button>
+            </div>
+          </div>
+
+          {/* Row 2: Gateway Overview & CloudWatch Telemetry Deep-Dive (Info Left, Demo Right) */}
+          <div style={{ display: 'grid', gridTemplateColumns: '0.8fr 1.2fr', gap: '48px', alignItems: 'center' }}>
+            <div>
+              <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--color-primary)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>CloudWatch Telemetry</span>
+              <h3 style={{ fontSize: '28px', fontWeight: 800, margin: '8px 0 14px', lineHeight: 1.2 }}>Gateway Fleet Overview</h3>
+              <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.7, margin: '0 0 20px' }}>
+                Single-gateway deep dives and multi-gateway fleet monitoring. Track live CloudWatch throughput, integration latencies, edge cache hit rates, and error rate profile charts.
+              </p>
+              <button onClick={() => onEnter('overview')} style={{ padding: '10px 20px', borderRadius: '10px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', fontSize: '13px', fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                Launch Gateway Overview <ArrowRight size={14} />
+              </button>
+            </div>
+
+            <div style={{ background: '#060913', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '18px', overflow: 'hidden', boxShadow: '0 20px 50px rgba(0,0,0,0.7)' }}>
+              <div style={{ background: 'rgba(10,15,30,0.9)', padding: '12px 18px', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-primary)' }}>Single Gateway Deep-Dive (api-gateway-core-prod-01)</span>
+                <span style={{ fontSize: '10px', color: '#10b981', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span className="w-pulse-dot" style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }} /> Live Telemetry Active
+                </span>
+              </div>
+              <div style={{ padding: '18px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px', marginBottom: '14px' }}>
+                  <div style={{ background: 'rgba(13,20,38,0.6)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px', padding: '10px' }}>
+                    <div style={{ fontSize: '8px', fontWeight: 800, color: 'var(--text-muted)' }}>TOTAL REQS</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '16px', fontWeight: 800, color: 'var(--color-primary)' }}>{reqCount.toLocaleString()}</div>
+                  </div>
+                  <div style={{ background: 'rgba(13,20,38,0.6)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px', padding: '10px' }}>
+                    <div style={{ fontSize: '8px', fontWeight: 800, color: 'var(--text-muted)' }}>AVG LATENCY</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '16px', fontWeight: 800, color: 'var(--color-primary)' }}>{avgLat}ms</div>
+                  </div>
+                  <div style={{ background: 'rgba(13,20,38,0.6)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px', padding: '10px' }}>
+                    <div style={{ fontSize: '8px', fontWeight: 800, color: 'var(--text-muted)' }}>INT LATENCY</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '16px', fontWeight: 800, color: '#a855f7' }}>8ms</div>
+                  </div>
+                  <div style={{ background: 'rgba(13,20,38,0.6)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px', padding: '10px' }}>
+                    <div style={{ fontSize: '8px', fontWeight: 800, color: 'var(--text-muted)' }}>CACHE HIT</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '16px', fontWeight: 800, color: '#10b981' }}>94.8%</div>
+                  </div>
+                  <div style={{ background: 'rgba(13,20,38,0.6)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px', padding: '10px' }}>
+                    <div style={{ fontSize: '8px', fontWeight: 800, color: 'var(--text-muted)' }}>ERROR RATE</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '16px', fontWeight: 800, color: '#10b981' }}>0.01%</div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div style={{ background: 'rgba(13,20,38,0.6)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px', padding: '12px' }}>
+                    <div style={{ fontWeight: 800, fontSize: '11px', color: '#fff', marginBottom: '6px' }}>Throughput Profile</div>
+                    <svg width="100%" height="60" viewBox="0 0 300 60" preserveAspectRatio="none">
+                      <path d="M0 50 Q 75 20, 150 35 T 300 15 L 300 60 L 0 60 Z" fill="rgba(0,242,254,0.15)"/>
+                      <path d="M0 50 Q 75 20, 150 35 T 300 15" stroke="#00f2fe" strokeWidth="2" fill="none"/>
+                    </svg>
+                  </div>
+                  <div style={{ background: 'rgba(13,20,38,0.6)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px', padding: '12px' }}>
+                    <div style={{ fontWeight: 800, fontSize: '11px', color: '#fff', marginBottom: '6px' }}>Latency Profiler</div>
+                    <svg width="100%" height="60" viewBox="0 0 300 60" preserveAspectRatio="none">
+                      <path d="M0 45 L 60 15 L 120 50 L 180 20 L 240 40 L 300 10 L 300 60 L 0 60 Z" fill="rgba(168,85,247,0.18)"/>
+                      <path d="M0 45 L 60 15 L 120 50 L 180 20 L 240 40 L 300 10" stroke="#a855f7" strokeWidth="2" fill="none"/>
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 3: Routes & Integrations (Demo Left, Info Right) */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '48px', alignItems: 'center' }}>
+            <div style={{ background: '#060913', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '18px', overflow: 'hidden', boxShadow: '0 20px 50px rgba(0,0,0,0.7)' }}>
+              <div style={{ background: 'rgba(10,15,30,0.9)', padding: '12px 18px', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', fontWeight: 800, color: '#fff' }}>API Gateway Resource Deployments (159 total)</span>
+                <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Stage: v1</span>
+              </div>
+              <div style={{ padding: '16px', overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                  <thead>
+                    <tr style={{ color: 'var(--text-muted)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                      <th style={{ textAlign: 'left', padding: '8px' }}>METHOD</th>
+                      <th style={{ textAlign: 'left', padding: '8px' }}>RESOURCE PATH</th>
+                      <th style={{ textAlign: 'left', padding: '8px' }}>TARGET</th>
+                      <th style={{ textAlign: 'left', padding: '8px' }}>P99</th>
+                      <th style={{ textAlign: 'left', padding: '8px' }}>STATUS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                      <td style={{ padding: '8px' }}><span style={{ background: 'rgba(168,85,247,0.15)', color: '#a855f7', padding: '2px 6px', borderRadius: '4px', fontWeight: 800 }}>OPTIONS</span></td>
+                      <td style={{ padding: '8px', color: 'var(--color-primary)' }}>/v1/user/account_mapping</td>
+                      <td style={{ padding: '8px', color: '#a855f7' }}>λ Mock (CORS)</td>
+                      <td style={{ padding: '8px', color: '#10b981' }}>32ms</td>
+                      <td style={{ padding: '8px', color: '#a855f7', fontWeight: 800 }}>MOCK</td>
+                    </tr>
+                    <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                      <td style={{ padding: '8px' }}><span style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', padding: '2px 6px', borderRadius: '4px', fontWeight: 800 }}>POST</span></td>
+                      <td style={{ padding: '8px', color: 'var(--color-primary)' }}>/v1/user/account_mapping</td>
+                      <td style={{ padding: '8px', color: '#a855f7' }}>λ lambda-user-auth-mapping-prod-01</td>
+                      <td style={{ padding: '8px', color: '#10b981' }}>42ms</td>
+                      <td style={{ padding: '8px', color: '#10b981', fontWeight: 800 }}>ACTIVE</td>
+                    </tr>
+                    <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                      <td style={{ padding: '8px' }}><span style={{ background: 'rgba(0,242,254,0.15)', color: '#00f2fe', padding: '2px 6px', borderRadius: '4px', fontWeight: 800 }}>GET</span></td>
+                      <td style={{ padding: '8px', color: 'var(--color-primary)' }}>/v1/dashboard/metrics</td>
+                      <td style={{ padding: '8px', color: '#a855f7' }}>λ lambda-dashboard-aggregator-01</td>
+                      <td style={{ padding: '8px', color: '#10b981' }}>24ms</td>
+                      <td style={{ padding: '8px', color: '#10b981', fontWeight: 800 }}>ACTIVE</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--color-primary)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Route Management</span>
+              <h3 style={{ fontSize: '28px', fontWeight: 800, margin: '8px 0 14px', lineHeight: 1.2 }}>API Resource Inventory</h3>
+              <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.7, margin: '0 0 20px' }}>
+                Full automated route discovery across stages. Track P50, P90, and tail P99 latency distribution for every deployed API endpoint.
+              </p>
+              <button onClick={() => onEnter('routes')} style={{ padding: '10px 20px', borderRadius: '10px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', fontSize: '13px', fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                Explore All Routes <ArrowRight size={14} />
+              </button>
+            </div>
+          </div>
+
+          {/* Row 4: Live Tail Stream (Info Left, Demo Right) */}
+          <div style={{ display: 'grid', gridTemplateColumns: '0.8fr 1.2fr', gap: '48px', alignItems: 'center' }}>
+            <div>
+              <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--color-primary)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>WebSocket Streamer</span>
+              <h3 style={{ fontSize: '28px', fontWeight: 800, margin: '8px 0 14px', lineHeight: 1.2 }}>Live Log Tail Stream</h3>
+              <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.7, margin: '0 0 20px' }}>
+                Sub-second streaming access logs without CloudWatch Insights costs. Inspect incoming execution latencies and send synthetic test requests with one click.
+              </p>
+              <button onClick={() => onEnter('logs')} style={{ padding: '10px 20px', borderRadius: '10px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', fontSize: '13px', fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                Open Live Tail Log Streamer <ArrowRight size={14} />
+              </button>
+            </div>
+
+            <div style={{ background: '#060913', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '18px', overflow: 'hidden', boxShadow: '0 20px 50px rgba(0,0,0,0.7)' }}>
+              <div style={{ background: 'rgba(10,15,30,0.9)', padding: '12px 18px', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#00f2fe' }}></span> Live Tail Stream
+                </span>
+                <button onClick={triggerTestLog} style={{ padding: '4px 10px', borderRadius: '6px', background: 'linear-gradient(135deg, #00f2fe, #4facfe)', color: '#060913', fontSize: '10px', fontWeight: 800, border: 'none', cursor: 'pointer' }}>⚡ Test Request</button>
+              </div>
+              <div style={{ padding: '14px', overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                  <thead>
+                    <tr style={{ color: 'var(--text-muted)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                      <th style={{ textAlign: 'left', padding: '6px' }}>STATUS</th>
+                      <th style={{ textAlign: 'left', padding: '6px' }}>METHOD</th>
+                      <th style={{ textAlign: 'left', padding: '6px' }}>ROUTE PATH</th>
+                      <th style={{ textAlign: 'left', padding: '6px' }}>LATENCY</th>
+                      <th style={{ textAlign: 'left', padding: '6px' }}>TIME</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {logs.map(l => (
+                      <tr key={l.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                        <td style={{ padding: '6px' }}><span style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)', padding: '1px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 800 }}>{l.status}</span></td>
+                        <td style={{ padding: '6px' }}><span style={{ background: 'rgba(0,242,254,0.15)', color: '#00f2fe', padding: '1px 5px', borderRadius: '4px', fontWeight: 800 }}>{l.method}</span></td>
+                        <td style={{ padding: '6px', color: '#fff' }}>{l.path}</td>
+                        <td style={{ padding: '6px', color: 'var(--color-primary)' }}>{l.lat}ms</td>
+                        <td style={{ padding: '6px', color: 'var(--text-muted)' }}>{l.time}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 5: SLO & Error Budgets (Demo Left, Info Right) */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '48px', alignItems: 'center' }}>
+            <div style={{ background: '#060913', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '18px', overflow: 'hidden', boxShadow: '0 20px 50px rgba(0,0,0,0.7)' }}>
+              <div style={{ background: 'rgba(10,15,30,0.9)', padding: '12px 18px', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', fontWeight: 800, color: '#fff' }}>Service Level Objectives (SLO) &amp; Error Budgets</span>
+                <span style={{ fontSize: '10px', color: 'var(--accent-cyan)' }}>99.9% Target</span>
+              </div>
+              <div style={{ padding: '18px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                <div style={{ background: 'rgba(13,20,38,0.6)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '12px', padding: '14px' }}>
+                  <div style={{ fontWeight: 800, fontSize: '13px', color: '#fff', marginBottom: '8px' }}>GET SLO</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', textAlign: 'center', marginBottom: '10px' }}>
+                    <div><div style={{ fontSize: '8px', color: 'var(--text-muted)' }}>SLA</div><div style={{ fontFamily: 'var(--font-mono)', fontSize: '16px', fontWeight: 900, color: '#10b981' }}>99.98%</div></div>
+                    <div><div style={{ fontSize: '8px', color: 'var(--text-muted)' }}>BURN RATE</div><div style={{ fontFamily: 'var(--font-mono)', fontSize: '16px', fontWeight: 900, color: '#10b981' }}>{burnRate1}x</div></div>
+                  </div>
+                  <div style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.3)', padding: '6px 8px', borderRadius: '6px', color: '#10b981', fontSize: '10px', fontWeight: 600 }}>
+                    ✓ Healthy Burn Rate: Budget on track
+                  </div>
+                </div>
+
+                <div style={{ background: 'rgba(13,20,38,0.6)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '12px', padding: '14px' }}>
+                  <div style={{ fontWeight: 800, fontSize: '13px', color: '#fff', marginBottom: '8px' }}>All Routes</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', textAlign: 'center', marginBottom: '10px' }}>
+                    <div><div style={{ fontSize: '8px', color: 'var(--text-muted)' }}>SLA</div><div style={{ fontFamily: 'var(--font-mono)', fontSize: '16px', fontWeight: 900, color: '#10b981' }}>99.95%</div></div>
+                    <div><div style={{ fontSize: '8px', color: 'var(--text-muted)' }}>BURN RATE</div><div style={{ fontFamily: 'var(--font-mono)', fontSize: '16px', fontWeight: 900, color: '#10b981' }}>{burnRate2}x</div></div>
+                  </div>
+                  <div style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.3)', padding: '6px 8px', borderRadius: '6px', color: '#10b981', fontSize: '10px', fontWeight: 600 }}>
+                    ✓ Healthy Burn Rate: Budget on track
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--color-primary)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>SLO &amp; Error Budgets</span>
+              <h3 style={{ fontSize: '28px', fontWeight: 800, margin: '8px 0 14px', lineHeight: 1.2 }}>Real-Time SLA &amp; Burn Rates</h3>
+              <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.7, margin: '0 0 20px' }}>
+                Track route-level availability SLA targets (99.9% over 90d), budget consumption, and burn-rate warnings across rolling time windows.
+              </p>
+              <button onClick={() => onEnter('slo')} style={{ padding: '10px 20px', borderRadius: '10px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', fontSize: '13px', fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                Manage SLO &amp; Budgets <ArrowRight size={14} />
+              </button>
+            </div>
+          </div>
+
         </div>
 
         {/* ── Why PingsNest ─────────────────────────────────────────────────── */}

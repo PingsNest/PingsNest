@@ -527,15 +527,10 @@ function MainAppShell() {
 
   // Connected Dashboard workspace
   return (
-    <div className="app-wrapper">
-
-      {/* ─── Mobile Top Nav Bar (hidden on desktop) ──────────────────────────── */}
+    <div className="app-wrapper">      {/* ─── Mobile Top Nav Bar (hidden on desktop) ──────────────────────────── */}
       <div className="mobile-nav-bar">
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ width: '26px', height: '26px', borderRadius: '6px', background: 'linear-gradient(135deg, #ff9900, #ff5500)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Cpu size={13} color="#060913" />
-          </div>
-          <span style={{ fontSize: '17px', fontWeight: 800, fontFamily: 'var(--font-heading)', color: 'var(--text-primary)' }}>PingsNest</span>
+          <img src="/logo.png" alt="PingsNest" style={{ height: '40px', width: 'auto', maxWidth: '180px', objectFit: 'contain' }} />
           <span style={{ fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: 'rgba(255,153,0,0.1)', color: 'var(--color-aws)', border: '1px solid rgba(255,153,0,0.2)' }}>LIVE</span>
         </div>
         <button
@@ -568,23 +563,7 @@ function MainAppShell() {
 
         {/* Brand Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '32px', paddingLeft: '4px', minWidth: 0 }}>
-          <div
-            style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '8px',
-              background: 'linear-gradient(135deg, #ff9900 0%, #ff5500 100%)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: 'var(--glow-aws)'
-            }}
-          >
-            <Cpu size={16} color="#060913" />
-          </div>
-          <span className="sidebar-brand-name" style={{ fontSize: '20px', fontWeight: 800, fontFamily: 'var(--font-heading)', letterSpacing: '0.05em', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-            PingsNest
-          </span>
+          <img src="/logo.png" alt="PingsNest" style={{ height: '48px', width: 'auto', maxWidth: '220px', objectFit: 'contain' }} />
 
           <span
             className="sidebar-brand-badge"

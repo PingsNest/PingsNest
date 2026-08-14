@@ -106,17 +106,30 @@ For full technical specifications, database schemas, and API documentation, insp
 
 ## 🐳 Docker Deployment
 
-To launch PingsNest with full persistent storage, Redis caching, and Kafka event streaming:
+To launch PingsNest with full persistent storage, Redis caching, Kafka event streaming, and static marketing/portfolio website container:
 
 ```bash
-# Build and launch container stack
-docker compose up -d
+# Build and launch complete container stack
+docker compose up -d --build
 
-# View real-time logs
+# View real-time container logs
 docker compose logs -f
 ```
 
-The service will be accessible at `http://localhost:3001`.
+### Container Endpoints
+- **PingsNest Control Plane App**: `http://localhost:3001`
+- **PingsNest Portfolio & Marketing Site**: `http://localhost:8085`
+- **Default Login Credentials**: `admin` / `admin`
+
+### Standalone Portfolio Container Build (`html_folder/`)
+```bash
+# Build standalone Portfolio Nginx container directly from html_folder
+cd html_folder
+docker build -t pingsnest-portfolio .
+
+# Run Portfolio container on host port 8085
+docker run -d -p 8085:8080 --name pingsnest-portfolio pingsnest-portfolio
+```
 
 ---
 

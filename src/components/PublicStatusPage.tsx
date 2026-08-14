@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, CheckCircle, AlertTriangle, Clock, RefreshCw, Globe, Rss } from 'lucide-react';
+import { CheckCircle, AlertTriangle, Clock, RefreshCw, Globe, Rss } from 'lucide-react';
 
 interface PublicTarget {
   id: string;
@@ -130,18 +130,7 @@ export const PublicStatusPage: React.FC = () => {
         {/* Public Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {logoUrl ? (
-              <img src={logoUrl} alt="Logo" style={{ height: 42, width: 'auto', borderRadius: 8, objectFit: 'contain' }} />
-            ) : (
-              <div style={{
-                width: 42, height: 42, borderRadius: 12,
-                background: 'linear-gradient(135deg, #00f2fe 0%, #4facfe 100%)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 4px 16px rgba(0,242,254,0.3)'
-              }}>
-                <ShieldCheck size={24} color="#060913" />
-              </div>
-            )}
+            <img src={logoUrl || "/logo.png"} alt="PingsNest" style={{ height: 48, width: 'auto', maxWidth: 220, objectFit: 'contain' }} />
             <div>
               <h1 style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.02em' }}>
                 {pageTitle}
