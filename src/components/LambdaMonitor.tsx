@@ -259,7 +259,7 @@ const LambdaDetailDrawer: React.FC<LambdaDetailDrawerProps> = ({ fn, initialTab 
 
                 const errorMsgText = actualErrorLine?.message || (
                   fn.functionName.includes('recover') ? '[ERROR] TimeoutException: Task timed out after 30.00 seconds in File "recover_files.py", line 142, in handle_s3_recovery' :
-                  fn.functionName.includes('aifmd') ? '[ERROR] KMS.AccessDeniedException: The ciphertext reference key cannot be decrypted at kms_service.ts:88:12' :
+                  fn.functionName.includes('billing') ? '[ERROR] KMS.AccessDeniedException: The ciphertext reference key cannot be decrypted at kms_service.ts:88:12' :
                   fn.functionName.includes('check-file') ? '[ERROR] NullPointerException: Cannot read property \'content-type\' of undefined at file-type-checker.js:42:18' :
                   fn.functionName.includes('autofile') ? '[ERROR] ConnectionPoolExhaustedException: Timeout waiting for idle connection from pool at db_pool.ts:210:9' :
                   isPython ? '[ERROR] RuntimeError: Uncaught exception in File "lambda_function.py", line 142, in lambda_handler' :
@@ -4597,14 +4597,14 @@ echo "Bulk remediation commands executed successfully."`}
             {/* Generated Script Display Area */}
             <div style={{ background: 'rgba(0,0,0,0.5)', padding: '16px', borderRadius: '10px', border: '1px solid var(--border-main)', maxHeight: '280px', overflowY: 'auto', fontFamily: 'monospace', fontSize: '11.5px', color: '#38bdf8', lineHeight: '1.7', marginBottom: '16px' }}>
               <div style={{ color: 'var(--text-muted)', marginBottom: '8px' }}># 1. Enforce AWS_IAM Auth on Public Function URLs</div>
-              <div>aws lambda update-function-url-config --function-name awln-lmd-dev-legacy-01 --auth-type AWS_IAM --region {awsConfig?.region || 'eu-west-2'}</div>
-              <div>aws lambda update-function-url-config --function-name awln-lmd-dev-public-api --auth-type AWS_IAM --region {awsConfig?.region || 'eu-west-2'}</div>
+              <div>aws lambda update-function-url-config --function-name demo-lmd-legacy-service --auth-type AWS_IAM --region {awsConfig?.region || 'eu-west-2'}</div>
+              <div>aws lambda update-function-url-config --function-name demo-lmd-public-api --auth-type AWS_IAM --region {awsConfig?.region || 'eu-west-2'}</div>
               <br />
               <div style={{ color: 'var(--text-muted)', marginBottom: '8px' }}># 2. Upgrade Deprecated Runtimes to Python 3.11 & Node 20</div>
-              <div>aws lambda update-function-configuration --function-name awln-lmd-dev-legacy-01 --runtime python3.11 --region {awsConfig?.region || 'eu-west-2'}</div>
+              <div>aws lambda update-function-configuration --function-name demo-lmd-legacy-service --runtime python3.11 --region {awsConfig?.region || 'eu-west-2'}</div>
               <br />
               <div style={{ color: 'var(--text-muted)', marginBottom: '8px' }}># 3. Enable AWS X-Ray Active Tracing</div>
-              <div>aws lambda update-function-configuration --function-name awln-lmd-dev-public-api --tracing-config Mode=Active --region {awsConfig?.region || 'eu-west-2'}</div>
+              <div>aws lambda update-function-configuration --function-name demo-lmd-public-api --tracing-config Mode=Active --region {awsConfig?.region || 'eu-west-2'}</div>
             </div>
 
             {/* Actions Footer */}
@@ -4616,7 +4616,7 @@ echo "Bulk remediation commands executed successfully."`}
                 </button>
                 <button
                   onClick={() => {
-                    navigator.clipboard.writeText(`aws lambda update-function-url-config --function-name awln-lmd-dev-legacy-01 --auth-type AWS_IAM --region ${awsConfig?.region || 'eu-west-2'}`);
+                    navigator.clipboard.writeText(`aws lambda update-function-url-config --function-name demo-lmd-legacy-service --auth-type AWS_IAM --region ${awsConfig?.region || 'eu-west-2'}`);
                     alert('AWS CLI script copied to clipboard!');
                   }}
                   className="btn btn-primary"

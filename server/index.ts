@@ -711,7 +711,7 @@ const TTL = {
 
 // ─── Helper: Clean Lambda function name ───────────────────────────────────────
 function cleanLambdaRoute(lambdaName: string): { route: string; method: string } {
-  let cleanName = lambdaName.replace(/^(awln-|lmd-|lmb-|dev-|prod-|test-|regx-)+/i, '');
+  let cleanName = lambdaName.replace(/^(demo-|lmd-|lmb-|dev-|prod-|test-|regx-)+/i, '');
   cleanName = cleanName.toLowerCase();
   cleanName = cleanName.replace(/-(\d+|dev|prod|stg|staging)$/i, '');
   let method = 'POST';
