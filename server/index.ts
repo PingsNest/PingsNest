@@ -3196,7 +3196,7 @@ app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
     const userPerms = JSON.stringify(Array.isArray(permissions) ? permissions : []);
     await query(
       `INSERT INTO users (username, "passwordHash", role, permissions, "mustChangePassword", "createdAt")
-       VALUES ($1, $2, $3, $4, true, NOW())`,
+       VALUES ($1, $2, $3, $4::jsonb, true, NOW())`,
       [username.trim(), hash, userRole, userPerms]
     );
     res.json({ success: true });
@@ -3218,7 +3218,7 @@ app.put('/api/users/:username', requireAuth, requireAdmin, async (req, res) => {
     }
     if (role) {
       const userPerms = JSON.stringify(Array.isArray(permissions) ? permissions : []);
-      await query(`UPDATE users SET role=$1, permissions=$2 WHERE username=$3`, [role, userPerms, username]);
+      await query(`UPDATE users SET role=$1, permissions=$2::jsonb WHERE username=$3`, [role, userPerms, username]);
     }
     res.json({ success: true });
   } catch (err: any) { res.status(500).json({ error: err.message }); }

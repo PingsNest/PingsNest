@@ -35,10 +35,14 @@ export const UserManagement: React.FC = () => {
   const [resetTargetUser, setResetTargetUser] = useState<string | null>(null);
   const [resetNewPassword, setResetNewPassword] = useState('');
 
+  const getToken = () => {
+    return localStorage.getItem('nova_auth_token') || localStorage.getItem('api_gateway_monitor_token') || localStorage.getItem('token') || '';
+  };
+
   const fetchUsers = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('api_gateway_monitor_token');
+      const token = getToken();
       const res = await fetch('/api/users', {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -77,7 +81,7 @@ export const UserManagement: React.FC = () => {
 
     setSubmitting(true);
     try {
-      const token = localStorage.getItem('api_gateway_monitor_token');
+      const token = getToken();
       const res = await fetch('/api/users', {
         method: 'POST',
         headers: {
@@ -113,7 +117,7 @@ export const UserManagement: React.FC = () => {
     if (!resetTargetUser || !resetNewPassword.trim()) return;
 
     try {
-      const token = localStorage.getItem('api_gateway_monitor_token');
+      const token = getToken();
       const res = await fetch(`/api/users/${resetTargetUser}`, {
         method: 'PUT',
         headers: {
@@ -144,7 +148,7 @@ export const UserManagement: React.FC = () => {
     if (!confirm(`Are you sure you want to revoke access for user "${username}"?`)) return;
 
     try {
-      const token = localStorage.getItem('api_gateway_monitor_token');
+      const token = getToken();
       const res = await fetch(`/api/users/${username}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }

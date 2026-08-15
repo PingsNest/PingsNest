@@ -15,7 +15,7 @@ interface IncidentItem {
 
 export const StatusPortal: React.FC = () => {
   const { urlTargets } = useMonitor();
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem('nova_auth_token') || localStorage.getItem('token') || '';
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
   const [copiedBadgeUrl, setCopiedBadgeUrl] = useState<string | null>(null);
   const [isBadgeModalOpen, setIsBadgeModalOpen] = useState(false);

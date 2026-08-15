@@ -236,9 +236,13 @@ export async function initDb(): Promise<void> {
       destination  TEXT NOT NULL,
       title        TEXT NOT NULL,
       message      TEXT NOT NULL,
-      status       TEXT NOT NULL
+      status       TEXT NOT NULL,
+      "rawPayload" TEXT,
+      "httpStatus" INTEGER
     );
   `).catch(() => {});
+  await query(`ALTER TABLE alert_dispatch_history ADD COLUMN IF NOT EXISTS "rawPayload" TEXT;`).catch(() => {});
+  await query(`ALTER TABLE alert_dispatch_history ADD COLUMN IF NOT EXISTS "httpStatus" INTEGER;`).catch(() => {});
 
   // ── Security Threats & Anomaly Log Table ───────────────────────────────────
   await query(`
@@ -566,7 +570,7 @@ export async function initDb(): Promise<void> {
     const adminPermissions = JSON.stringify(['manage_users', 'manage_credentials', 'manage_alerts', 'manage_urls', 'view_logs', 'view_metrics']);
     await query(
       `INSERT INTO users (username, "passwordHash", role, permissions, "mustChangePassword", "createdAt")
-       VALUES ($1, $2, 'admin', $3, true, NOW()) ON CONFLICT DO NOTHING`,
+       VALUES ($1, $2, 'admin', $3::jsonb, true, NOW()) ON CONFLICT DO NOTHING`,
       ['admin', hash, adminPermissions]
     );
     console.log('[DB] Seeded default admin user: admin / admin (mustChangePassword=true)');
