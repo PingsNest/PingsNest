@@ -1049,7 +1049,9 @@ app.post('/api/diagnostics/analyze-spike', async (req, res) => {
 
 // ─── Active Remediation: API Gateway Stage Throttling Endpoint ──────────────
 app.post('/api/aws/throttle-stage', async (req, res) => {
-  const { region, accessKeyId, secretAccessKey, apiId, stage, throttlingBurstLimit, throttlingRateLimit } = req.body;
+  const creds = await getAwsCredentialsFromReq(req);
+  const { region, accessKeyId, secretAccessKey } = creds;
+  const { apiId, stage, throttlingBurstLimit, throttlingRateLimit } = req.body;
   if (!region || !apiId || !stage) return res.status(400).json({ error: 'Missing required parameters' });
 
   try {
@@ -1066,15 +1068,14 @@ app.post('/api/aws/throttle-stage', async (req, res) => {
     }
     return res.json({ success: true, message: `Throttling updated for stage ${stage}: Burst=${throttlingBurstLimit}, Rate=${throttlingRateLimit}` });
   } catch (err: any) {
-    // If permission or mock mode
     return res.json({ success: true, mock: true, message: `[Simulated] Throttling updated for ${stage}: Burst=${throttlingBurstLimit || 500}, Rate=${throttlingRateLimit || 1000}` });
   }
 });
 
-
 // ─── 1. List API Gateways ─────────────────────────────────────────────────────
 app.post('/api/aws/apis', async (req, res) => {
-  const { region, accessKeyId, secretAccessKey } = req.body;
+  const creds = await getAwsCredentialsFromReq(req);
+  const { region, accessKeyId, secretAccessKey } = creds;
   if (!region || !accessKeyId || !secretAccessKey) return res.status(400).json({ error: 'Missing credentials' });
 
   const cacheKey = `apis:${region}:${accessKeyId}`;
@@ -1103,7 +1104,9 @@ app.post('/api/aws/apis', async (req, res) => {
 
 // ─── 1b. List API Gateway Stages ──────────────────────────────────────────────
 app.post('/api/aws/stages', async (req, res) => {
-  const { region, accessKeyId, secretAccessKey, apiId, protocol, bypassCache } = req.body;
+  const creds = await getAwsCredentialsFromReq(req);
+  const { region, accessKeyId, secretAccessKey } = creds;
+  const { apiId, protocol, bypassCache } = req.body;
   if (!region || !accessKeyId || !secretAccessKey || !apiId || !protocol) {
     return res.status(400).json({ error: 'Missing params' });
   }
@@ -1146,7 +1149,9 @@ app.post('/api/aws/stages', async (req, res) => {
 
 // ─── 2. List Routes ───────────────────────────────────────────────────────────
 app.post('/api/aws/routes', async (req, res) => {
-  const { region, accessKeyId, secretAccessKey, apiId, protocol, bypassCache } = req.body;
+  const creds = await getAwsCredentialsFromReq(req);
+  const { region, accessKeyId, secretAccessKey } = creds;
+  const { apiId, protocol, bypassCache } = req.body;
   if (!region || !accessKeyId || !secretAccessKey || !apiId || !protocol) return res.status(400).json({ error: 'Missing params' });
 
   const cacheKey = `routes:${apiId}:${protocol}`;
@@ -1230,8 +1235,6 @@ app.post('/api/aws/routes', async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 
-
-
   const result = { routes: routesList };
   await cacheSet(cacheKey, result, TTL.ROUTES);
   res.json(result);
@@ -1239,7 +1242,8 @@ app.post('/api/aws/routes', async (req, res) => {
 
 // ─── 2b. Multi-API Gateway Fleet Summary ($N$ Gateways Aggregation) ─────────────
 app.post('/api/gateways/fleet-summary', async (req, res) => {
-  const { region, accessKeyId, secretAccessKey } = req.body;
+  const creds = await getAwsCredentialsFromReq(req);
+  const { region, accessKeyId, secretAccessKey } = creds;
   if (!region || !accessKeyId || !secretAccessKey) {
     return res.status(400).json({ error: 'Missing region or credentials' });
   }
@@ -1953,7 +1957,9 @@ app.post('/api/notifications/test-template', async (req, res) => {
 
 // ─── 3. CloudWatch Metrics ────────────────────────────────────────────────────
 app.post('/api/aws/metrics', async (req, res) => {
-  const { region, accessKeyId, secretAccessKey, apiId, apiName, protocol, stage, bypassCache } = req.body;
+  const creds = await getAwsCredentialsFromReq(req);
+  const { region, accessKeyId, secretAccessKey } = creds;
+  const { apiId, apiName, protocol, stage, bypassCache } = req.body;
   if (!region || !accessKeyId || !secretAccessKey || !apiId || !apiName || !protocol || !stage)
     return res.status(400).json({ error: 'Missing params' });
 
@@ -2058,7 +2064,9 @@ app.post('/api/aws/metrics', async (req, res) => {
 
 // ─── 4. CloudWatch Logs ───────────────────────────────────────────────────────
 app.post('/api/aws/logs', async (req, res) => {
-  const { region, accessKeyId, secretAccessKey, apiId, stage, customLogGroup, startTime: customStart, endTime: customEnd, liveWindow, bypassCache } = req.body;
+  const creds = await getAwsCredentialsFromReq(req);
+  const { region, accessKeyId, secretAccessKey } = creds;
+  const { apiId, stage, customLogGroup, startTime: customStart, endTime: customEnd, liveWindow, bypassCache } = req.body;
   if (!region || !accessKeyId || !secretAccessKey || !apiId || !stage) return res.status(400).json({ error: 'Missing params' });
 
   const liveWindowMinutes = Number(liveWindow) || 30;
@@ -2635,7 +2643,8 @@ app.post('/api/aws/test-request', async (req, res) => {
 
 // ─── 5. List Log Groups ───────────────────────────────────────────────────────
 app.post('/api/aws/log-groups', async (req, res) => {
-  const { region, accessKeyId, secretAccessKey } = req.body;
+  const creds = await getAwsCredentialsFromReq(req);
+  const { region, accessKeyId, secretAccessKey } = creds;
   if (!region || !accessKeyId || !secretAccessKey) return res.status(400).json({ error: 'Missing params' });
   const cacheKey = `loggroups:${region}:${accessKeyId}`;
   const cached = await cacheGet(cacheKey);
@@ -2652,7 +2661,9 @@ app.post('/api/aws/log-groups', async (req, res) => {
 
 // ─── 6. Integrated Lambdas ────────────────────────────────────────────────────
 app.post('/api/aws/integrated-lambdas', async (req, res) => {
-  const { region, accessKeyId, secretAccessKey, apiId, stage } = req.body;
+  const creds = await getAwsCredentialsFromReq(req);
+  const { region, accessKeyId, secretAccessKey } = creds;
+  const { apiId, stage } = req.body;
   if (!region || !accessKeyId || !secretAccessKey || !apiId || !stage) return res.status(400).json({ error: 'Missing params' });
   const cacheKey = `lambdas:${apiId}:${stage}`;
   const cached = await cacheGet(cacheKey);
