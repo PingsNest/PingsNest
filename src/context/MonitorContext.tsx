@@ -79,6 +79,8 @@ export interface MonitorContextType {
   saveAccountProfile: (p: Partial<AWSAccountProfile>) => Promise<void>;
   deleteAccountProfile: (id: string) => Promise<void>;
   setActiveProfileId: (id: string) => Promise<void>;
+  // Call this right after login to load shared AWS connections from DB for the newly authenticated user
+  initSessionForToken: (token: string) => Promise<void>;
 
   // Real Account States
   availableGateways: APIGatewayItem[];
@@ -702,100 +704,91 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
 
-  // Restore active session on page refresh ─────────────────────────────────
-  // Priority 1: DB default connection (shared across all users, server resolves credentials)
-  // Priority 2: localStorage cached active profile (instant, zero AWS API call)
-  // Priority 3: credentials.json file fallback
-  useEffect(() => {
-    const restoreSession = async () => {
-      try {
-        // ── Priority 1: Load default AWS connection from database ──────────
-        // This ensures all users share the same credentials configured by admin.
-        const token = localStorage.getItem('nova_auth_token');
-        if (token) {
-          const connRes = await fetch('/api/aws/connections', {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          if (connRes.ok) {
-            const connData = await connRes.json();
-            const connections: any[] = connData.connections || [];
-            const defaultConn = connections.find((c: any) => c.isDefault) || connections[0];
-            if (defaultConn) {
-              const profiles = connections.map(mapConnectionToProfile);
-              setAccountProfiles(profiles);
-              setActiveProfileIdState(defaultConn.id);
-              setAwsConfig(prev => ({ ...prev, region: defaultConn.region }));
-              console.info(`[PingsNest] Restored default AWS connection "${defaultConn.name}" from database.`);
-              // Fetch gateways via server-side profile resolution (non-blocking)
-              fetchAvailableGatewaysWithProfileId(defaultConn.id, defaultConn.region).catch(() => {});
-              return;
-            }
-          }
+  // ── Core session restore logic (shared between on-mount and post-login) ──────
+  const initSessionForToken = async (token: string) => {
+    try {
+      // Priority 1: Load default AWS connection from database (shared across all users)
+      const connRes = await fetch('/api/aws/connections', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (connRes.ok) {
+        const connData = await connRes.json();
+        const connections: any[] = connData.connections || [];
+        const defaultConn = connections.find((c: any) => c.isDefault) || connections[0];
+        if (defaultConn) {
+          const profiles = connections.map(mapConnectionToProfile);
+          setAccountProfiles(profiles);
+          setActiveProfileIdState(defaultConn.id);
+          setAwsConfig(prev => ({ ...prev, region: defaultConn.region }));
+          console.info(`[PingsNest] Loaded default AWS connection "${defaultConn.name}" from database.`);
+          fetchAvailableGatewaysWithProfileId(defaultConn.id, defaultConn.region).catch(() => {});
+          return;
         }
-
-        // ── Priority 2: Restore from localStorage cached active profile ───
-        const activeProfileRaw = localStorage.getItem('pingsnest_active_profile');
-        if (activeProfileRaw) {
-          const profile = JSON.parse(activeProfileRaw);
-          if (profile && profile.accessKeyId && profile.secretAccessKey) {
-            const apis: APIGatewayItem[] = profile.gateways || [];
-            const matched: APIGatewayItem | null =
-              (profile.gatewayId ? apis.find((a: any) => a.id === profile.gatewayId) : null) ||
-              apis[0] ||
-              null;
-
-            setAwsConfig({
-              region:          profile.region        || 'eu-west-2',
-              accessKeyId:     profile.accessKeyId,
-              secretAccessKey: profile.secretAccessKey,
-              gatewayId:       matched?.id           || profile.gatewayId || '',
-              stage:           profile.stage          || 'v1',
-              customLogGroup:  profile.customLogGroup || '__lambdas__',
-            });
-
-            if (apis.length > 0) setAvailableGateways(apis);
-            if (matched)          setSelectedGateway(matched);
-
-            console.info(`[PingsNest] Restored active profile "${profile.name}" from localStorage.`);
-
-            fetchAvailableLogGroups({
-              region:          profile.region,
-              accessKeyId:     profile.accessKeyId,
-              secretAccessKey: profile.secretAccessKey,
-            }).catch(() => {});
-            return;
-          }
-        }
-
-        // ── Priority 3: Fallback — restore from credentials.json ──────────
-        const response = await fetch('/api/aws/saved-credentials', {
-          headers: token ? { Authorization: `Bearer ${token}` } : {}
-        });
-        const data = await response.json();
-        if (data.hasSaved) {
-          setAwsConfig(prev => ({
-            ...prev,
-            region:          data.region,
-            accessKeyId:     data.accessKeyId,
-            secretAccessKey: data.secretAccessKey,
-            customLogGroup:  prev.customLogGroup || '__lambdas__'
-          }));
-          await fetchAvailableGateways({
-            region:          data.region,
-            accessKeyId:     data.accessKeyId,
-            secretAccessKey: data.secretAccessKey
-          });
-          await fetchAvailableLogGroups({
-            region:          data.region,
-            accessKeyId:     data.accessKeyId,
-            secretAccessKey: data.secretAccessKey
-          });
-        }
-      } catch (err) {
-        console.error('[PingsNest] Failed auto-restoring session on startup:', err);
       }
-    };
-    restoreSession();
+
+      // Priority 2: localStorage cached active profile
+      const activeProfileRaw = localStorage.getItem('pingsnest_active_profile');
+      if (activeProfileRaw) {
+        const profile = JSON.parse(activeProfileRaw);
+        if (profile && profile.accessKeyId && profile.secretAccessKey) {
+          const apis: APIGatewayItem[] = profile.gateways || [];
+          const matched: APIGatewayItem | null =
+            (profile.gatewayId ? apis.find((a: any) => a.id === profile.gatewayId) : null) ||
+            apis[0] || null;
+          setAwsConfig({
+            region: profile.region || 'eu-west-2',
+            accessKeyId: profile.accessKeyId,
+            secretAccessKey: profile.secretAccessKey,
+            gatewayId: matched?.id || profile.gatewayId || '',
+            stage: profile.stage || 'v1',
+            customLogGroup: profile.customLogGroup || '__lambdas__',
+          });
+          if (apis.length > 0) setAvailableGateways(apis);
+          if (matched) setSelectedGateway(matched);
+          fetchAvailableLogGroups({
+            region: profile.region,
+            accessKeyId: profile.accessKeyId,
+            secretAccessKey: profile.secretAccessKey,
+          }).catch(() => {});
+          return;
+        }
+      }
+
+      // Priority 3: credentials.json fallback
+      const response = await fetch('/api/aws/saved-credentials', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json();
+      if (data.hasSaved) {
+        setAwsConfig(prev => ({
+          ...prev,
+          region: data.region,
+          accessKeyId: data.accessKeyId,
+          secretAccessKey: data.secretAccessKey,
+          customLogGroup: prev.customLogGroup || '__lambdas__'
+        }));
+        await fetchAvailableGateways({
+          region: data.region,
+          accessKeyId: data.accessKeyId,
+          secretAccessKey: data.secretAccessKey
+        });
+        await fetchAvailableLogGroups({
+          region: data.region,
+          accessKeyId: data.accessKeyId,
+          secretAccessKey: data.secretAccessKey
+        });
+      }
+    } catch (err) {
+      console.error('[PingsNest] Failed restoring session:', err);
+    }
+  };
+
+  // Restore active session on page refresh ─────────────────────────────────
+  useEffect(() => {
+    const token = localStorage.getItem('nova_auth_token');
+    if (token) {
+      initSessionForToken(token).catch(() => {});
+    }
   }, []);
 
 
@@ -906,6 +899,7 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
         saveAccountProfile,
         deleteAccountProfile,
         setActiveProfileId,
+        initSessionForToken,
         
         // AWS state mappings
         availableGateways,
