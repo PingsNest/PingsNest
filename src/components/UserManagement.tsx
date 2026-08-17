@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, UserPlus, Trash2, Key, CheckCircle, AlertTriangle, RefreshCw, Sliders } from 'lucide-react';
+import { Shield, UserPlus, Trash2, Key, CheckCircle, AlertTriangle, RefreshCw, Sliders, Lock, Eye, Wrench, X } from 'lucide-react';
 
 export interface UserAccount {
   username: string;
@@ -18,10 +18,18 @@ const ALL_PERMISSIONS = [
   { id: 'manage_users', label: 'Manage User Accounts & Permissions (Admin)' },
 ];
 
-export const UserManagement: React.FC = () => {
+interface UserManagementProps {
+  userRole?: string;
+}
+
+export const UserManagement: React.FC<UserManagementProps> = ({ userRole }) => {
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
+
+  // User auth permission inspection
+  const [currentRole, setCurrentRole] = useState<string>(userRole || localStorage.getItem('nova_auth_role') || 'viewer');
+  const [userPermissions, setUserPermissions] = useState<string[]>([]);
 
   // Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -37,6 +45,23 @@ export const UserManagement: React.FC = () => {
 
   const getToken = () => {
     return localStorage.getItem('nova_auth_token') || localStorage.getItem('api_gateway_monitor_token') || localStorage.getItem('token') || '';
+  };
+
+  const fetchAuthInfo = async () => {
+    try {
+      const token = getToken();
+      if (!token) return;
+      const res = await fetch('/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.user) {
+          if (data.user.role) setCurrentRole(data.user.role);
+          if (Array.isArray(data.user.permissions)) setUserPermissions(data.user.permissions);
+        }
+      }
+    } catch {}
   };
 
   const fetchUsers = async () => {
@@ -56,8 +81,11 @@ export const UserManagement: React.FC = () => {
   };
 
   useEffect(() => {
+    fetchAuthInfo();
     fetchUsers();
   }, []);
+
+  const isAdmin = currentRole === 'admin' || userPermissions.includes('manage_users');
 
   const showFlash = (text: string, ok: boolean) => {
     setMessage({ text, ok });
@@ -77,6 +105,7 @@ export const UserManagement: React.FC = () => {
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdmin) return;
     if (!newUsername.trim() || !newPassword.trim()) return;
 
     setSubmitting(true);
@@ -114,6 +143,7 @@ export const UserManagement: React.FC = () => {
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdmin) return;
     if (!resetTargetUser || !resetNewPassword.trim()) return;
 
     try {
@@ -141,6 +171,7 @@ export const UserManagement: React.FC = () => {
   };
 
   const handleDeleteUser = async (username: string) => {
+    if (!isAdmin) return;
     if (username === 'admin') {
       alert('Cannot delete default system admin account.');
       return;
@@ -166,9 +197,9 @@ export const UserManagement: React.FC = () => {
   };
 
   const getRoleBadge = (role: string) => {
-    if (role === 'admin') return { label: '👑 Admin', color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.1)', border: 'rgba(245, 158, 11, 0.25)' };
-    if (role === 'operator') return { label: '🛠️ Operator', color: 'var(--color-primary)', bg: 'rgba(0, 242, 254, 0.1)', border: 'rgba(0, 242, 254, 0.25)' };
-    return { label: '🔍 Viewer', color: '#9CA3AF', bg: 'rgba(156, 163, 175, 0.1)', border: 'rgba(156, 163, 175, 0.25)' };
+    if (role === 'admin') return { label: 'Admin', IconComponent: Shield, color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.1)', border: 'rgba(245, 158, 11, 0.25)' };
+    if (role === 'operator') return { label: 'Operator', IconComponent: Wrench, color: 'var(--color-primary)', bg: 'rgba(0, 242, 254, 0.1)', border: 'rgba(0, 242, 254, 0.25)' };
+    return { label: 'Viewer', IconComponent: Eye, color: '#9CA3AF', bg: 'rgba(156, 163, 175, 0.1)', border: 'rgba(156, 163, 175, 0.25)' };
   };
 
   return (
@@ -183,22 +214,46 @@ export const UserManagement: React.FC = () => {
           <div>
             <h3 style={{ fontSize: '17px', color: 'var(--text-primary)', margin: 0 }}>User Management & Access Control</h3>
             <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
-              Manage system users, assign RBAC role permissions, reset credentials, and enforce security policies (No public registration).
+              System users, RBAC role permissions, and security policy directory.
             </p>
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '10px' }}>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
           <button onClick={fetchUsers} disabled={loading} className="btn btn-secondary" style={{ padding: '8px 14px', fontSize: '12px', gap: '6px' }}>
             <RefreshCw size={12} className={loading ? 'spin-anim' : ''} style={loading ? { animation: 'spin-anim 1s linear infinite' } : {}} />
             Refresh
           </button>
-          <button onClick={() => setShowCreateModal(true)} className="btn btn-primary" style={{ padding: '8px 14px', fontSize: '12px', gap: '6px' }}>
-            <UserPlus size={14} />
-            Provision New User
-          </button>
+          {isAdmin ? (
+            <button onClick={() => setShowCreateModal(true)} className="btn btn-primary" style={{ padding: '8px 14px', fontSize: '12px', gap: '6px' }}>
+              <UserPlus size={14} />
+              Provision New User
+            </button>
+          ) : (
+            <div style={{ padding: '6px 12px', borderRadius: '6px', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-main)', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-muted)' }}>
+              <Lock size={12} />
+              Read-Only Access
+            </div>
+          )}
         </div>
       </div>
+
+      {!isAdmin && (
+        <div style={{
+          padding: '12px 16px',
+          borderRadius: '8px',
+          fontSize: '12px',
+          fontWeight: 600,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          backgroundColor: 'rgba(0, 242, 254, 0.05)',
+          border: '1px solid rgba(0, 242, 254, 0.2)',
+          color: 'var(--color-primary)'
+        }}>
+          <Lock size={14} /> Read-Only Access: Viewing system accounts directory. Administrative privileges required to add, edit, or revoke accounts.
+        </div>
+      )}
 
       {message && (
         <div style={{
@@ -224,8 +279,8 @@ export const UserManagement: React.FC = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Sliders size={16} color="var(--color-primary)" /> Registered System Accounts ({users.length})
           </div>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-            🔐 Self-Registration Disabled (Admin Provisioned Only)
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <Lock size={11} /> Self-Registration Disabled (Admin Provisioned Only)
           </span>
         </div>
 
@@ -238,12 +293,13 @@ export const UserManagement: React.FC = () => {
                 <th style={{ padding: '10px 12px' }}>FIRST LOGIN STATUS</th>
                 <th style={{ padding: '10px 12px' }}>PERMISSIONS TOKENS</th>
                 <th style={{ padding: '10px 12px' }}>PROVISIONED DATE</th>
-                <th style={{ padding: '10px 12px', textAlign: 'right' }}>ACTIONS</th>
+                {isAdmin && <th style={{ padding: '10px 12px', textAlign: 'right' }}>ACTIONS</th>}
               </tr>
             </thead>
             <tbody>
               {users.map((u) => {
                 const rBadge = getRoleBadge(u.role);
+                const RoleIcon = rBadge.IconComponent;
                 const permsList = Array.isArray(u.permissions) ? u.permissions : [];
                 return (
                   <tr key={u.username} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
@@ -258,19 +314,23 @@ export const UserManagement: React.FC = () => {
                         fontWeight: 600,
                         backgroundColor: rBadge.bg,
                         color: rBadge.color,
-                        border: `1px solid ${rBadge.border}`
+                        border: `1px solid ${rBadge.border}`,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px'
                       }}>
+                        <RoleIcon size={11} />
                         {rBadge.label}
                       </span>
                     </td>
                     <td style={{ padding: '12px' }}>
                       {u.mustChangePassword ? (
-                        <span style={{ fontSize: '11px', color: '#F59E0B', backgroundColor: 'rgba(245, 158, 11, 0.1)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(245, 158, 11, 0.2)' }}>
-                          ⚠️ Pending First-Login Update
+                        <span style={{ fontSize: '11px', color: '#F59E0B', backgroundColor: 'rgba(245, 158, 11, 0.1)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(245, 158, 11, 0.2)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <AlertTriangle size={11} /> Pending First-Login Update
                         </span>
                       ) : (
-                        <span style={{ fontSize: '11px', color: 'var(--color-success)', backgroundColor: 'rgba(16, 185, 129, 0.1)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
-                          Active & Verified
+                        <span style={{ fontSize: '11px', color: 'var(--color-success)', backgroundColor: 'rgba(16, 185, 129, 0.1)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(16, 185, 129, 0.2)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <CheckCircle size={11} /> Active & Verified
                         </span>
                       )}
                     </td>
@@ -286,38 +346,40 @@ export const UserManagement: React.FC = () => {
                     <td style={{ padding: '12px', color: 'var(--text-muted)' }}>
                       {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : 'System Default'}
                     </td>
-                    <td style={{ padding: '12px', textAlign: 'right' }}>
-                      <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
-                        <button
-                          onClick={() => setResetTargetUser(u.username)}
-                          className="btn btn-secondary"
-                          style={{ padding: '4px 8px', fontSize: '11px', gap: '4px' }}
-                          title="Reset Password"
-                        >
-                          <Key size={11} /> Reset Pass
-                        </button>
-                        {u.username !== 'admin' && (
+                    {isAdmin && (
+                      <td style={{ padding: '12px', textAlign: 'right' }}>
+                        <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
                           <button
-                            onClick={() => handleDeleteUser(u.username)}
-                            style={{
-                              background: 'rgba(239, 68, 68, 0.1)',
-                              border: '1px solid rgba(239, 68, 68, 0.2)',
-                              color: 'var(--color-error)',
-                              borderRadius: '6px',
-                              padding: '4px 8px',
-                              fontSize: '11px',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}
-                            title="Delete User Account"
+                            onClick={() => setResetTargetUser(u.username)}
+                            className="btn btn-secondary"
+                            style={{ padding: '4px 8px', fontSize: '11px', gap: '4px' }}
+                            title="Reset Password"
                           >
-                            <Trash2 size={11} /> Revoke
+                            <Key size={11} /> Reset Pass
                           </button>
-                        )}
-                      </div>
-                    </td>
+                          {u.username !== 'admin' && (
+                            <button
+                              onClick={() => handleDeleteUser(u.username)}
+                              style={{
+                                background: 'rgba(239, 68, 68, 0.1)',
+                                border: '1px solid rgba(239, 68, 68, 0.2)',
+                                color: 'var(--color-error)',
+                                borderRadius: '6px',
+                                padding: '4px 8px',
+                                fontSize: '11px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                              title="Delete User Account"
+                            >
+                              <Trash2 size={11} /> Revoke
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -326,15 +388,17 @@ export const UserManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* Provision User Modal */}
-      {showCreateModal && (
+      {/* Provision User Modal (Admin Only) */}
+      {isAdmin && showCreateModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <form onSubmit={handleCreateUser} className="glass-panel animate-slide-up" style={{ padding: '24px', width: '100%', maxWidth: '480px', display: 'flex', flexDirection: 'column', gap: '16px', borderRadius: '12px' }}>
             <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-main)', paddingBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <UserPlus size={18} color="var(--color-primary)" /> Provision System Account
               </div>
-              <button type="button" onClick={() => setShowCreateModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '16px' }}>✕</button>
+              <button type="button" onClick={() => setShowCreateModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                <X size={16} />
+              </button>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -354,19 +418,20 @@ export const UserManagement: React.FC = () => {
               <input
                 type="password"
                 className="input-field"
-                placeholder="Initial Temporary Password"
+                placeholder="Temporary Password (8-16 chars, 1 uppercase, 1 lowercase, 1 number, 1 special)"
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
                 required
               />
+              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Must be 8–16 chars with uppercase, lowercase, digit, and special char.</span>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>ROLE PRESET</label>
               <select className="input-field" value={newRole} onChange={e => handleRolePresetChange(e.target.value as any)}>
-                <option value="operator">🛠️ Operator / DevOps (Alerts, URL Monitors, Telemetry)</option>
-                <option value="viewer">🔍 Viewer (Read-Only Telemetry & SLA Reports)</option>
-                <option value="admin">👑 System Admin (Full Privileges)</option>
+                <option value="operator">Operator / DevOps (Alerts, URL Monitors, Telemetry)</option>
+                <option value="viewer">Viewer (Read-Only Telemetry & SLA Reports)</option>
+                <option value="admin">System Admin (Full Privileges)</option>
               </select>
             </div>
 
@@ -399,15 +464,17 @@ export const UserManagement: React.FC = () => {
         </div>
       )}
 
-      {/* Password Reset Modal */}
-      {resetTargetUser && (
+      {/* Password Reset Modal (Admin Only) */}
+      {isAdmin && resetTargetUser && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <form onSubmit={handleResetPassword} className="glass-panel animate-slide-up" style={{ padding: '24px', width: '100%', maxWidth: '400px', display: 'flex', flexDirection: 'column', gap: '16px', borderRadius: '12px' }}>
             <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-main)', paddingBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Key size={18} color="#F59E0B" /> Reset User Password
               </div>
-              <button type="button" onClick={() => setResetTargetUser(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '16px' }}>✕</button>
+              <button type="button" onClick={() => setResetTargetUser(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                <X size={16} />
+              </button>
             </div>
 
             <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
@@ -419,11 +486,12 @@ export const UserManagement: React.FC = () => {
               <input
                 type="password"
                 className="input-field"
-                placeholder="Enter new temporary password"
+                placeholder="Temporary Password (8-16 chars, 1 upper, 1 lower, 1 digit, 1 special)"
                 value={resetNewPassword}
                 onChange={e => setResetNewPassword(e.target.value)}
                 required
               />
+              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Must be 8–16 chars with uppercase, lowercase, digit, and special char.</span>
             </div>
 
             <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>

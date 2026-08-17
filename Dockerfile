@@ -29,7 +29,6 @@ RUN npm ci --omit=dev
 # Copy built artifacts and static sites from builder stage
 COPY --chown=node:node --from=builder /app/dist        ./dist
 COPY --chown=node:node --from=builder /app/dist-server ./dist-server
-COPY --chown=node:node --from=builder /app/html_folder  ./html_folder
 
 EXPOSE 3001
 

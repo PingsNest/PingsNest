@@ -8,7 +8,6 @@
     "dev:vite": "vite",
     "dev:server": "tsx watch server/index.ts",
     "build": "tsc -b && vite build",
-    "build:html": "npm run build && node -e \"fs.cpSync('dist/assets', 'html_folder/dist-assets', {recursive: true})\"",
     "build:server": "tsc --project tsconfig.server.json",
     "build:all": "npm run build && npm run build:server",
     "start": "node dist-server/server/index.js",
