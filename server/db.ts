@@ -292,10 +292,19 @@ export async function initDb(): Promise<void> {
   await query(`
     CREATE TABLE IF NOT EXISTS sessions (
       token       TEXT PRIMARY KEY,
-      username    TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+      username    TEXT NOT NULL REFERENCES users(username) ON UPDATE CASCADE ON DELETE CASCADE,
       "expiresAt" TIMESTAMPTZ NOT NULL
     );
   `);
+
+  await query(`
+    DO $$
+    BEGIN
+      ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_username_fkey;
+      ALTER TABLE sessions ADD CONSTRAINT sessions_username_fkey FOREIGN KEY (username) REFERENCES users(username) ON UPDATE CASCADE ON DELETE CASCADE;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END $$;
+  `).catch(() => {});
 
   // ── TimescaleDB hypertable for gateway logs ───────────────────────────────
   await query(`
