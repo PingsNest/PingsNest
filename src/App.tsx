@@ -69,7 +69,8 @@ function MainAppShell() {
     wsConnected,
     accountProfiles,
     activeProfileId,
-    setActiveProfileId
+    setActiveProfileId,
+    initSessionForToken
   } = useMonitor() as any;
 
 
@@ -176,6 +177,8 @@ function MainAppShell() {
         setNewUsernameInput(data.username);
         setUserRole(data.role || 'viewer');
         setMustChangePassword(!!data.mustChangePassword);
+        // Load shared AWS connections from DB for this user (non-blocking)
+        initSessionForToken(data.token).catch(() => {});
       } else {
         setLoginError(data.error || 'Invalid username or password.');
       }
