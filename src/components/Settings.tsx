@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useMonitor } from '../context/MonitorContext';
-import { Shield, RefreshCw, CheckCircle, Wifi, AlertTriangle, Save, Trash2, FolderOpen, RotateCcw, Database, Zap, Clock, ChevronDown, Palette, Users, BookOpen, Copy, ExternalLink, CheckCheck, Terminal, Key, User, Lock, FileText, Bell, Mail, Cpu, Globe, Target, ShieldCheck, Layers, Activity, Sliders, Plus, Send, Search, Building2 } from 'lucide-react';
+import { Shield, RefreshCw, CheckCircle, Wifi, AlertTriangle, Save, Trash2, FolderOpen, RotateCcw, Database, Zap, Clock, ChevronDown, Palette, Users, BookOpen, Copy, ExternalLink, CheckCheck, Terminal, Key, User, Lock, FileText, Bell, Mail, Cpu, Globe, Target, ShieldCheck, Layers, Activity, Sliders, Plus, Send, Search, Building2, X } from 'lucide-react';
 import { UserManagement } from './UserManagement';
 import { AWS_REGIONS } from '../constants/awsRegions';
 
@@ -928,14 +928,8 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
 
   const {
     awsConfig,
-    setAwsConfig,
-    availableGateways,
-    selectedGateway,
-    setSelectedGateway,
     fetchAvailableGateways,
     loadingGateways,
-    awsError,
-    setAwsError,
     clearSavedCredentials,
     accountProfiles,
     activeProfileId,
@@ -943,11 +937,6 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
     deleteAccountProfile,
     setActiveProfileId
   } = useMonitor() as any;
-
-  // Local form state
-  const [localAccessKey, setLocalAccessKey] = useState(awsConfig.accessKeyId);
-  const [localSecretKey, setLocalSecretKey] = useState(awsConfig.secretAccessKey);
-  const [localRegion, setLocalRegion] = useState(awsConfig.region);
 
   // ── Kafka / Log Rotation state ────────────────────────────────────────────
   const INTERVAL_OPTIONS = [
@@ -1058,20 +1047,15 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
       .catch(() => {});
   }, [awsConfig.gatewayId, awsConfig.stage]);
 
-  // Connection Profiles State
+  // Unified Connection Profile Form State
   const [loadingProfileId, setLoadingProfileId] = useState<string | null>(null);
-  const [profiles, setProfiles] = useState<any[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem('api_gateway_monitor_profiles') || '[]');
-    } catch {
-      return [];
-    }
-  });
   const [syncingProfileId, setSyncingProfileId] = useState<string | null>(null);
-  // Multi-Account Profile Form State
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [testResult, setTestResult] = useState<{ text: string; ok: boolean } | null>(null);
+
   const [profName, setProfName] = useState('');
   const [profAccountId, setProfAccountId] = useState('');
-  const [profRegion, setProfRegion] = useState('us-east-1');
+  const [profRegion, setProfRegion] = useState(awsConfig.region || 'eu-west-2');
   const [profAuthType, setProfAuthType] = useState<'keys' | 'role'>('keys');
   const [profAccessKey, setProfAccessKey] = useState('');
   const [profSecretKey, setProfSecretKey] = useState('');
@@ -1081,24 +1065,66 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
   const [profSaving, setProfSaving] = useState(false);
   const [profMsg, setProfMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
+  // Test credentials handshake before saving
+  const handleTestHandshake = async () => {
+    if (profAuthType === 'keys' && (!profAccessKey.trim() || !profSecretKey.trim())) {
+      setTestResult({ text: 'Access Key ID and Secret Access Key are required to test connection.', ok: false });
+      return;
+    }
+    if (profAuthType === 'role' && !profRoleArn.trim()) {
+      setTestResult({ text: 'IAM Role ARN is required to test STS AssumeRole connection.', ok: false });
+      return;
+    }
+    setTestingConnection(true);
+    setTestResult(null);
+    try {
+      const apis = await fetchAvailableGateways({
+        accessKeyId: profAccessKey.trim(),
+        secretAccessKey: profSecretKey.trim(),
+        region: profRegion
+      });
+      setTestResult({
+        text: `Handshake Successful! Discovered ${apis?.length || 0} API Gateway(s) in region ${profRegion}.`,
+        ok: true
+      });
+    } catch (e: any) {
+      setTestResult({ text: `Connection Test Failed: ${e.message || 'AWS authentication error'}`, ok: false });
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
   const handleSaveAccountProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profName.trim() || !profRegion) return;
+    if (!profName.trim()) {
+      setProfMsg({ text: 'Profile Display Name is required.', ok: false });
+      return;
+    }
+    if (profAuthType === 'keys' && (!profAccessKey.trim() || !profSecretKey.trim())) {
+      setProfMsg({ text: 'Access Key ID and Secret Access Key are required.', ok: false });
+      return;
+    }
+    if (profAuthType === 'role' && !profRoleArn.trim()) {
+      setProfMsg({ text: 'IAM Role ARN is required for STS AssumeRole.', ok: false });
+      return;
+    }
+
     setProfSaving(true);
     setProfMsg(null);
     try {
       await saveAccountProfile({
-        name: profName,
-        accountId: profAccountId || 'AWS Account',
+        name: profName.trim(),
+        accountId: profAccountId.trim() || 'AWS Account',
         region: profRegion,
         authType: profAuthType,
-        accessKeyId: profAccessKey,
-        secretAccessKey: profSecretKey,
-        roleArn: profRoleArn,
-        externalId: profExternalId,
+        accessKeyId: profAccessKey.trim(),
+        secretAccessKey: profSecretKey.trim(),
+        roleArn: profRoleArn.trim(),
+        externalId: profExternalId.trim(),
         isDefault: profIsDefault
       });
-      setProfMsg({ text: `AWS Account Profile "${profName}" saved successfully!`, ok: true });
+      const savedName = profName.trim();
+      setProfMsg({ text: `AWS Account Profile "${savedName}" saved to Shared Organization Database!`, ok: true });
       setProfName('');
       setProfAccountId('');
       setProfAccessKey('');
@@ -1112,102 +1138,24 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
     }
   };
 
-  const [newProfileName, setNewProfileName] = useState('');
-
-  const saveProfile = () => {
-    if (!newProfileName.trim()) return;
-    const newProfile = {
-      id: Math.random().toString(36).substring(2, 9),
-      name: newProfileName.trim(),
-      region: localRegion,
-      accessKeyId: localAccessKey,
-      secretAccessKey: localSecretKey,
-      gatewayId: selectedGateway?.id || '',
-      stage: awsConfig.stage || 'v1',
-      customLogGroup: awsConfig.customLogGroup || '__lambdas__',
-      gateways: availableGateways || []
-    };
-    const updated = [...profiles, newProfile];
-    setProfiles(updated);
-    localStorage.setItem('api_gateway_monitor_profiles', JSON.stringify(updated));
-    setNewProfileName('');
-    showFlash(setConfigMsg, `Profile "${newProfile.name}" saved to Local DB with ${availableGateways.length} cached gateway(s).`, true);
+  const deleteProfile = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this AWS profile from the organization?')) return;
+    try {
+      await deleteAccountProfile(id);
+      showFlash(setConfigMsg, 'Profile deleted from Organization Database.', true);
+    } catch (e: any) {
+      showFlash(setConfigMsg, `Failed deleting profile: ${e.message}`, false);
+    }
   };
 
-  const deleteProfile = (id: string) => {
-    const updated = profiles.filter(p => p.id !== id);
-    setProfiles(updated);
-    localStorage.setItem('api_gateway_monitor_profiles', JSON.stringify(updated));
-  };
-
-  // Instant Load from Local DB Cache (Zero AWS API Network Calls!)
+  // Instant Load from DB Profile
   const handleLoadProfile = async (profile: any) => {
     setLoadingProfileId(profile.id);
-    setAwsError(null);
     try {
-      setLocalAccessKey(profile.accessKeyId);
-      setLocalSecretKey(profile.secretAccessKey);
-      setLocalRegion(profile.region);
-
-      // 1. If profile has cached gateways, load instantly from Local DB without network call!
-      if (profile.gateways && Array.isArray(profile.gateways) && profile.gateways.length > 0) {
-        const apis = profile.gateways;
-        const matched = apis.find((api: any) => api.id === profile.gatewayId) || apis[0];
-        
-        // Update context states directly from Local DB
-        setSelectedGateway(matched);
-        setAwsConfig({
-          region: profile.region,
-          accessKeyId: profile.accessKeyId,
-          secretAccessKey: profile.secretAccessKey,
-          gatewayId: matched.id,
-          stage: profile.stage || 'v1',
-          customLogGroup: profile.customLogGroup || '__lambdas__'
-        });
-
-        // ── Persist active profile so page refresh auto-restores without manual load
-        localStorage.setItem('pingsnest_active_profile', JSON.stringify({
-          ...profile,
-          gateways: apis,
-          gatewayId: matched.id,
-        }));
-        
-        showFlash(setConfigMsg, `Loaded profile "${profile.name}" — session persisted. Page refreshes will restore automatically.`, true);
-      } else {
-        // Fallback for legacy profile: fetch via AWS credentials
-        const apis = await fetchAvailableGateways({
-          accessKeyId: profile.accessKeyId,
-          secretAccessKey: profile.secretAccessKey,
-          region: profile.region
-        });
-
-        if (apis && apis.length > 0) {
-          const matched = apis.find((api: any) => api.id === profile.gatewayId) || apis[0];
-          setSelectedGateway(matched);
-          setAwsConfig({
-            region: profile.region,
-            accessKeyId: profile.accessKeyId,
-            secretAccessKey: profile.secretAccessKey,
-            gatewayId: matched.id,
-            stage: profile.stage || 'v1',
-            customLogGroup: profile.customLogGroup || '__lambdas__'
-          });
-
-          // Save fetched gateways into profile cache for future instant loads
-          const updatedProfiles = profiles.map(p => p.id === profile.id ? { ...p, gateways: apis } : p);
-          setProfiles(updatedProfiles);
-          localStorage.setItem('api_gateway_monitor_profiles', JSON.stringify(updatedProfiles));
-
-          // ── Persist active profile so page refresh auto-restores without manual load
-          localStorage.setItem('pingsnest_active_profile', JSON.stringify({
-            ...profile,
-            gateways: apis,
-            gatewayId: matched.id,
-          }));
-        }
-      }
+      await setActiveProfileId(profile.id);
+      showFlash(setConfigMsg, `Switched active monitoring scope to profile "${profile.name}".`, true);
     } catch (err: any) {
-      setAwsError(err.message || 'Failed to load selected profile configurations.');
+      showFlash(setConfigMsg, err.message || 'Failed to load selected profile configurations.', false);
     } finally {
       setLoadingProfileId(null);
     }
@@ -1216,59 +1164,14 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
   // Explicit Diff Sync with AWS Credentials
   const handleSyncProfileWithAWS = async (profile: any) => {
     setSyncingProfileId(profile.id);
-    setAwsError(null);
     try {
-      // Fetch live APIs from AWS using profile credentials
-      const freshApis = await fetchAvailableGateways({
-        accessKeyId: profile.accessKeyId,
-        secretAccessKey: profile.secretAccessKey,
-        region: profile.region
-      });
-
-      const oldApis = profile.gateways || [];
-      const addedApis = freshApis.filter((a: any) => !oldApis.some((o: any) => o.id === a.id));
-      const removedApis = oldApis.filter((o: any) => !freshApis.some((a: any) => a.id === o.id));
-
-      // Update cached profile in Local DB / localStorage
-      const updatedProfiles = profiles.map(p => p.id === profile.id ? { ...p, gateways: freshApis } : p);
-      setProfiles(updatedProfiles);
-      localStorage.setItem('api_gateway_monitor_profiles', JSON.stringify(updatedProfiles));
-
-      const matched = freshApis.find((api: any) => api.id === profile.gatewayId) || freshApis[0];
-      if (matched) setSelectedGateway(matched);
-
-      showFlash(
-        setConfigMsg,
-        `Synced "${profile.name}" with AWS: ${addedApis.length} new API(s) added, ${removedApis.length} deleted API(s) removed (${freshApis.length} total active APIs).`,
-        true
-      );
+      await setActiveProfileId(profile.id);
+      showFlash(setConfigMsg, `Synced active scope with profile "${profile.name}".`, true);
     } catch (err: any) {
       showFlash(setConfigMsg, `Sync failed: ${err.message || 'AWS API error'}`, false);
     } finally {
       setSyncingProfileId(null);
     }
-  };
-
-  // Sync state if awsConfig updates asynchronously
-  React.useEffect(() => {
-    setLocalAccessKey(awsConfig.accessKeyId);
-    setLocalSecretKey(awsConfig.secretAccessKey);
-    setLocalRegion(awsConfig.region);
-  }, [awsConfig]);
-
-
-
-  const handleUpdateHandshake = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!localAccessKey || !localSecretKey) {
-      setAwsError('AWS Access Key ID and Secret Access Key are required.');
-      return;
-    }
-    await fetchAvailableGateways({
-      accessKeyId: localAccessKey,
-      secretAccessKey: localSecretKey,
-      region: localRegion
-    });
   };
 
   return (
@@ -1454,279 +1357,411 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
         <UserManagement userRole={userRole} />
       )}
 
-      {/* Sub-Tab 1: AWS Credentials, Multi-Account Profiles & Connection Scope */}
+      {/* Sub-Tab 1: Unified AWS Accounts, Saved Profiles & Connection Scope */}
       {currentSubTab === 'aws' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          {/* Top Row: Grid of 2 Cards (AWS Credentials Scope + Log Retention & Pipeline) */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '24px' }}>
-            {/* Column 1: Unified AWS Credentials Panel */}
+          {/* Top Row: 2-Column Grid (Unified AWS Accounts Panel + Log Retention & Pipeline) */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '24px' }}>
+            
+            {/* Column 1: Unified AWS Accounts & Organization Scope Panel */}
             <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-main)', paddingBottom: '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <Shield size={18} color="var(--color-aws)" />
-                  <h3 style={{ fontSize: '16px', color: 'var(--text-primary)', margin: 0 }}>AWS Credentials & Active Scope</h3>
+                  <div>
+                    <h3 style={{ fontSize: '16px', color: 'var(--text-primary)', margin: 0 }}>AWS Accounts & Connection Scope</h3>
+                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: '2px 0 0 0' }}>
+                      Shared organization credentials & cross-account IAM profiles ({accountProfiles?.length || 0} active)
+                    </p>
+                  </div>
                 </div>
-                {userRole !== 'admin' && (
+                {userRole !== 'admin' ? (
                   <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '6px', backgroundColor: 'rgba(0, 242, 254, 0.08)', border: '1px solid rgba(0, 242, 254, 0.25)', color: 'var(--color-primary)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                     <Lock size={11} /> Read-Only Mode
+                  </span>
+                ) : (
+                  <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '6px', backgroundColor: 'rgba(255, 153, 0, 0.08)', border: '1px solid rgba(255, 153, 0, 0.25)', color: 'var(--color-aws)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <ShieldCheck size={11} /> Admin Managed
                   </span>
                 )}
               </div>
 
-              {/* AWS Credentials Form */}
-              <form onSubmit={handleUpdateHandshake} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                {/* Region */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>AWS REGION</label>
-                  <select
-                    className="input-field"
-                    value={localRegion}
-                    onChange={(e) => setLocalRegion(e.target.value)}
-                    disabled={userRole !== 'admin'}
-                    style={{ appearance: 'none' }}
-                  >
-                    {AWS_REGIONS.map(r => (
-                      <option key={r.value} value={r.value}>{r.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Access Key ID */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>AWS ACCESS KEY ID</label>
-                  <input
-                    type="password"
-                    className="input-field"
-                    value={localAccessKey}
-                    onChange={(e) => setLocalAccessKey(e.target.value)}
-                    disabled={userRole !== 'admin'}
-                    placeholder="AKIA..."
-                  />
-                </div>
-
-                {/* Secret Key ID */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>AWS SECRET ACCESS KEY</label>
-                  <input
-                    type="password"
-                    className="input-field"
-                    value={localSecretKey}
-                    onChange={(e) => setLocalSecretKey(e.target.value)}
-                    disabled={userRole !== 'admin'}
-                    placeholder="••••••••••••••••••••••••••••••••"
-                  />
-                </div>
-
-                {/* Verification fetch button */}
-                <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
-                  {userRole === 'admin' ? (
-                    <>
-                      <button
-                        type="submit"
-                        disabled={loadingGateways}
-                        className="btn btn-primary"
-                        style={{ flex: 1, gap: '8px', minHeight: '40px' }}
-                      >
-                        {loadingGateways ? (
-                          <>
-                            <RefreshCw size={14} style={{ animation: 'spin-anim 1s linear infinite' }} />
-                            Updating Handshake...
-                          </>
-                        ) : (
-                          <>
-                            <Wifi size={14} />
-                            Fetch API Gateways
-                          </>
-                        )}
-                      </button>
-
-                      {awsConfig.accessKeyId && (
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            if (confirm('Are you sure you want to disconnect this AWS account? This will clear persisted configuration.')) {
-                              await clearSavedCredentials();
-                              setLocalAccessKey('');
-                              setLocalSecretKey('');
-                            }
-                          }}
-                          className="btn btn-secondary"
-                          style={{ gap: '8px', minHeight: '40px', borderColor: 'rgba(239, 68, 68, 0.25)', color: 'var(--color-error)' }}
-                        >
-                          Disconnect AWS Account
-                        </button>
-                      )}
-                    </>
-                  ) : (
-                    <div style={{
-                      flex: 1,
-                      padding: '10px 14px',
-                      borderRadius: '8px',
-                      backgroundColor: 'rgba(0, 242, 254, 0.05)',
-                      border: '1px solid rgba(0, 242, 254, 0.2)',
-                      color: 'var(--color-primary)',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px'
-                    }}>
-                      <Lock size={14} /> Shared Organization AWS Credentials (Managed by Admin)
-                    </div>
-                  )}
-                </div>
-
-                {awsError && (
-                  <div
-                    className="animate-slide-up"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '10px',
-                      padding: '12px 14px',
-                      borderRadius: '8px',
-                      backgroundColor: 'rgba(239, 68, 68, 0.08)',
-                      border: '1px solid rgba(239, 68, 68, 0.25)',
-                      color: 'var(--color-error)',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      marginTop: '10px',
-                      lineHeight: '1.4'
-                    }}
-                  >
-                    <AlertTriangle size={16} style={{ flexShrink: 0 }} />
-                    <div>{awsError}</div>
+              {/* Section 1: Shared Organization Saved Profiles */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <FolderOpen size={15} color="var(--color-primary)" />
+                    <h4 style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+                      Saved Organization Profiles
+                    </h4>
                   </div>
-                )}
-              </form>
-
-              {/* Saved Account Profiles Section */}
-              <div style={{ borderTop: '1px solid var(--border-main)', paddingTop: '18px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <FolderOpen size={16} color="var(--color-primary)" />
-                  <h4 style={{ fontSize: '14px', color: 'var(--text-primary)', margin: 0 }}>Shared Organization Saved Profiles</h4>
+                  {accountProfiles && accountProfiles.length > 0 && (
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      Click <strong>Select</strong> to switch active monitoring scope
+                    </span>
+                  )}
                 </div>
 
                 {/* Profile List */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '220px', overflowY: 'auto', paddingRight: '4px' }}>
-                  {profiles.length === 0 ? (
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontStyle: 'italic', padding: '12px 0', textAlign: 'center' }}>
-                      No connection profiles saved yet.
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '280px', overflowY: 'auto', paddingRight: '4px' }}>
+                  {(!accountProfiles || accountProfiles.length === 0) ? (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontStyle: 'italic', padding: '20px 0', textAlign: 'center', backgroundColor: 'rgba(255, 255, 255, 0.01)', borderRadius: '8px', border: '1px dashed var(--border-main)' }}>
+                      No connection profiles configured yet. Use the form below to add your first AWS account.
                     </div>
                   ) : (
-                    profiles.map((p) => (
-                      <div key={p.id} style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '10px 12px',
-                        borderRadius: '8px',
-                        backgroundColor: 'rgba(255, 255, 255, 0.02)',
-                        border: '1px solid var(--border-main)',
-                        gap: '12px'
-                      }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1, minWidth: 0 }}>
-                          <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {p.name}
-                          </span>
-                          <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                            {p.region} · {p.gatewayId ? `${p.gatewayId.substring(0, 8)}...` : 'No Gateway'}
-                          </span>
-                        </div>
-                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                          <button
-                            onClick={() => handleLoadProfile(p)}
-                            disabled={loadingProfileId !== null || syncingProfileId !== null || loadingGateways}
-                            className="btn btn-secondary"
-                            style={{
-                              padding: '4px 10px',
-                              fontSize: '11px',
-                              height: '28px',
-                              minWidth: '55px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}
-                            title="Switch active monitoring scope to this profile"
-                          >
-                            {loadingProfileId === p.id ? (
-                              <RefreshCw size={10} style={{ animation: 'spin-anim 1s linear infinite' }} />
-                            ) : 'Select'}
-                          </button>
+                    accountProfiles.map((p: any) => {
+                      const isActive = activeProfileId === p.id;
+                      return (
+                        <div key={p.id} style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '12px 14px',
+                          borderRadius: '8px',
+                          backgroundColor: isActive ? 'rgba(0, 242, 254, 0.06)' : 'rgba(255, 255, 255, 0.02)',
+                          border: isActive ? '1px solid rgba(0, 242, 254, 0.4)' : '1px solid var(--border-main)',
+                          gap: '12px',
+                          transition: 'all 0.15s ease'
+                        }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {p.name}
+                              </span>
+                              {p.isDefault && (
+                                <span style={{ fontSize: '9px', fontWeight: 700, padding: '1px 5px', borderRadius: '4px', backgroundColor: 'rgba(0, 242, 254, 0.15)', color: 'var(--color-primary)', border: '1px solid rgba(0, 242, 254, 0.3)' }}>
+                                  DEFAULT
+                                </span>
+                              )}
+                              {isActive && (
+                                <span style={{ fontSize: '9px', fontWeight: 700, padding: '1px 5px', borderRadius: '4px', backgroundColor: 'rgba(16, 185, 129, 0.15)', color: 'var(--color-success)', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+                                  ACTIVE SCOPE
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              <span>{p.region}</span>
+                              <span>•</span>
+                              <span>{p.authType === 'role' ? `STS Role (${p.roleArn ? p.roleArn.split('/').pop() : 'Role'})` : `IAM Key (${p.accessKeyId ? `${p.accessKeyId.substring(0, 8)}...` : 'Encrypted'})`}</span>
+                              {p.accountId && p.accountId !== 'AWS Account' && (
+                                <>
+                                  <span>•</span>
+                                  <span>{p.accountId}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
 
-                          <button
-                            onClick={() => handleSyncProfileWithAWS(p)}
-                            disabled={loadingProfileId !== null || syncingProfileId !== null || loadingGateways}
-                            className="btn btn-primary"
-                            style={{
-                              padding: '4px 8px',
-                              fontSize: '11px',
-                              height: '28px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              background: 'rgba(0, 242, 254, 0.08)',
-                              border: '1px solid rgba(0, 242, 254, 0.25)',
-                              color: 'var(--color-primary)'
-                            }}
-                            title="Fetch fresh API Gateways & Lambdas from AWS"
-                          >
-                            <RefreshCw size={10} className={syncingProfileId === p.id ? 'spin-anim' : ''} style={syncingProfileId === p.id ? { animation: 'spin-anim 1s linear infinite' } : {}} />
-                            {syncingProfileId === p.id ? 'Syncing...' : 'Sync AWS'}
-                          </button>
-
-                          {userRole === 'admin' && (
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                             <button
-                              onClick={() => deleteProfile(p.id)}
-                              disabled={loadingProfileId !== null || syncingProfileId !== null}
+                              onClick={() => handleLoadProfile(p)}
+                              disabled={loadingProfileId !== null || syncingProfileId !== null || loadingGateways}
+                              className={isActive ? "btn btn-primary" : "btn btn-secondary"}
                               style={{
-                                background: 'rgba(239, 68, 68, 0.1)',
-                                border: '1px solid rgba(239, 68, 68, 0.25)',
-                                color: 'var(--color-error)',
-                                borderRadius: '6px',
-                                padding: '4px 8px',
+                                padding: '4px 10px',
+                                fontSize: '11px',
                                 height: '28px',
-                                cursor: 'pointer',
+                                minWidth: '55px',
                                 display: 'flex',
                                 alignItems: 'center',
-                                justifyContent: 'center'
+                                gap: '4px'
                               }}
-                              title="Delete Profile"
+                              title="Switch active monitoring scope to this profile"
                             >
-                              <Trash2 size={12} />
+                              {loadingProfileId === p.id ? (
+                                <RefreshCw size={10} style={{ animation: 'spin-anim 1s linear infinite' }} />
+                              ) : isActive ? 'Active' : 'Select'}
                             </button>
-                          )}
+
+                            <button
+                              onClick={() => handleSyncProfileWithAWS(p)}
+                              disabled={loadingProfileId !== null || syncingProfileId !== null || loadingGateways}
+                              className="btn btn-primary"
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '11px',
+                                height: '28px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                background: 'rgba(0, 242, 254, 0.08)',
+                                border: '1px solid rgba(0, 242, 254, 0.25)',
+                                color: 'var(--color-primary)'
+                              }}
+                              title="Fetch fresh API Gateways & Lambdas from AWS"
+                            >
+                              <RefreshCw size={10} className={syncingProfileId === p.id ? 'spin-anim' : ''} style={syncingProfileId === p.id ? { animation: 'spin-anim 1s linear infinite' } : {}} />
+                              {syncingProfileId === p.id ? 'Syncing...' : 'Sync AWS'}
+                            </button>
+
+                            {userRole === 'admin' && (
+                              <button
+                                onClick={() => deleteProfile(p.id)}
+                                disabled={loadingProfileId !== null || syncingProfileId !== null}
+                                style={{
+                                  background: 'rgba(239, 68, 68, 0.1)',
+                                  border: '1px solid rgba(239, 68, 68, 0.25)',
+                                  color: 'var(--color-error)',
+                                  borderRadius: '6px',
+                                  padding: '4px 8px',
+                                  height: '28px',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center'
+                                }}
+                                title="Delete Profile"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
 
-                {/* Save Current Setup as Profile (Admin Only) */}
-                {userRole === 'admin' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-main)', paddingTop: '16px' }}>
-                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>SAVE CURRENT SETUP AS PROFILE</label>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <input
-                        type="text"
-                        className="input-field"
-                        value={newProfileName}
-                        onChange={(e) => setNewProfileName(e.target.value)}
-                        placeholder="Profile Name (e.g. Prod AWS-West)"
-                        style={{ flex: 1 }}
-                      />
-                      <button
-                        onClick={saveProfile}
-                        disabled={!newProfileName.trim()}
-                        className="btn btn-primary"
-                        style={{ fontSize: '12px', whiteSpace: 'nowrap' }}
-                      >
-                        Save Profile
-                      </button>
-                    </div>
+                {/* Disconnect current scope button */}
+                {userRole === 'admin' && activeProfileId && (
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '4px' }}>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (confirm('Disconnect active AWS scope? This will clear the active connection.')) {
+                          await clearSavedCredentials();
+                        }
+                      }}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: 'var(--text-muted)',
+                        fontSize: '11px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                    >
+                      <X size={12} /> Clear Active Scope
+                    </button>
                   </div>
                 )}
               </div>
+
+              {/* Section 2: Add / Configure AWS Connection (Admin Only) */}
+              {userRole === 'admin' && (
+                <div style={{ borderTop: '1px solid var(--border-main)', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Key size={15} color="var(--color-aws)" />
+                    <h4 style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+                      Add New AWS Account / Cross-Account IAM Role
+                    </h4>
+                  </div>
+
+                  <form onSubmit={handleSaveAccountProfile} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
+                      {/* Profile Name */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>PROFILE NAME *</label>
+                        <input
+                          type="text"
+                          required
+                          className="input-field"
+                          placeholder="e.g. Production, DEV, QA"
+                          value={profName}
+                          onChange={e => setProfName(e.target.value)}
+                          style={{ fontSize: '12px' }}
+                        />
+                      </div>
+
+                      {/* Account ID / Label */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>ACCOUNT ID / LABEL</label>
+                        <input
+                          type="text"
+                          className="input-field"
+                          placeholder="e.g. 111122223333"
+                          value={profAccountId}
+                          onChange={e => setProfAccountId(e.target.value)}
+                          style={{ fontSize: '12px' }}
+                        />
+                      </div>
+
+                      {/* AWS Region */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>AWS REGION *</label>
+                        <select
+                          required
+                          className="input-field"
+                          value={profRegion}
+                          onChange={e => setProfRegion(e.target.value)}
+                          style={{ fontSize: '12px', appearance: 'none' }}
+                        >
+                          {AWS_REGIONS.map(r => (
+                            <option key={r.value} value={r.value}>{r.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Auth Mode Toggle */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '2px' }}>
+                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>AUTHENTICATION TYPE:</span>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setProfAuthType('keys')}
+                          style={{
+                            padding: '4px 12px', fontSize: '11px', fontWeight: 600, borderRadius: '6px', cursor: 'pointer',
+                            backgroundColor: profAuthType === 'keys' ? 'rgba(0,242,254,0.15)' : 'transparent',
+                            color: profAuthType === 'keys' ? 'var(--color-primary)' : 'var(--text-muted)',
+                            border: profAuthType === 'keys' ? '1px solid rgba(0,242,254,0.4)' : '1px solid var(--border-main)'
+                          }}
+                        >IAM Access Keys</button>
+                        <button
+                          type="button"
+                          onClick={() => setProfAuthType('role')}
+                          style={{
+                            padding: '4px 12px', fontSize: '11px', fontWeight: 600, borderRadius: '6px', cursor: 'pointer',
+                            backgroundColor: profAuthType === 'role' ? 'rgba(255,153,0,0.15)' : 'transparent',
+                            color: profAuthType === 'role' ? 'var(--color-aws)' : 'var(--text-muted)',
+                            border: profAuthType === 'role' ? '1px solid rgba(255,153,0,0.4)' : '1px solid var(--border-main)'
+                          }}
+                        >STS AssumeRole (Cross-Account)</button>
+                      </div>
+                    </div>
+
+                    {/* Conditional Credential Inputs */}
+                    {profAuthType === 'keys' ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>AWS ACCESS KEY ID *</label>
+                          <input
+                            type="password"
+                            required
+                            className="input-field"
+                            placeholder="AKIA..."
+                            value={profAccessKey}
+                            onChange={e => setProfAccessKey(e.target.value)}
+                            style={{ fontSize: '12px', fontFamily: 'var(--font-mono)' }}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>AWS SECRET ACCESS KEY *</label>
+                          <input
+                            type="password"
+                            required
+                            className="input-field"
+                            placeholder="••••••••••••••••••••••••••••••••"
+                            value={profSecretKey}
+                            onChange={e => setProfSecretKey(e.target.value)}
+                            style={{ fontSize: '12px', fontFamily: 'var(--font-mono)' }}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>IAM ROLE ARN *</label>
+                          <input
+                            type="text"
+                            required
+                            className="input-field"
+                            placeholder="arn:aws:iam::123456789012:role/PingsNestRole"
+                            value={profRoleArn}
+                            onChange={e => setProfRoleArn(e.target.value)}
+                            style={{ fontSize: '12px', fontFamily: 'var(--font-mono)' }}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>EXTERNAL ID (OPTIONAL)</label>
+                          <input
+                            type="text"
+                            className="input-field"
+                            placeholder="e.g. org-custom-secret-id"
+                            value={profExternalId}
+                            onChange={e => setProfExternalId(e.target.value)}
+                            style={{ fontSize: '12px' }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Set default checkbox */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                      <input
+                        type="checkbox"
+                        id="chkDef"
+                        checked={profIsDefault}
+                        onChange={e => setProfIsDefault(e.target.checked)}
+                        style={{ cursor: 'pointer' }}
+                      />
+                      <label htmlFor="chkDef" style={{ fontSize: '12px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                        Set as default active profile for all team members
+                      </label>
+                    </div>
+
+                    {/* Test feedback */}
+                    {testResult && (
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: '8px',
+                        padding: '9px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
+                        backgroundColor: testResult.ok ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+                        border: `1px solid ${testResult.ok ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)'}`,
+                        color: testResult.ok ? 'var(--color-success)' : 'var(--color-error)',
+                      }}>
+                        {testResult.ok ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
+                        <div>{testResult.text}</div>
+                      </div>
+                    )}
+
+                    {/* Save feedback */}
+                    {profMsg && (
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: '8px',
+                        padding: '9px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
+                        backgroundColor: profMsg.ok ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+                        border: `1px solid ${profMsg.ok ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)'}`,
+                        color: profMsg.ok ? 'var(--color-success)' : 'var(--color-error)',
+                      }}>
+                        {profMsg.ok ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
+                        <div>{profMsg.text}</div>
+                      </div>
+                    )}
+
+                    {/* Action Buttons */}
+                    <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
+                      <button
+                        type="button"
+                        onClick={handleTestHandshake}
+                        disabled={testingConnection || profSaving}
+                        className="btn btn-secondary"
+                        style={{ gap: '6px', fontSize: '12px', height: '38px', minWidth: '140px' }}
+                      >
+                        {testingConnection ? (
+                          <><RefreshCw size={12} style={{ animation: 'spin-anim 1s linear infinite' }} /> Verifying…</>
+                        ) : (
+                          <><Wifi size={13} /> Test Handshake</>
+                        )}
+                      </button>
+
+                      <button
+                        type="submit"
+                        disabled={profSaving || testingConnection}
+                        className="btn btn-primary"
+                        style={{ flex: 1, gap: '6px', fontSize: '12px', height: '38px' }}
+                      >
+                        {profSaving ? (
+                          <><RefreshCw size={12} style={{ animation: 'spin-anim 1s linear infinite' }} /> Saving & Encrypting…</>
+                        ) : (
+                          <><Save size={13} /> Save AWS Profile</>
+                        )}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
             </div>
 
             {/* Column 2: Log Retention & Kafka Pipeline */}
@@ -1924,241 +1959,6 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
                   </span>
                 </div>
               </div>
-            </div>
-          </div>
-
-          {/* Bottom Section: Multi-Account AWS Profiles & Cross-Account IAM Roles */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-            {/* Saved AWS Profiles List */}
-            <div className="glass-panel" style={{ padding: 24, borderRadius: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Database size={18} color="var(--color-aws)" /> Saved AWS Account Profiles ({accountProfiles?.length || 0})
-              </h3>
-              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
-                Connected AWS Accounts & IAM Roles. Use the global top-header dropdown to switch active account scope anytime.
-              </p>
-
-              {(!accountProfiles || accountProfiles.length === 0) ? (
-                <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, backgroundColor: 'var(--bg-input)', borderRadius: 10 }}>
-                  No multi-account profiles saved yet. Add your first profile below!
-                </div>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
-                  {accountProfiles.map((p: any) => {
-                    const isActive = activeProfileId === p.id;
-                    return (
-                      <div key={p.id} style={{
-                        padding: 16, borderRadius: 12, backgroundColor: 'var(--bg-input)',
-                        border: `1px solid ${isActive ? 'var(--color-aws)' : 'var(--border-main)'}`,
-                        display: 'flex', flexDirection: 'column', gap: 10, position: 'relative'
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                          <div>
-                            <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>{p.name}</div>
-                            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{p.accountId || 'AWS Account'} · {p.region}</div>
-                          </div>
-                          {isActive && (
-                            <span style={{
-                              fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 4,
-                              backgroundColor: 'rgba(255,153,0,0.15)', color: 'var(--color-aws)', border: '1px solid rgba(255,153,0,0.3)'
-                            }}>ACTIVE</span>
-                          )}
-                        </div>
-
-                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
-                          Auth: {p.authType === 'role' ? `STS AssumeRole (${p.roleArn || 'Role'})` : `IAM Access Keys (${p.accessKeyId?.substring(0, 8)}...)`}
-                        </div>
-
-                        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                          {!isActive && (
-                            <button
-                              onClick={() => setActiveProfileId(p.id)}
-                              className="btn btn-secondary"
-                              style={{ fontSize: 11, padding: '4px 10px', flex: 1 }}
-                            >
-                              Switch to Account
-                            </button>
-                          )}
-                          <button
-                            onClick={() => deleteAccountProfile(p.id)}
-                            className="btn btn-secondary"
-                            style={{ fontSize: 11, padding: '4px 10px', color: 'var(--color-error)' }}
-                            title="Delete Profile"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Add New Profile Form */}
-            <div className="glass-panel" style={{ padding: 24, borderRadius: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
-                Add New AWS Account or Cross-Account IAM Role
-              </h3>
-
-              <form onSubmit={handleSaveAccountProfile} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-                  <div>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
-                      Profile Display Name:
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      className="input-field"
-                      placeholder="e.g. Production Account"
-                      value={profName}
-                      onChange={e => setProfName(e.target.value)}
-                      style={{ fontSize: 12 }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
-                      AWS Account ID / Label:
-                    </label>
-                    <input
-                      type="text"
-                      className="input-field"
-                      placeholder="e.g. 111122223333"
-                      value={profAccountId}
-                      onChange={e => setProfAccountId(e.target.value)}
-                      style={{ fontSize: 12 }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
-                      AWS Region:
-                    </label>
-                    <select
-                      required
-                      className="input-field"
-                      value={profRegion}
-                      onChange={e => setProfRegion(e.target.value)}
-                      style={{ fontSize: 12 }}
-                    >
-                      {AWS_REGIONS.map(r => (
-                        <option key={r.value} value={r.value}>{r.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {/* Auth Mode Toggle */}
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)' }}>Auth Type:</span>
-                  <button
-                    type="button"
-                    onClick={() => setProfAuthType('keys')}
-                    style={{
-                      padding: '4px 12px', fontSize: 11, fontWeight: 700, borderRadius: 6, cursor: 'pointer',
-                      backgroundColor: profAuthType === 'keys' ? 'rgba(0,242,254,0.15)' : 'transparent',
-                      color: profAuthType === 'keys' ? 'var(--color-primary)' : 'var(--text-muted)',
-                      border: profAuthType === 'keys' ? '1px solid rgba(0,242,254,0.4)' : '1px solid var(--border-main)'
-                    }}
-                  >IAM Access Keys</button>
-                  <button
-                    type="button"
-                    onClick={() => setProfAuthType('role')}
-                    style={{
-                      padding: '4px 12px', fontSize: 11, fontWeight: 700, borderRadius: 6, cursor: 'pointer',
-                      backgroundColor: profAuthType === 'role' ? 'rgba(255,153,0,0.15)' : 'transparent',
-                      color: profAuthType === 'role' ? 'var(--color-aws)' : 'var(--text-muted)',
-                      border: profAuthType === 'role' ? '1px solid rgba(255,153,0,0.4)' : '1px solid var(--border-main)'
-                    }}
-                  >STS AssumeRole (Cross-Account)</button>
-                </div>
-
-                {profAuthType === 'keys' ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                    <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>AWS Access Key ID:</label>
-                      <input
-                        type="text"
-                        required
-                        className="input-field"
-                        placeholder="AKIA..."
-                        value={profAccessKey}
-                        onChange={e => setProfAccessKey(e.target.value)}
-                        style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>AWS Secret Access Key:</label>
-                      <input
-                        type="password"
-                        required
-                        className="input-field"
-                        placeholder="Secret Key"
-                        value={profSecretKey}
-                        onChange={e => setProfSecretKey(e.target.value)}
-                        style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                    <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>IAM Role ARN:</label>
-                      <input
-                        type="text"
-                        required
-                        className="input-field"
-                        placeholder="arn:aws:iam::222222222222:role/PingsNestRole"
-                        value={profRoleArn}
-                        onChange={e => setProfRoleArn(e.target.value)}
-                        style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>External ID (Optional):</label>
-                      <input
-                        type="text"
-                        className="input-field"
-                        placeholder="e.g. pingsnest-secret-id"
-                        value={profExternalId}
-                        onChange={e => setProfExternalId(e.target.value)}
-                        style={{ fontSize: 12 }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input
-                    type="checkbox"
-                    id="chkDef"
-                    checked={profIsDefault}
-                    onChange={e => setProfIsDefault(e.target.checked)}
-                  />
-                  <label htmlFor="chkDef" style={{ fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                    Set as default active profile
-                  </label>
-                </div>
-
-                {profMsg && (
-                  <div style={{
-                    padding: '10px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
-                    backgroundColor: profMsg.ok ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
-                    color: profMsg.ok ? '#34d399' : '#f87171', border: `1px solid ${profMsg.ok ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`
-                  }}>
-                    {profMsg.text}
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={profSaving}
-                  className="btn btn-primary"
-                  style={{ width: 'fit-content', padding: '8px 20px', fontSize: 12, fontWeight: 700 }}
-                >
-                  {profSaving ? 'Saving Profile…' : 'Save AWS Account Profile'}
-                </button>
-              </form>
             </div>
           </div>
         </div>
