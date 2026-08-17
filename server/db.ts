@@ -573,13 +573,13 @@ export async function initDb(): Promise<void> {
 
   // ── Seed default admin user ───────────────────────────────────────────────
   const AUTH_SALT = 'nova_uptime_auth_salt_2026';
-  const { rows } = await query(`SELECT COUNT(*) AS count FROM users`);
-  if (Number(rows[0].count) === 0) {
+  const { rows: adminRows } = await query(`SELECT username FROM users WHERE LOWER(username)='admin'`);
+  if (adminRows.length === 0) {
     const hash = crypto.createHash('sha256').update('admin' + AUTH_SALT).digest('hex');
     const adminPermissions = JSON.stringify(['manage_users', 'manage_credentials', 'manage_alerts', 'manage_urls', 'view_logs', 'view_metrics']);
     await query(
       `INSERT INTO users (username, "passwordHash", role, permissions, "mustChangePassword", "createdAt")
-       VALUES ($1, $2, 'admin', $3::jsonb, true, NOW()) ON CONFLICT DO NOTHING`,
+       VALUES ($1, $2, 'admin', $3::jsonb, true, NOW()) ON CONFLICT (username) DO NOTHING`,
       ['admin', hash, adminPermissions]
     );
     console.log('[DB] Seeded default admin user: admin / admin (mustChangePassword=true)');

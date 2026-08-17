@@ -3131,22 +3131,24 @@ function requireAdmin(req: any, res: any, next: any) {
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Missing username or password' });
+  const cleanUser = String(username).trim();
+  const cleanPass = String(password).trim();
   try {
-    const hash = crypto.createHash('sha256').update(password + AUTH_SALT).digest('hex');
-    const { rows } = await query(`SELECT username, role, permissions, "mustChangePassword" FROM users WHERE username=$1 AND "passwordHash"=$2`, [username, hash]);
+    const hash = crypto.createHash('sha256').update(cleanPass + AUTH_SALT).digest('hex');
+    const { rows } = await query(`SELECT username, role, permissions, "mustChangePassword" FROM users WHERE LOWER(username)=LOWER($1) AND "passwordHash"=$2`, [cleanUser, hash]);
     const user = rows[0];
     if (!user) return res.status(401).json({ error: 'Invalid username or password' });
 
-    const isWeakOrDefault = password.trim() === username.trim() || password.trim() === 'admin';
+    const isWeakOrDefault = cleanPass === cleanUser || cleanPass === 'admin';
     const mustChange = !!user.mustChangePassword || isWeakOrDefault;
 
     if (isWeakOrDefault && !user.mustChangePassword) {
-      await query(`UPDATE users SET "mustChangePassword"=true WHERE username=$1`, [username]);
+      await query(`UPDATE users SET "mustChangePassword"=true WHERE username=$1`, [user.username]);
     }
 
     const token = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    await query(`INSERT INTO sessions (token, username, "expiresAt") VALUES ($1,$2,$3)`, [token, username, expiresAt]);
+    await query(`INSERT INTO sessions (token, username, "expiresAt") VALUES ($1,$2,$3)`, [token, user.username, expiresAt]);
     res.json({
       success: true,
       token,
