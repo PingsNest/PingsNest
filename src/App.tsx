@@ -85,6 +85,7 @@ function MainAppShell() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   // Change Password State (First-Login)
+  const [newUsernameInput, setNewUsernameInput] = useState<string>(authUsername || '');
   const [newPass, setNewPass] = useState('');
   const [confirmPass, setConfirmPass] = useState('');
   const [changePassError, setChangePassError] = useState('');
@@ -117,6 +118,17 @@ function MainAppShell() {
     }
   }, [activeTab]);
 
+  const clearAuthState = () => {
+    localStorage.removeItem('nova_auth_token');
+    localStorage.removeItem('nova_auth_user');
+    localStorage.removeItem('nova_auth_role');
+    localStorage.removeItem('nova_auth_must_change');
+    setToken(null);
+    setAuthUsername(null);
+    setUserRole('admin');
+    setMustChangePassword(false);
+  };
+
   useEffect(() => {
     if (token) {
       fetch('/api/auth/me', {
@@ -125,11 +137,17 @@ function MainAppShell() {
         .then(r => r.json())
         .then(data => {
           if (data.user) {
+            if (data.user.username) {
+              setAuthUsername(data.user.username);
+              setNewUsernameInput(data.user.username);
+            }
             const r = data.user.role || (data.user.username === 'admin' ? 'admin' : 'viewer');
             setUserRole(r);
             setMustChangePassword(!!data.user.mustChangePassword);
             localStorage.setItem('nova_auth_role', r);
             localStorage.setItem('nova_auth_must_change', data.user.mustChangePassword ? 'true' : 'false');
+          } else if (data.error) {
+            clearAuthState();
           }
         })
         .catch(() => {});
@@ -155,6 +173,7 @@ function MainAppShell() {
         localStorage.setItem('nova_auth_must_change', data.mustChangePassword ? 'true' : 'false');
         setToken(data.token);
         setAuthUsername(data.username);
+        setNewUsernameInput(data.username);
         setUserRole(data.role || 'viewer');
         setMustChangePassword(!!data.mustChangePassword);
       } else {
@@ -170,12 +189,41 @@ function MainAppShell() {
   const handleChangePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setChangePassError('');
+    const targetUsername = newUsernameInput.trim() || authUsername || '';
+    if (!targetUsername) {
+      setChangePassError('Please enter a valid username.');
+      return;
+    }
     if (newPass !== confirmPass) {
       setChangePassError('Passwords do not match.');
       return;
     }
-    if (newPass.length < 4) {
-      setChangePassError('Password must be at least 4 characters long.');
+    if (newPass.length < 8 || newPass.length > 16) {
+      setChangePassError('Password must be between 8 and 16 characters long.');
+      return;
+    }
+    if (!/[a-z]/.test(newPass)) {
+      setChangePassError('Password must contain at least one lowercase letter (a-z).');
+      return;
+    }
+    if (!/[A-Z]/.test(newPass)) {
+      setChangePassError('Password must contain at least one uppercase letter (A-Z).');
+      return;
+    }
+    if (!/[0-9]/.test(newPass)) {
+      setChangePassError('Password must contain at least one number (0-9).');
+      return;
+    }
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(newPass)) {
+      setChangePassError('Password must contain at least one special character (!@#$%^&* etc.).');
+      return;
+    }
+    if (newPass.toLowerCase() === targetUsername.toLowerCase()) {
+      setChangePassError('Password cannot be identical to your username.');
+      return;
+    }
+    if (newPass.toLowerCase() === 'admin' || newPass.toLowerCase() === 'password') {
+      setChangePassError('Password cannot be a default term ("admin", "password").');
       return;
     }
 
@@ -187,17 +235,20 @@ function MainAppShell() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ newPassword: newPass })
+        body: JSON.stringify({ newUsername: targetUsername, newPassword: newPass })
       });
       const data = await res.json();
       if (data.success) {
+        const finalUser = data.username || targetUsername;
+        setAuthUsername(finalUser);
+        localStorage.setItem('nova_auth_user', finalUser);
         setMustChangePassword(false);
         localStorage.setItem('nova_auth_must_change', 'false');
       } else {
-        setChangePassError(data.error || 'Failed to update password.');
+        setChangePassError(data.error || 'Failed to update credentials.');
       }
     } catch {
-      setChangePassError('Network error updating password.');
+      setChangePassError('Network error updating credentials.');
     } finally {
       setIsChangingPass(false);
     }
@@ -210,14 +261,7 @@ function MainAppShell() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
     } catch {}
-    localStorage.removeItem('nova_auth_token');
-    localStorage.removeItem('nova_auth_user');
-    localStorage.removeItem('nova_auth_role');
-    localStorage.removeItem('nova_auth_must_change');
-    setToken(null);
-    setAuthUsername(null);
-    setUserRole('admin');
-    setMustChangePassword(false);
+    clearAuthState();
   };
 
   const renderGatewayRequiredFallback = () => (
@@ -448,10 +492,10 @@ function MainAppShell() {
               <Key size={32} color="#F59E0B" />
             </div>
             <h2 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)' }}>
-              Mandatory First-Login Password Update
+              Mandatory Credentials Security Update
             </h2>
             <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-              Welcome to PingsNest! For security compliance, you must update your password on first login before accessing the platform.
+              Welcome to PingsNest! Initial or default credentials detected. You must set a custom username and password to secure your account before proceeding.
             </p>
 
           </div>
@@ -474,17 +518,35 @@ function MainAppShell() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                NEW PASSWORD
+                NEW USERNAME / SYSTEM HANDLE
+              </label>
+              <input
+                type="text"
+                className="input-field"
+                placeholder="Choose custom username (e.g. devops_john)"
+                value={newUsernameInput}
+                onChange={e => setNewUsernameInput(e.target.value)}
+                required
+                style={{ padding: '12px 14px', borderRadius: '8px' }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                NEW SECURE PASSWORD
               </label>
               <input
                 type="password"
                 className="input-field"
-                placeholder="Enter new password (min 4 chars)"
+                placeholder="Enter new password (8-16 chars)"
                 value={newPass}
                 onChange={e => setNewPass(e.target.value)}
                 required
                 style={{ padding: '12px 14px', borderRadius: '8px' }}
               />
+              <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: '1.4', marginTop: '2px' }}>
+                Requirements: 8–16 characters, 1 uppercase (A-Z), 1 lowercase (a-z), 1 digit (0-9), 1 special symbol (!@#$%^&* etc.).
+              </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -518,7 +580,7 @@ function MainAppShell() {
               gap: '8px'
             }}
           >
-            {isChangingPass ? 'Updating Password...' : 'Update Password & Access Platform'}
+            {isChangingPass ? 'Updating Credentials...' : 'Update Credentials & Access Platform'}
           </button>
         </form>
       </div>

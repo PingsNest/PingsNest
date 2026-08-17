@@ -9,7 +9,7 @@ interface SettingsProps {
   userRole?: string;
 }
 
-export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws' }) => {
+export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userRole }) => {
   const resolvedSubTab = initialSubTab === 'profiles' ? 'aws' : initialSubTab;
   const [currentSubTab, setCurrentSubTab] = useState<'aws' | 'themes' | 'users' | 'setup' | 'alerts'>(resolvedSubTab as any);
 
@@ -1451,7 +1451,7 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws' }) => 
 
       {/* Sub-Tab 2: User Management & RBAC */}
       {currentSubTab === 'users' && (
-        <UserManagement />
+        <UserManagement userRole={userRole} />
       )}
 
       {/* Sub-Tab 1: AWS Credentials, Multi-Account Profiles & Connection Scope */}
@@ -1461,9 +1461,16 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws' }) => 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '24px' }}>
             {/* Column 1: Unified AWS Credentials Panel */}
             <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', borderBottom: '1px solid var(--border-main)', paddingBottom: '12px' }}>
-                <Shield size={18} color="var(--color-aws)" />
-                <h3 style={{ fontSize: '16px', color: 'var(--text-primary)' }}>AWS Credentials & Active Scope</h3>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-main)', paddingBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Shield size={18} color="var(--color-aws)" />
+                  <h3 style={{ fontSize: '16px', color: 'var(--text-primary)', margin: 0 }}>AWS Credentials & Active Scope</h3>
+                </div>
+                {userRole !== 'admin' && (
+                  <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '6px', backgroundColor: 'rgba(0, 242, 254, 0.08)', border: '1px solid rgba(0, 242, 254, 0.25)', color: 'var(--color-primary)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <Lock size={11} /> Read-Only Mode
+                  </span>
+                )}
               </div>
 
               {/* AWS Credentials Form */}
@@ -1475,6 +1482,7 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws' }) => 
                     className="input-field"
                     value={localRegion}
                     onChange={(e) => setLocalRegion(e.target.value)}
+                    disabled={userRole !== 'admin'}
                     style={{ appearance: 'none' }}
                   >
                     {AWS_REGIONS.map(r => (
@@ -1491,6 +1499,7 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws' }) => 
                     className="input-field"
                     value={localAccessKey}
                     onChange={(e) => setLocalAccessKey(e.target.value)}
+                    disabled={userRole !== 'admin'}
                     placeholder="AKIA..."
                   />
                 </div>
@@ -1503,46 +1512,67 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws' }) => 
                     className="input-field"
                     value={localSecretKey}
                     onChange={(e) => setLocalSecretKey(e.target.value)}
+                    disabled={userRole !== 'admin'}
                     placeholder="••••••••••••••••••••••••••••••••"
                   />
                 </div>
 
                 {/* Verification fetch button */}
                 <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
-                  <button
-                    type="submit"
-                    disabled={loadingGateways}
-                    className="btn btn-primary"
-                    style={{ flex: 1, gap: '8px', minHeight: '40px' }}
-                  >
-                    {loadingGateways ? (
-                      <>
-                        <RefreshCw size={14} style={{ animation: 'spin-anim 1s linear infinite' }} />
-                        Updating Handshake...
-                      </>
-                    ) : (
-                      <>
-                        <Wifi size={14} />
-                        Fetch API Gateways
-                      </>
-                    )}
-                  </button>
+                  {userRole === 'admin' ? (
+                    <>
+                      <button
+                        type="submit"
+                        disabled={loadingGateways}
+                        className="btn btn-primary"
+                        style={{ flex: 1, gap: '8px', minHeight: '40px' }}
+                      >
+                        {loadingGateways ? (
+                          <>
+                            <RefreshCw size={14} style={{ animation: 'spin-anim 1s linear infinite' }} />
+                            Updating Handshake...
+                          </>
+                        ) : (
+                          <>
+                            <Wifi size={14} />
+                            Fetch API Gateways
+                          </>
+                        )}
+                      </button>
 
-                  {awsConfig.accessKeyId && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (confirm('Are you sure you want to disconnect this AWS account? This will clear persisted configuration.')) {
-                          await clearSavedCredentials();
-                          setLocalAccessKey('');
-                          setLocalSecretKey('');
-                        }
-                      }}
-                      className="btn btn-secondary"
-                      style={{ gap: '8px', minHeight: '40px', borderColor: 'rgba(239, 68, 68, 0.25)', color: 'var(--color-error)' }}
-                    >
-                      Disconnect AWS Account
-                    </button>
+                      {awsConfig.accessKeyId && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (confirm('Are you sure you want to disconnect this AWS account? This will clear persisted configuration.')) {
+                              await clearSavedCredentials();
+                              setLocalAccessKey('');
+                              setLocalSecretKey('');
+                            }
+                          }}
+                          className="btn btn-secondary"
+                          style={{ gap: '8px', minHeight: '40px', borderColor: 'rgba(239, 68, 68, 0.25)', color: 'var(--color-error)' }}
+                        >
+                          Disconnect AWS Account
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{
+                      flex: 1,
+                      padding: '10px 14px',
+                      borderRadius: '8px',
+                      backgroundColor: 'rgba(0, 242, 254, 0.05)',
+                      border: '1px solid rgba(0, 242, 254, 0.2)',
+                      color: 'var(--color-primary)',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}>
+                      <Lock size={14} /> Shared Organization AWS Credentials (Managed by Admin)
+                    </div>
                   )}
                 </div>
 
@@ -1574,7 +1604,7 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws' }) => 
               <div style={{ borderTop: '1px solid var(--border-main)', paddingTop: '18px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <FolderOpen size={16} color="var(--color-primary)" />
-                  <h4 style={{ fontSize: '14px', color: 'var(--text-primary)', margin: 0 }}>Quick Load Saved Profiles</h4>
+                  <h4 style={{ fontSize: '14px', color: 'var(--text-primary)', margin: 0 }}>Shared Organization Saved Profiles</h4>
                 </div>
 
                 {/* Profile List */}
@@ -1617,11 +1647,11 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws' }) => 
                               alignItems: 'center',
                               gap: '4px'
                             }}
-                            title="Load saved profile instantly from local DB"
+                            title="Switch active monitoring scope to this profile"
                           >
                             {loadingProfileId === p.id ? (
                               <RefreshCw size={10} style={{ animation: 'spin-anim 1s linear infinite' }} />
-                            ) : 'Load'}
+                            ) : 'Select'}
                           </button>
 
                           <button
@@ -1645,54 +1675,57 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws' }) => 
                             {syncingProfileId === p.id ? 'Syncing...' : 'Sync AWS'}
                           </button>
 
-                          <button
-                            onClick={() => deleteProfile(p.id)}
-                            disabled={loadingProfileId !== null || syncingProfileId !== null}
-                            style={{
-                              background: 'rgba(239, 68, 68, 0.1)',
-                              border: '1px solid rgba(239, 68, 68, 0.25)',
-                              color: 'var(--color-error)',
-                              borderRadius: '6px',
-                              padding: '4px 8px',
-                              height: '28px',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center'
-                            }}
-                            title="Delete Profile"
-                          >
-                            <Trash2 size={12} />
-                          </button>
+                          {userRole === 'admin' && (
+                            <button
+                              onClick={() => deleteProfile(p.id)}
+                              disabled={loadingProfileId !== null || syncingProfileId !== null}
+                              style={{
+                                background: 'rgba(239, 68, 68, 0.1)',
+                                border: '1px solid rgba(239, 68, 68, 0.25)',
+                                color: 'var(--color-error)',
+                                borderRadius: '6px',
+                                padding: '4px 8px',
+                                height: '28px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}
+                              title="Delete Profile"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))
                   )}
                 </div>
 
-                {/* Save Current Setup as Profile */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-main)', paddingTop: '16px' }}>
-                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>SAVE CURRENT SETUP AS PROFILE</label>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <input
-                      type="text"
-                      className="input-field"
-                      value={newProfileName}
-                      onChange={(e) => setNewProfileName(e.target.value)}
-                      placeholder="e.g. US-East Staging"
-                      style={{ fontSize: '12px' }}
-                    />
-                    <button
-                      onClick={saveProfile}
-                      disabled={!newProfileName.trim() || !localAccessKey || !localSecretKey}
-                      className="btn btn-primary"
-                      style={{ padding: '0 14px', fontSize: '12px', whiteSpace: 'nowrap', gap: '6px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                    >
-                      <Save size={13} />
-                      Save Setup
-                    </button>
+                {/* Save Current Setup as Profile (Admin Only) */}
+                {userRole === 'admin' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-main)', paddingTop: '16px' }}>
+                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>SAVE CURRENT SETUP AS PROFILE</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type="text"
+                        className="input-field"
+                        value={newProfileName}
+                        onChange={(e) => setNewProfileName(e.target.value)}
+                        placeholder="Profile Name (e.g. Prod AWS-West)"
+                        style={{ flex: 1 }}
+                      />
+                      <button
+                        onClick={saveProfile}
+                        disabled={!newProfileName.trim()}
+                        className="btn btn-primary"
+                        style={{ fontSize: '12px', whiteSpace: 'nowrap' }}
+                      >
+                        Save Profile
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
 

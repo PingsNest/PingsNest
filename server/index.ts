@@ -681,11 +681,7 @@ app.post('/api/lambda/alerts', async (req, res) => {
 // Serve built React SPA in production
 const distPath = fs.existsSync(path.join(__dirname, '../../dist'))
   ? path.join(__dirname, '../../dist')
-  : fs.existsSync(path.join(__dirname, '../../html_folder'))
-    ? path.join(__dirname, '../../html_folder')
-    : fs.existsSync(path.join(__dirname, '../html_folder'))
-      ? path.join(__dirname, '../html_folder')
-      : path.join(__dirname, '../dist');
+  : path.join(__dirname, '../dist');
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
 }
@@ -760,12 +756,12 @@ function loadProfilesFromFile(): any[] {
   return [];
 }
 
-app.get('/api/aws/account-profiles', (_req, res) => {
+app.get('/api/aws/account-profiles', requireAuth, (_req, res) => {
   const profiles = loadProfilesFromFile();
   res.json({ profiles });
 });
 
-app.post('/api/aws/account-profiles', (req, res) => {
+app.post('/api/aws/account-profiles', requireAuth, requireAdmin, (req, res) => {
   const { id, name, accountId, region, authType, accessKeyId, secretAccessKey, roleArn, externalId, isDefault } = req.body;
   if (!name || !region) return res.status(400).json({ error: 'Missing profile name or region' });
 
@@ -814,7 +810,7 @@ app.post('/api/aws/account-profiles', (req, res) => {
   }
 });
 
-app.delete('/api/aws/account-profiles/:id', (req, res) => {
+app.delete('/api/aws/account-profiles/:id', requireAuth, requireAdmin, (req, res) => {
   try {
     let profiles = loadProfilesFromFile();
     profiles = profiles.filter((p: any) => p.id !== req.params.id);
@@ -825,7 +821,7 @@ app.delete('/api/aws/account-profiles/:id', (req, res) => {
   }
 });
 
-app.get('/api/aws/saved-credentials', (_req, res) => {
+app.get('/api/aws/saved-credentials', requireAuth, (_req, res) => {
   if (fs.existsSync(CREDS_PATH)) {
     try {
       const data = fs.readFileSync(CREDS_PATH, 'utf8');
@@ -836,7 +832,7 @@ app.get('/api/aws/saved-credentials', (_req, res) => {
   res.json({ hasSaved: false });
 });
 
-app.post('/api/aws/save-credentials', (req, res) => {
+app.post('/api/aws/save-credentials', requireAuth, requireAdmin, (req, res) => {
   const { region, accessKeyId, secretAccessKey } = req.body;
   if (!region || !accessKeyId || !secretAccessKey) return res.status(400).json({ error: 'Missing credentials' });
   try {
@@ -852,7 +848,7 @@ app.post('/api/aws/save-credentials', (req, res) => {
   }
 });
 
-app.post('/api/aws/clear-credentials', (_req, res) => {
+app.post('/api/aws/clear-credentials', requireAuth, requireAdmin, (_req, res) => {
   if (fs.existsSync(CREDS_PATH)) fs.unlinkSync(CREDS_PATH);
   res.json({ success: true });
 });
@@ -910,7 +906,7 @@ export async function resolveAwsCredentials(opts: {
 }
 
 // ─── Multi-Account Connection Management Endpoints ───────────────────────────
-app.get('/api/aws/connections', async (_req, res) => {
+app.get('/api/aws/connections', requireAuth, async (_req, res) => {
   try {
     const { rows } = await query(`
       SELECT id, name, region, "authType", "accessKeyId", "roleArn", "externalId", "isDefault", "createdAt", "updatedAt"
@@ -922,7 +918,7 @@ app.get('/api/aws/connections', async (_req, res) => {
   }
 });
 
-app.post('/api/aws/connections', async (req, res) => {
+app.post('/api/aws/connections', requireAuth, requireAdmin, async (req, res) => {
   const { id, name, region, authType, accessKeyId, secretAccessKey, roleArn, externalId, isDefault } = req.body;
   if (!name || !region) return res.status(400).json({ error: 'Name and Region are required' });
 
@@ -954,7 +950,7 @@ app.post('/api/aws/connections', async (req, res) => {
   }
 });
 
-app.delete('/api/aws/connections/:id', async (req, res) => {
+app.delete('/api/aws/connections/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     await query(`DELETE FROM aws_connections WHERE id = $1`, [req.params.id]);
     res.json({ success: true });
@@ -3140,6 +3136,14 @@ app.post('/api/auth/login', async (req, res) => {
     const { rows } = await query(`SELECT username, role, permissions, "mustChangePassword" FROM users WHERE username=$1 AND "passwordHash"=$2`, [username, hash]);
     const user = rows[0];
     if (!user) return res.status(401).json({ error: 'Invalid username or password' });
+
+    const isWeakOrDefault = password.trim() === username.trim() || password.trim() === 'admin';
+    const mustChange = !!user.mustChangePassword || isWeakOrDefault;
+
+    if (isWeakOrDefault && !user.mustChangePassword) {
+      await query(`UPDATE users SET "mustChangePassword"=true WHERE username=$1`, [username]);
+    }
+
     const token = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     await query(`INSERT INTO sessions (token, username, "expiresAt") VALUES ($1,$2,$3)`, [token, username, expiresAt]);
@@ -3149,22 +3153,71 @@ app.post('/api/auth/login', async (req, res) => {
       username: user.username,
       role: user.role || 'viewer',
       permissions: user.permissions || [],
-      mustChangePassword: !!user.mustChangePassword
+      mustChangePassword: mustChange
     });
   } catch (err: any) { console.error('[Login Error]:', err); res.status(500).json({ error: 'Internal login error: ' + err.message }); }
 });
 
-app.post('/api/auth/change-password', requireAuth, async (req, res) => {
-  const { newPassword } = req.body;
-  if (!newPassword || newPassword.trim().length < 4) {
-    return res.status(400).json({ error: 'New password must be at least 4 characters long.' });
+function validatePasswordComplexity(pass: string): string | null {
+  if (!pass || pass.length < 8 || pass.length > 16) {
+    return 'Password must be between 8 and 16 characters in length.';
   }
+  if (!/[a-z]/.test(pass)) {
+    return 'Password must contain at least one lowercase letter (a-z).';
+  }
+  if (!/[A-Z]/.test(pass)) {
+    return 'Password must contain at least one uppercase letter (A-Z).';
+  }
+  if (!/[0-9]/.test(pass)) {
+    return 'Password must contain at least one numeric digit (0-9).';
+  }
+  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pass)) {
+    return 'Password must contain at least one special character (!@#$%^&* etc.).';
+  }
+  return null;
+}
+
+app.post('/api/auth/change-password', requireAuth, async (req, res) => {
+  const { newUsername, newPassword } = req.body;
+  const currentUsername = (req as any).user;
+  const cleanPass = (newPassword || '').trim();
+  const cleanUser = (newUsername || '').trim() || currentUsername;
+
+  const passErr = validatePasswordComplexity(cleanPass);
+  if (passErr) {
+    return res.status(400).json({ error: passErr });
+  }
+
+  if (cleanUser.length < 3) {
+    return res.status(400).json({ error: 'Username must be at least 3 characters long.' });
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(cleanUser)) {
+    return res.status(400).json({ error: 'Username may only contain letters, numbers, underscores, and hyphens.' });
+  }
+  if (cleanPass.toLowerCase() === cleanUser.toLowerCase()) {
+    return res.status(400).json({ error: 'Password cannot be identical to your username.' });
+  }
+  if (cleanPass.toLowerCase() === 'admin' || cleanPass.toLowerCase() === 'password') {
+    return res.status(400).json({ error: 'Password cannot be a default term ("admin", "password"). Please choose a secure password.' });
+  }
+
   try {
-    const hash = crypto.createHash('sha256').update(newPassword.trim() + AUTH_SALT).digest('hex');
-    await query(`UPDATE users SET "passwordHash"=$1, "mustChangePassword"=false WHERE username=$2`, [hash, (req as any).user]);
-    res.json({ success: true, message: 'Password updated successfully.' });
+    const hash = crypto.createHash('sha256').update(cleanPass + AUTH_SALT).digest('hex');
+
+    if (cleanUser !== currentUsername) {
+      const { rows: existing } = await query(`SELECT username FROM users WHERE username=$1`, [cleanUser]);
+      if (existing.length > 0) {
+        return res.status(400).json({ error: `Username "${cleanUser}" is already taken. Please choose another.` });
+      }
+      await query(`UPDATE users SET username=$1, "passwordHash"=$2, "mustChangePassword"=false WHERE username=$3`, [cleanUser, hash, currentUsername]);
+      await query(`UPDATE sessions SET username=$1 WHERE username=$2`, [cleanUser, currentUsername]);
+    } else {
+      await query(`UPDATE users SET "passwordHash"=$1, "mustChangePassword"=false WHERE username=$2`, [hash, currentUsername]);
+    }
+
+    res.json({ success: true, username: cleanUser, message: 'Credentials updated successfully.' });
   } catch (err: any) {
-    res.status(500).json({ error: 'Failed to update password: ' + err.message });
+    res.status(500).json({ error: 'Failed to update credentials: ' + err.message });
   }
 });
 
@@ -3179,8 +3232,8 @@ app.post('/api/auth/logout', async (req, res) => {
   res.json({ success: true });
 });
 
-// ─── User Management Endpoints (Admin Only) ──────────────────────────────────
-app.get('/api/users', requireAuth, requireAdmin, async (_req, res) => {
+// ─── User Management Endpoints ──────────────────────────────────────────────
+app.get('/api/users', requireAuth, async (_req, res) => {
   try {
     const { rows } = await query(`SELECT username, role, permissions, "mustChangePassword", "createdAt" FROM users ORDER BY "createdAt" DESC`);
     res.json({ users: rows });
@@ -3190,6 +3243,10 @@ app.get('/api/users', requireAuth, requireAdmin, async (_req, res) => {
 app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
   const { username, password, role, permissions } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Username and initial password are required' });
+
+  const passErr = validatePasswordComplexity(password.trim());
+  if (passErr) return res.status(400).json({ error: passErr });
+
   try {
     const hash = crypto.createHash('sha256').update(password.trim() + AUTH_SALT).digest('hex');
     const userRole = role || 'viewer';
@@ -3213,6 +3270,9 @@ app.put('/api/users/:username', requireAuth, requireAdmin, async (req, res) => {
   const { role, permissions, resetPassword } = req.body;
   try {
     if (resetPassword) {
+      const passErr = validatePasswordComplexity(resetPassword.trim());
+      if (passErr) return res.status(400).json({ error: passErr });
+
       const hash = crypto.createHash('sha256').update(resetPassword.trim() + AUTH_SALT).digest('hex');
       await query(`UPDATE users SET "passwordHash"=$1, "mustChangePassword"=true WHERE username=$2`, [hash, username]);
     }
