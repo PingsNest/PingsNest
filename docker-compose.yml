@@ -13,6 +13,7 @@ services:
       - DATABASE_URL=postgres://nova:nova_secret@timescaledb:5432/nova_monitor
       - KAFKA_BROKERS=kafka:9092
       - LOG_ROTATION_INTERVAL=30 days
+      - CREDENTIALS_DIR=/app/credentials
     volumes:
       - credentials_data:/app/credentials
     depends_on:

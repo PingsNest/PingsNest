@@ -723,8 +723,12 @@ function cleanLambdaRoute(lambdaName: string): { route: string; method: string }
 const AUTH_SALT = 'nova_uptime_auth_salt_2026';
 
 // ─── Credentials & Multi-Account Profiles Helpers ─────────────────────────────
-const CREDS_PATH = path.join(process.cwd(), 'credentials.json');
-const PROFILES_PATH = path.join(process.cwd(), 'profiles.json');
+// CREDENTIALS_DIR is mounted as a persistent Docker volume at /app/credentials.
+// Falling back to a local ./credentials dir for local dev without Docker.
+const CREDENTIALS_DIR = process.env.CREDENTIALS_DIR || path.join(process.cwd(), 'credentials');
+if (!fs.existsSync(CREDENTIALS_DIR)) { try { fs.mkdirSync(CREDENTIALS_DIR, { recursive: true }); } catch {} }
+const CREDS_PATH    = path.join(CREDENTIALS_DIR, 'credentials.json');
+const PROFILES_PATH = path.join(CREDENTIALS_DIR, 'profiles.json');
 
 function loadProfilesFromFile(): any[] {
   if (fs.existsSync(PROFILES_PATH)) {
