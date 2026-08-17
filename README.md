@@ -118,18 +118,7 @@ docker compose logs -f
 
 ### Container Endpoints
 - **PingsNest Control Plane App**: `http://localhost:3001`
-- **PingsNest Portfolio & Marketing Site**: `http://localhost:8085`
 - **Default Login Credentials**: `admin` / `admin`
-
-### Standalone Portfolio Container Build (`html_folder/`)
-```bash
-# Build standalone Portfolio Nginx container directly from html_folder
-cd html_folder
-docker build -t pingsnest-portfolio .
-
-# Run Portfolio container on host port 8085
-docker run -d -p 8085:8080 --name pingsnest-portfolio pingsnest-portfolio
-```
 
 ---
 
