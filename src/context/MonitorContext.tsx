@@ -154,14 +154,39 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [accountProfiles, setAccountProfiles] = useState<AWSAccountProfile[]>([]);
   const [activeProfileId, setActiveProfileIdState] = useState<string | null>(null);
 
+  // Helper: get auth header from localStorage token
+  const getAuthHeader = (): Record<string, string> => {
+    const token = localStorage.getItem('nova_auth_token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
+  // Map /api/aws/connections row to AWSAccountProfile shape
+  const mapConnectionToProfile = (c: any): AWSAccountProfile => ({
+    id: c.id,
+    name: c.name,
+    accountId: c.accountId || 'AWS',
+    region: c.region,
+    authType: c.authType || 'keys',
+    accessKeyId: c.accessKeyId || '',
+    // secretAccessKey is NOT returned by the server (encrypted at rest).
+    // All AWS API calls pass profileId via x-aws-profile-id; server decrypts internally.
+    secretAccessKey: '',
+    roleArn: c.roleArn || '',
+    externalId: c.externalId || '',
+    isDefault: !!c.isDefault,
+  });
+
   const fetchAccountProfiles = async () => {
     try {
-      const res = await fetch('/api/aws/account-profiles');
+      const res = await fetch('/api/aws/connections', {
+        headers: { ...getAuthHeader() }
+      });
       if (res.ok) {
         const data = await res.json();
-        if (data.profiles) {
-          setAccountProfiles(data.profiles);
-          const def = data.profiles.find((p: any) => p.isDefault) || data.profiles[0];
+        if (data.connections) {
+          const profiles = data.connections.map(mapConnectionToProfile);
+          setAccountProfiles(profiles);
+          const def = profiles.find((p: AWSAccountProfile) => p.isDefault) || profiles[0];
           if (def && !activeProfileId) {
             setActiveProfileIdState(def.id);
           }
@@ -174,16 +199,17 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const saveAccountProfile = async (p: Partial<AWSAccountProfile>) => {
     try {
-      const res = await fetch('/api/aws/account-profiles', {
+      const res = await fetch('/api/aws/connections', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
         body: JSON.stringify(p)
       });
       const data = await res.json();
       if (data.success) {
-        if (data.profiles) setAccountProfiles(data.profiles);
-        if (p.isDefault && data.profile) {
-          setActiveProfileIdState(data.profile.id);
+        // Refresh full profile list from DB after save
+        await fetchAccountProfiles();
+        if (p.isDefault && data.id) {
+          setActiveProfileIdState(data.id);
         }
       }
     } catch (e) {
@@ -193,13 +219,16 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const deleteAccountProfile = async (id: string) => {
     try {
-      const res = await fetch(`/api/aws/account-profiles/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/aws/connections/${id}`, {
+        method: 'DELETE',
+        headers: { ...getAuthHeader() }
+      });
       const data = await res.json();
-      if (data.success && data.profiles) {
-        setAccountProfiles(data.profiles);
+      if (data.success) {
+        // Refresh full profile list from DB after delete
+        await fetchAccountProfiles();
         if (activeProfileId === id) {
-          const next = data.profiles[0];
-          setActiveProfileIdState(next ? next.id : null);
+          setActiveProfileIdState(accountProfiles.find(p => p.id !== id)?.id ?? null);
         }
       }
     } catch (e) {
@@ -210,18 +239,11 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const setActiveProfileId = async (id: string) => {
     setActiveProfileIdState(id);
     const target = accountProfiles.find(p => p.id === id);
-    if (target && target.accessKeyId && target.secretAccessKey) {
-      setAwsConfig(prev => ({
-        ...prev,
-        region: target.region,
-        accessKeyId: target.accessKeyId || '',
-        secretAccessKey: target.secretAccessKey || ''
-      }));
-      await fetchAvailableGateways({
-        region: target.region,
-        accessKeyId: target.accessKeyId || '',
-        secretAccessKey: target.secretAccessKey || ''
-      });
+    if (target) {
+      // Update region only — credentials are resolved server-side via x-aws-profile-id
+      setAwsConfig(prev => ({ ...prev, region: target.region }));
+      // Fetch gateways via server-side profile resolution
+      await fetchAvailableGatewaysWithProfileId(id, target.region);
     }
   };
 
@@ -264,14 +286,38 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const chartDataRef = useRef<{ label: string; values: number[] }[]>([]);
 
-  // Fetch deployed stages for a specific API Gateway
+  // Fetch deployed stages for a specific API Gateway (profileId path)
+  const fetchAvailableStagesWithProfileId = async (gateway: APIGatewayItem, profileId: string, region: string): Promise<string[]> => {
+    setLoadingStages(true);
+    try {
+      const response = await fetch('/api/aws/stages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-aws-profile-id': profileId, ...getAuthHeader() },
+        body: JSON.stringify({ region, apiId: gateway.id, protocol: gateway.protocol })
+      });
+      const data = await response.json();
+      const list = data.stages || [gateway.protocol === 'REST' ? 'prod' : '$default'];
+      setAvailableStages(list);
+      if (list.length > 0) setAwsConfig(prev => ({ ...prev, stage: list[0] }));
+      return list;
+    } catch (err) {
+      console.error('Failed fetching stages (profileId):', err);
+      const fallback = [gateway.protocol === 'REST' ? 'prod' : '$default'];
+      setAvailableStages(fallback);
+      return fallback;
+    } finally {
+      setLoadingStages(false);
+    }
+  };
+
+  // Fetch deployed stages for a specific API Gateway (inline credentials path)
   const fetchAvailableStages = async (gateway: APIGatewayItem, creds?: { accessKeyId: string; secretAccessKey: string; region: string }): Promise<string[]> => {
     setLoadingStages(true);
     const credentials = creds || { accessKeyId: awsConfig.accessKeyId, secretAccessKey: awsConfig.secretAccessKey, region: awsConfig.region };
     try {
       const response = await fetch('/api/aws/stages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
         body: JSON.stringify({
           region: credentials.region,
           accessKeyId: credentials.accessKeyId,
@@ -283,9 +329,7 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const data = await response.json();
       const list = data.stages || [gateway.protocol === 'REST' ? 'prod' : '$default'];
       setAvailableStages(list);
-      if (list.length > 0) {
-        setAwsConfig(prev => ({ ...prev, stage: list[0] }));
-      }
+      if (list.length > 0) setAwsConfig(prev => ({ ...prev, stage: list[0] }));
       return list;
     } catch (err) {
       console.error('Failed fetching stages:', err);
@@ -297,14 +341,48 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
-  // 1. Fetch available gateways in account
+  // 1a. Fetch available gateways via server-side profile ID (server decrypts credentials)
+  const fetchAvailableGatewaysWithProfileId = async (profileId: string, region: string): Promise<APIGatewayItem[]> => {
+    setLoadingGateways(true);
+    setAwsError(null);
+    try {
+      const response = await fetch('/api/aws/apis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-aws-profile-id': profileId, ...getAuthHeader() },
+        body: JSON.stringify({ region })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to fetch API Gateways');
+
+      setAvailableGateways(data.apis || []);
+      if (data.apis && data.apis.length > 0) {
+        setSelectedGateway(data.apis[0]);
+        setAwsConfig(prev => ({ ...prev, region, gatewayId: data.apis[0].id }));
+        await fetchAvailableStagesWithProfileId(data.apis[0], profileId, region);
+        await fetchAvailableLogGroupsWithProfileId(profileId, region);
+      } else {
+        setAwsError('No active API Gateways found in the selected region. Verify region context.');
+      }
+      return data.apis || [];
+    } catch (err: any) {
+      console.error(err);
+      setAwsError(err.message || 'AWS Handshake failed. Please verify credentials.');
+      setAvailableGateways([]);
+      setSelectedGateway(null);
+      return [];
+    } finally {
+      setLoadingGateways(false);
+    }
+  };
+
+  // 1b. Fetch available gateways via inline credentials (used for first-time connect form)
   const fetchAvailableGateways = async (credentials: { accessKeyId: string; secretAccessKey: string; region: string }): Promise<APIGatewayItem[]> => {
     setLoadingGateways(true);
     setAwsError(null);
     try {
       const response = await fetch('/api/aws/apis', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
         body: JSON.stringify(credentials)
       });
       const data = await response.json();
@@ -322,14 +400,6 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
           region: credentials.region,
           gatewayId: data.apis[0].id
         }));
-
-        // Persist successfully handshaked credentials locally
-        await fetch('/api/aws/save-credentials', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(credentials)
-        }).catch(e => console.warn('Persistence save error:', e));
-
         // Fetch available stages & log groups
         await fetchAvailableStages(data.apis[0], credentials);
         await fetchAvailableLogGroups(credentials);
@@ -348,12 +418,29 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
+  const fetchAvailableLogGroupsWithProfileId = async (profileId: string, region: string) => {
+    setLoadingLogGroups(true);
+    try {
+      const response = await fetch('/api/aws/log-groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-aws-profile-id': profileId, ...getAuthHeader() },
+        body: JSON.stringify({ region })
+      });
+      const data = await response.json();
+      setAvailableLogGroups(data.logGroups || []);
+    } catch (err) {
+      console.error('Failed fetching log groups (profileId):', err);
+    } finally {
+      setLoadingLogGroups(false);
+    }
+  };
+
   const fetchAvailableLogGroups = async (credentials: { accessKeyId: string; secretAccessKey: string; region: string }) => {
     setLoadingLogGroups(true);
     try {
       const response = await fetch('/api/aws/log-groups', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
         body: JSON.stringify(credentials)
       });
       const data = await response.json();
@@ -616,29 +703,53 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
 
   // Restore active session on page refresh ─────────────────────────────────
-  // Priority 1: localStorage active profile (instant, no AWS API call needed)
-  // Priority 2: credentials.json fallback (basic restore, picks first gateway)
+  // Priority 1: DB default connection (shared across all users, server resolves credentials)
+  // Priority 2: localStorage cached active profile (instant, zero AWS API call)
+  // Priority 3: credentials.json file fallback
   useEffect(() => {
     const restoreSession = async () => {
       try {
-        // ── Priority 1: Restore from saved active profile ─────────────────
+        // ── Priority 1: Load default AWS connection from database ──────────
+        // This ensures all users share the same credentials configured by admin.
+        const token = localStorage.getItem('nova_auth_token');
+        if (token) {
+          const connRes = await fetch('/api/aws/connections', {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (connRes.ok) {
+            const connData = await connRes.json();
+            const connections: any[] = connData.connections || [];
+            const defaultConn = connections.find((c: any) => c.isDefault) || connections[0];
+            if (defaultConn) {
+              const profiles = connections.map(mapConnectionToProfile);
+              setAccountProfiles(profiles);
+              setActiveProfileIdState(defaultConn.id);
+              setAwsConfig(prev => ({ ...prev, region: defaultConn.region }));
+              console.info(`[PingsNest] Restored default AWS connection "${defaultConn.name}" from database.`);
+              // Fetch gateways via server-side profile resolution (non-blocking)
+              fetchAvailableGatewaysWithProfileId(defaultConn.id, defaultConn.region).catch(() => {});
+              return;
+            }
+          }
+        }
+
+        // ── Priority 2: Restore from localStorage cached active profile ───
         const activeProfileRaw = localStorage.getItem('pingsnest_active_profile');
         if (activeProfileRaw) {
           const profile = JSON.parse(activeProfileRaw);
           if (profile && profile.accessKeyId && profile.secretAccessKey) {
-            // Restore full config from cached profile — zero AWS API call
             const apis: APIGatewayItem[] = profile.gateways || [];
             const matched: APIGatewayItem | null =
-              (profile.gatewayId ? apis.find(a => a.id === profile.gatewayId) : null) ||
+              (profile.gatewayId ? apis.find((a: any) => a.id === profile.gatewayId) : null) ||
               apis[0] ||
               null;
 
             setAwsConfig({
-              region:          profile.region       || 'eu-west-2',
+              region:          profile.region        || 'eu-west-2',
               accessKeyId:     profile.accessKeyId,
               secretAccessKey: profile.secretAccessKey,
-              gatewayId:       matched?.id          || profile.gatewayId || '',
-              stage:           profile.stage         || 'v1',
+              gatewayId:       matched?.id           || profile.gatewayId || '',
+              stage:           profile.stage          || 'v1',
               customLogGroup:  profile.customLogGroup || '__lambdas__',
             });
 
@@ -647,18 +758,19 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
             console.info(`[PingsNest] Restored active profile "${profile.name}" from localStorage.`);
 
-            // Silently refresh log groups in background (non-blocking)
             fetchAvailableLogGroups({
               region:          profile.region,
               accessKeyId:     profile.accessKeyId,
               secretAccessKey: profile.secretAccessKey,
             }).catch(() => {});
-            return; // Done — no need to fall through to credentials.json
+            return;
           }
         }
 
-        // ── Priority 2: Fallback — restore from credentials.json ──────────
-        const response = await fetch('/api/aws/saved-credentials');
+        // ── Priority 3: Fallback — restore from credentials.json ──────────
+        const response = await fetch('/api/aws/saved-credentials', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
         const data = await response.json();
         if (data.hasSaved) {
           setAwsConfig(prev => ({
