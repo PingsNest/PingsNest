@@ -809,7 +809,54 @@ export async function initDb(): Promise<void> {
     );
   `);
 
+  // ── SLA Daily Rollups ─────────────────────────────────────────────────────
+  // One row per (targetId, date). Aggregated nightly from raw pings before deletion.
+  // Stores raw counts so multi-period SLAs can be correctly computed:
+  //   uptime% = SUM(up_checks) / SUM(total_checks) × 100  (NOT average of percentages)
+  await query(`
+    CREATE TABLE IF NOT EXISTS sla_daily_rollups (
+      id                SERIAL PRIMARY KEY,
+      "targetId"        TEXT NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
+      date              DATE NOT NULL,
+      total_checks      INTEGER NOT NULL DEFAULT 0,
+      up_checks         INTEGER NOT NULL DEFAULT 0,
+      total_latency_ms  BIGINT NOT NULL DEFAULT 0,
+      downtime_sec      INTEGER NOT NULL DEFAULT 0,
+      "createdAt"       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE ("targetId", date)
+    );
+  `).catch(() => {});
+
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_sla_daily_target_date
+      ON sla_daily_rollups("targetId", date DESC);
+  `).catch(() => {});
+
+  // ── SLA Monthly Rollups ───────────────────────────────────────────────────
+  // One row per (targetId, year, month). Aggregated on 1st of each month from daily rollups.
+  // Never deleted by log retention — this is the permanent long-term SLA ledger.
+  await query(`
+    CREATE TABLE IF NOT EXISTS sla_monthly_rollups (
+      id                SERIAL PRIMARY KEY,
+      "targetId"        TEXT NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
+      year              INTEGER NOT NULL,
+      month             INTEGER NOT NULL,
+      total_checks      INTEGER NOT NULL DEFAULT 0,
+      up_checks         INTEGER NOT NULL DEFAULT 0,
+      total_latency_ms  BIGINT NOT NULL DEFAULT 0,
+      downtime_sec      INTEGER NOT NULL DEFAULT 0,
+      "createdAt"       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE ("targetId", year, month)
+    );
+  `).catch(() => {});
+
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_sla_monthly_target_period
+      ON sla_monthly_rollups("targetId", year DESC, month DESC);
+  `).catch(() => {});
+
   console.log('[DB] Schema ready with Lambda Monitoring tables.');
+
 }
 
 // ─── Audit Logging Helper ───────────────────────────────────────────────────

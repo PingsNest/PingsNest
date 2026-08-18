@@ -97,6 +97,7 @@ import { handleCloudWatchPushIngestion } from './pushIngestion.js';
 import { handleOtlpTraces, handleOtlpMetrics } from './otlp.js';
 import { detectLatencyAnomalies } from './anomalyEngine.js';
 import { calculateRouteFinOpsCosts } from './finops.js';
+import { getSlaFromRollups, startSlaRollupJobs } from './slaRollup.js';
 
 // ─── OpenTelemetry (OTLP) Native Ingestion Endpoints ──────────────────────────
 app.post('/v1/traces', express.json({ limit: '50mb' }), handleOtlpTraces);
@@ -2725,11 +2726,25 @@ function isStatusCodeIgnored(code: number, ignoredStr?: string): boolean {
 }
 
 
-// Helper: Load all targets from DB
-async function loadTargets(): Promise<UrlTarget[]> {
+// ─── In-memory target cache (8s TTL) — avoids hammering DB on every poll tick ──
+let _targetsCacheData: UrlTarget[] | null = null;
+let _targetsCacheAt = 0;
+const TARGETS_CACHE_TTL_MS = 8000;
+
+function invalidateTargetsCache() {
+  _targetsCacheData = null;
+  _targetsCacheAt = 0;
+}
+
+// Helper: Load all targets from DB (with short-lived in-memory cache)
+async function loadTargets(forceRefresh = false): Promise<UrlTarget[]> {
+  const now = Date.now();
+  if (!forceRefresh && _targetsCacheData && (now - _targetsCacheAt) < TARGETS_CACHE_TTL_MS) {
+    return _targetsCacheData;
+  }
   try {
     const { rows } = await query('SELECT * FROM targets');
-    return rows.map(r => ({
+    const mapped = rows.map(r => ({
       id: r.id, name: r.name, url: r.url, interval: r.interval, method: r.method,
       headers: r.headers || undefined, body: r.body || undefined, bodyEncoding: r.bodyEncoding || undefined,
       status: r.status, timeout: r.timeout, retries: r.retries, retryInterval: r.retryInterval,
@@ -2744,11 +2759,15 @@ async function loadTargets(): Promise<UrlTarget[]> {
       suppressAlertsUntil: r.suppressAlertsUntil || undefined,
       ignoredStatusCodes: r.ignoredStatusCodes || undefined
     }));
-  } catch (err) { console.error('[URL Monitor] Failed to load targets:', err); return []; }
+    _targetsCacheData = mapped;
+    _targetsCacheAt = now;
+    return mapped;
+  } catch (err) { console.error('[URL Monitor] Failed to load targets:', err); return _targetsCacheData || []; }
 }
 
-// Helper: Upsert single target
+// Helper: Upsert single target (also invalidates in-memory targets cache)
 async function saveTarget(t: UrlTarget): Promise<void> {
+  invalidateTargetsCache();
   await query(
     `INSERT INTO targets (id, name, url, interval, method, headers, body, "bodyEncoding", status, timeout, retries, "retryInterval", "groupName", "certExpiryDate", "certExpDays", "lastCheck", "lastStatusCode", "lastStatusText", "lastLatency", "isUp", "recentPings", steps, "ignoredStatusCodes", assertions, "suppressAlertsUntil")
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
@@ -2780,6 +2799,7 @@ async function saveTarget(t: UrlTarget): Promise<void> {
 
 // Helper: save entire list (delete removed, upsert existing)
 async function saveTargets(targets: UrlTarget[]): Promise<void> {
+  invalidateTargetsCache();
   try {
     if (targets.length === 0) { await query('DELETE FROM targets'); return; }
     const ids = targets.map((_, i) => `$${i + 1}`).join(',');
@@ -2820,13 +2840,22 @@ if (fs.existsSync(TARGETS_PATH)) {
   })();
 }
 
-// Helper: Certificate details
+// ─── In-memory SSL cert cache (24h TTL) — certs change at most every 90 days ──
+const _certCache = new Map<string, { expiry: Date | null; issuer: string | null; fetchedAt: number }>();
+const CERT_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// Helper: Certificate details (cached per hostname)
 function getCertificateDetails(urlStr: string): Promise<{ expiry: Date | null; issuer: string | null }> {
   return new Promise((resolve) => {
     try {
-      const url = new URL(urlStr);
-      if (url.protocol !== 'https:') return resolve({ expiry: null, issuer: null });
-      const req = https.request({ hostname: url.hostname, port: url.port || 443, method: 'GET', rejectUnauthorized: false, agent: false, timeout: 5000 }, (res) => {
+      const parsed = new URL(urlStr);
+      if (parsed.protocol !== 'https:') return resolve({ expiry: null, issuer: null });
+      const cacheKey = `${parsed.hostname}:${parsed.port || 443}`;
+      const cached = _certCache.get(cacheKey);
+      if (cached && (Date.now() - cached.fetchedAt) < CERT_CACHE_TTL_MS) {
+        return resolve({ expiry: cached.expiry, issuer: cached.issuer });
+      }
+      const req = https.request({ hostname: parsed.hostname, port: Number(parsed.port) || 443, method: 'GET', rejectUnauthorized: false, agent: false, timeout: 5000 }, (res) => {
         const socket = res.socket as TLSSocket;
         if (socket && typeof socket.getPeerCertificate === 'function') {
           const cert = socket.getPeerCertificate();
@@ -2834,6 +2863,7 @@ function getCertificateDetails(urlStr: string): Promise<{ expiry: Date | null; i
             const expiry = cert.valid_to ? new Date(cert.valid_to) : null;
             const rawIssuer = cert.issuer ? (cert.issuer.O || cert.issuer.CN || 'Verified SSL Authority') : null;
             const issuer = Array.isArray(rawIssuer) ? rawIssuer.join(', ') : (rawIssuer ? String(rawIssuer) : null);
+            _certCache.set(cacheKey, { expiry, issuer, fetchedAt: Date.now() });
             resolve({ expiry, issuer });
             return;
           }
@@ -3097,6 +3127,7 @@ app.post('/api/alerts/test-webhook', async (req, res) => {
 });
 
 // Helper: Ping with retry logic
+// NOTE: uses a single targeted DB query instead of loadTargets() to avoid full table scans inside retry loop
 async function pingTargetWithRetries(target: UrlTarget): Promise<UrlTarget> {
   const maxRetries = typeof target.retries === 'number' ? target.retries : 0;
   const retryIntervalMs = (target.retryInterval || 60) * 1000;
@@ -3106,10 +3137,12 @@ async function pingTargetWithRetries(target: UrlTarget): Promise<UrlTarget> {
     attempt++;
     console.log(`[URL Monitor] Retry ${attempt}/${maxRetries} for ${target.name} in ${target.retryInterval}s…`);
     await new Promise(r => setTimeout(r, retryIntervalMs));
-    const targets = await loadTargets();
-    const updated = targets.find(t => t.id === target.id);
-    if (!updated || updated.status !== 'active') return result;
-    result = await pingTarget(updated);
+    // Fetch only the one target we care about instead of a full loadTargets() scan
+    try {
+      const { rows } = await query('SELECT status FROM targets WHERE id=$1', [target.id]);
+      if (!rows[0] || rows[0].status !== 'active') return result;
+    } catch { return result; }
+    result = await pingTarget(target);
   }
   return result;
 }
@@ -3321,7 +3354,7 @@ app.post('/api/url-monitor/targets', requireAuth, async (req, res) => {
   const { name, url, interval, method, headers, body, timeout, retries, retryInterval, group, bodyEncoding, ignoredStatusCodes, steps, assertions, suppressAlertsUntil } = req.body;
   if (!name || !url) return res.status(400).json({ error: 'Missing target parameters' });
   let newTarget: UrlTarget = {
-    id: Math.random().toString(36).substring(2, 9),
+    id: crypto.randomUUID(),
     name,
     url,
     interval: Number(interval) || 60,
@@ -3379,7 +3412,7 @@ app.post('/api/url-monitor/targets/clone', requireAuth, async (req, res) => {
   const targets = await loadTargets();
   const source = targets.find(t => t.id === id);
   if (!source) return res.status(404).json({ error: 'Target not found' });
-  let cloned: UrlTarget = { ...source, id: Math.random().toString(36).substring(2, 9), name: `${source.name} (Copy)`, status: 'active' };
+  let cloned: UrlTarget = { ...source, id: crypto.randomUUID(), name: `${source.name} (Copy)`, status: 'active' };
   cloned = await pingTarget(cloned);
   await saveTarget(cloned);
   res.json({ success: true, target: cloned });
@@ -3858,26 +3891,23 @@ app.get([
 });
 
 
-// ─── SLA Statistics ───────────────────────────────────────────────────────────
+// ─── SLA Statistics (3-tier rollup: raw pings / daily rollups / monthly rollups) ──
+// Routing: 24h → raw pings | 7d/30d → daily rollups + today raw | 90d/6m/1y/2y → monthly rollups
+// Uptime% = SUM(up_checks) / SUM(total_checks) — weighted, never averaged percentages.
 app.get('/api/url-monitor/sla/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
-  const now = new Date();
+  const cacheKey = `url_sla:${id}`;
+  const cached = await cacheGet(cacheKey);
+  if (cached) return res.json(cached);
 
-  const getSlaForPeriod = async (days: number) => {
-    const cutOff = new Date(now);
-    cutOff.setDate(now.getDate() - days);
-    try {
-      const { rows } = await query(
-        `SELECT COUNT(*) AS total, SUM(CASE WHEN "isUp" THEN 1 ELSE 0 END) AS "upCount", AVG(latency) AS "avgLatency" FROM pings WHERE "targetId"=$1 AND timestamp>=$2`,
-        [id, cutOff.toISOString()]
-      );
-      const total = Number(rows[0]?.total || 0);
-      const up = Number(rows[0]?.upCount || 0);
-      return { ratio: total > 0 ? Math.round((up / total) * 10000) / 100 : 100, total, up, avgLatency: total > 0 ? Math.round(Number(rows[0].avgLatency) || 0) : 0 };
-    } catch { return { ratio: 100, total: 0, up: 0, avgLatency: 0 }; }
-  };
-
-  res.json({ sla: { '24h': await getSlaForPeriod(1), '1m': await getSlaForPeriod(30), '3m': await getSlaForPeriod(90), '6m': await getSlaForPeriod(180), '1y': await getSlaForPeriod(365), '2y': await getSlaForPeriod(730) } });
+  try {
+    const sla = await getSlaFromRollups(id);
+    const result = { sla };
+    await cacheSet(cacheKey, result, 60); // 60s cache
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── PDF SLA Report (Single Target - Official Executive Audit Format) ────────
@@ -4175,31 +4205,59 @@ app.all('/api/url-monitor/report/pdf-all', requireAuth, async (req, res) => {
   }
 });
 
-// ─── Periodic check loop ──────────────────────────────────────────────────────
+// ─── Concurrency limiter for polling loop ─────────────────────────────────────
+// Limits simultaneous outbound pings to avoid event-loop/fd exhaustion
+const MAX_CONCURRENT_PINGS = 10;
+async function withConcurrencyLimit<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
+  const results: T[] = [];
+  let idx = 0;
+  async function worker() {
+    while (idx < tasks.length) {
+      const i = idx++;
+      results[i] = await tasks[i]();
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, worker);
+  await Promise.all(workers);
+  return results;
+}
+
+// ─── Periodic check loop (every 10s, max 10 concurrent pings) ────────────────
 setInterval(async () => {
-  const targets = await loadTargets();
-  const results: (UrlTarget | null)[] = await Promise.all(
-    targets.map(async target => {
-      if (target.status !== 'active') return null;
-      const lastTime = target.lastCheck ? new Date(target.lastCheck).getTime() : 0;
-      if ((Date.now() - lastTime) / 1000 < target.interval) return null;
-      try { return await pingTargetWithRetries(target); } catch { return null; }
-    })
-  );
+  const targets = await loadTargets(true); // force-refresh the cache each tick
+  const due = targets.filter(t => {
+    if (t.status !== 'active') return false;
+    const lastTime = t.lastCheck ? new Date(t.lastCheck).getTime() : 0;
+    return (Date.now() - lastTime) / 1000 >= t.interval;
+  });
+  if (due.length === 0) return;
+
+  const tasks = due.map(target => async (): Promise<UrlTarget | null> => {
+    try { return await pingTargetWithRetries(target); } catch { return null; }
+  });
+
+  const results = await withConcurrencyLimit(tasks, MAX_CONCURRENT_PINGS);
   for (const result of results) {
     if (result) {
       await saveTarget(result);
       broadcastUrlTargetPing(result);
     }
   }
-
-  // Housekeeping: delete pings older than 2 years
-  try {
-    const cutOff = new Date();
-    cutOff.setFullYear(cutOff.getFullYear() - 2);
-    await query('DELETE FROM pings WHERE timestamp < $1', [cutOff.toISOString()]);
-  } catch (err) { console.error('[URL Monitor] Housekeeping failed:', err); }
 }, 10000);
+
+// ─── Housekeeping interval (every 5 minutes) ─────────────────────────────────
+// NOTE: Raw ping deletion is now owned by slaRollup.ts (rollupYesterdayPings).
+// It aggregates yesterday's pings into sla_daily_rollups BEFORE deleting them,
+// guaranteeing SLA continuity even after log retention deletes older raw pings.
+// This interval only cleans up 2-year-old pings that slipped past the nightly job.
+setInterval(async () => {
+  try {
+    // Emergency backstop: remove any raw pings older than 2 years that weren't caught by nightly job
+    await query(`DELETE FROM pings WHERE timestamp < NOW() - INTERVAL '2 years'`);
+    // Also trim daily rollups older than 2 years (monthly rollups are kept forever)
+    await query(`DELETE FROM sla_daily_rollups WHERE date < CURRENT_DATE - INTERVAL '2 years'`);
+  } catch (err) { console.error('[URL Monitor] Housekeeping failed:', err); }
+}, 5 * 60 * 1000);
 
 // ─── Periodic log rotation via Kafka (every 6 hours) ─────────────────────────
 // Publishes a log.rotation event instead of running DELETE directly,
@@ -4712,6 +4770,7 @@ initDb()
     }
 
     startServer();
+    startSlaRollupJobs(); // start nightly + monthly SLA aggregation jobs
   })
   .catch((err) => {
     console.warn('[Server] Database connection issue (starting in resilient fallback mode):', err.message);
