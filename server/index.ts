@@ -3850,33 +3850,30 @@ app.get([
         color = '#9f9f9f';
       }
     } else {
-      // Uptime ratio calculation based on period parameter (24h, 7d, 30d, 90d, 365d)
+      // Uptime from 3-tier rollups -- raw pings only kept 2 days, so
+      // direct pings query returns 0% for 30d/90d/1y badges without this fix.
       const periodParam = (req.query.period || req.query.range || '').toString().toLowerCase();
-      let sqlInterval = "INTERVAL '24 hours'";
+      let periodKey: '24h' | '7d' | '1m' | '3m' | '6m' | '1y' | '2y' = '24h';
       let defaultLabel = 'uptime (24h)';
 
       if (periodParam === '7d' || periodParam === '1w' || periodParam === 'week') {
-        sqlInterval = "INTERVAL '7 days'";
-        defaultLabel = 'uptime (7d)';
+        periodKey = '7d'; defaultLabel = 'uptime (7d)';
       } else if (periodParam === '30d' || periodParam === '1m' || periodParam === 'month') {
-        sqlInterval = "INTERVAL '30 days'";
-        defaultLabel = 'uptime (30d)';
+        periodKey = '1m'; defaultLabel = 'uptime (30d)';
       } else if (periodParam === '90d' || periodParam === '3m' || periodParam === '1q' || periodParam === 'quarter') {
-        sqlInterval = "INTERVAL '90 days'";
-        defaultLabel = 'uptime (90d)';
+        periodKey = '3m'; defaultLabel = 'uptime (90d)';
+      } else if (periodParam === '6m' || periodParam === '180d') {
+        periodKey = '6m'; defaultLabel = 'uptime (6m)';
       } else if (periodParam === '365d' || periodParam === '1y' || periodParam === 'year') {
-        sqlInterval = "INTERVAL '365 days'";
-        defaultLabel = 'uptime (1y)';
+        periodKey = '1y'; defaultLabel = 'uptime (1y)';
+      } else if (periodParam === '2y' || periodParam === '730d') {
+        periodKey = '2y'; defaultLabel = 'uptime (2y)';
       }
 
       label = label || defaultLabel;
-      const { rows } = await query(
-        `SELECT COUNT(*) AS total, SUM(CASE WHEN "isUp" THEN 1 ELSE 0 END) AS "upCount" FROM pings WHERE "targetId"=$1 AND timestamp >= NOW() - ${sqlInterval}`,
-        [id]
-      );
-      const total = Number(rows[0]?.total || 0);
-      const up = Number(rows[0]?.upCount || 0);
-      const ratio = total > 0 ? (up / total) * 100 : (target.isUp ? 100 : 0);
+      const slaResult = await getSlaFromRollups(id);
+      const period    = slaResult[periodKey];
+      const ratio     = period.total > 0 ? period.ratio : (target.isUp ? 100 : 0);
       value = `${ratio.toFixed(1)}%`;
       color = ratio >= 99.0 ? '#4c1' : ratio >= 95.0 ? '#dfb317' : '#e05d44';
     }

@@ -144,14 +144,14 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
     }
   });
 
-  const availableGroups = Array.from(
-    new Set(
-      [
-        ...targets.map(t => t.group?.trim()).filter(Boolean),
-        ...savedCustomGroups
-      ]
-    )
-  ).filter(Boolean) as string[];
+  // Memoised: recomputes only when targets list or savedCustomGroups changes,
+  // not on every WebSocket ping that calls setTargets
+  const availableGroups = useMemo(() => Array.from(
+    new Set([
+      ...targets.map(t => t.group?.trim()).filter(Boolean),
+      ...savedCustomGroups
+    ])
+  ).filter(Boolean) as string[], [targets, savedCustomGroups]);
 
   const [bodyEncoding, setBodyEncoding] = useState('JSON');
   const [ignoredStatusCodes, setIgnoredStatusCodes] = useState('');
@@ -161,8 +161,9 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
 
   const [checkingId, setCheckingId] = useState<string | null>(null);
 
-  // Inline delete confirmation state (replaces window.confirm)
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  // Typed pending-action state -- one discriminated object instead of
+  // an ambiguous string that serves two purposes (Bug 9 fix)
+  const [pendingAction, setPendingAction] = useState<{ id: string; action: 'delete' | 'clone' } | null>(null);
 
   // Error toast for async operations
   const [errorToast, setErrorToast] = useState<string | null>(null);
@@ -335,7 +336,9 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
       fetchAlerts();
       fetchMaintenance();
     }
-  }, [token]);
+  // fetchTargets/fetchAlerts/fetchMaintenance are stable useCallback refs;
+  // listing them here ensures the effect re-runs if authFetch ever changes (token refresh)
+  }, [token, fetchTargets, fetchAlerts, fetchMaintenance]);
 
   const [sloData, setSloData] = useState<any>(null);
 
@@ -530,14 +533,14 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
     }
   };
 
-  // Delete Target — uses inline confirmation instead of window.confirm()
+  // Delete Target -- uses inline confirmation instead of window.confirm()
   const handleDeleteTarget = useCallback(async (id: string) => {
-    if (confirmDeleteId !== id) {
-      setConfirmDeleteId(id);
-      setTimeout(() => setConfirmDeleteId(null), 4000); // auto-cancel after 4s
+    if (pendingAction?.id !== id || pendingAction?.action !== 'delete') {
+      setPendingAction({ id, action: 'delete' });
+      setTimeout(() => setPendingAction(null), 4000); // auto-cancel after 4s
       return;
     }
-    setConfirmDeleteId(null);
+    setPendingAction(null);
     try {
       const res = await authFetch(`/api/url-monitor/targets/${id}`, { method: 'DELETE' });
       if (res.ok) {
@@ -551,16 +554,16 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
       showError('Failed to delete monitor.');
       console.error(e);
     }
-  }, [authFetch, confirmDeleteId, targets, selectedTarget, showError]);
+  }, [authFetch, pendingAction, targets, selectedTarget, showError]);
 
-  // Clone Target — uses inline confirmation instead of window.confirm()
+  // Clone Target -- uses inline confirmation instead of window.confirm()
   const handleCloneTarget = useCallback(async (id: string) => {
-    if (confirmDeleteId !== `clone-${id}`) {
-      setConfirmDeleteId(`clone-${id}`);
-      setTimeout(() => setConfirmDeleteId(null), 4000);
+    if (pendingAction?.id !== id || pendingAction?.action !== 'clone') {
+      setPendingAction({ id, action: 'clone' });
+      setTimeout(() => setPendingAction(null), 4000);
       return;
     }
-    setConfirmDeleteId(null);
+    setPendingAction(null);
     try {
       const res = await authFetch('/api/url-monitor/targets/clone', {
         method: 'POST',
@@ -578,7 +581,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
       showError('Failed to clone monitor.');
       console.error(e);
     }
-  }, [authFetch, confirmDeleteId, fetchTargets, showError]);
+  }, [authFetch, pendingAction, fetchTargets, showError]);
 
   // Start Edit Mode
   const handleStartEdit = (target: UrlTarget) => {
@@ -877,16 +880,16 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
       )}
 
       {/* Inline Delete/Clone Confirmation Banner */}
-      {confirmDeleteId && (
+      {pendingAction && (
         <div style={{
           padding: '10px 16px', borderRadius: '8px',
           backgroundColor: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px'
         }}>
           <span style={{ fontSize: '13px', color: 'var(--color-error)', fontWeight: 600 }}>
-            {confirmDeleteId.startsWith('clone-') ? '⚠️ Click Clone again to confirm cloning this monitor.' : '⚠️ Click Delete again to confirm. This action cannot be undone.'}
+            {pendingAction.action === 'clone' ? '⚠️ Click Clone again to confirm cloning this monitor.' : '⚠️ Click Delete again to confirm. This action cannot be undone.'}
           </span>
-          <button onClick={() => setConfirmDeleteId(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '18px', lineHeight: 1 }}>✕</button>
+          <button onClick={() => setPendingAction(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '18px', lineHeight: 1 }}>✕</button>
         </div>
       )}
 
