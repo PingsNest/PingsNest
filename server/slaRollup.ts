@@ -36,10 +36,27 @@ function computeAvgLatency(totalMs: number, total: number): number {
   return total > 0 ? Math.round(totalMs / total) : 0;
 }
 
-// Tier 1a -- only raw pings that belong to TODAY (UTC midnight onward)
-// Used when combining with daily rollups so yesterday's data is never double-counted:
-//   Daily rollup covers day D-N through D-1 (complete UTC days)
-//   This covers D-0 only (from 00:00 UTC today)
+// Tier 1: raw pings for last N hours (used for 24h SLA display)
+// Safe to use NOW()-24h because raw pings are kept for 48h before deletion.
+async function getSlaFromRaw(targetId: string, hours = 24): Promise<SlaPeriodResult> {
+  try {
+    const sql = 'SELECT COUNT(*) AS total,'
+      + ' SUM(CASE WHEN "isUp" THEN 1 ELSE 0 END) AS up_checks,'
+      + ' COALESCE(SUM(latency),0) AS total_latency'
+      + ' FROM pings WHERE "targetId"=$1'
+      + " AND timestamp>=NOW()-($2||' hours')::INTERVAL";
+    const { rows } = await query(sql, [targetId, String(hours)]);
+    const total = Number(rows[0]?.total || 0);
+    const up    = Number(rows[0]?.up_checks || 0);
+    const lat   = Number(rows[0]?.total_latency || 0);
+    return { ratio: computeRatio(up, total), total, up, avgLatency: computeAvgLatency(lat, total), downtimeSec: 0, source: 'raw' };
+  } catch { return emptyPeriod('raw'); }
+}
+
+// Tier 1b: raw pings from today's UTC midnight ONLY
+// Used when combining with daily rollups to avoid double-counting:
+//   daily rollup covers complete UTC days (D-N through D-1)
+//   this covers D-0 only (00:00 UTC today onward) -- no overlap
 async function getSlaFromRawToday(targetId: string): Promise<SlaPeriodResult> {
   try {
     const sql = 'SELECT COUNT(*) AS total,'
@@ -103,9 +120,9 @@ async function getSlaFromDailyPlusRaw(targetId: string, days: number): Promise<S
 
 export async function getSlaFromRollups(targetId: string): Promise<SlaResult> {
   const [s24h, s7d, s1m, s3m, s6m, s1y, s2y] = await Promise.all([
-    getSlaFromRawToday(targetId),          // 24h uses today's raw only
-    getSlaFromDailyPlusRaw(targetId, 7),
-    getSlaFromDailyPlusRaw(targetId, 30),
+    getSlaFromRaw(targetId, 24),           // 24h = true last-24h window (raw kept 48h)
+    getSlaFromDailyPlusRaw(targetId, 7),   // 7d  = daily rollups + today UTC raw
+    getSlaFromDailyPlusRaw(targetId, 30),  // 30d = daily rollups + today UTC raw
     getSlaFromMonthly(targetId, 3),
     getSlaFromMonthly(targetId, 6),
     getSlaFromMonthly(targetId, 12),
