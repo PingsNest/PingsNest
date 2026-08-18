@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useMonitor } from '../context/MonitorContext';
-import { Shield, RefreshCw, CheckCircle, Wifi, AlertTriangle, Save, Trash2, FolderOpen, RotateCcw, Database, Zap, Clock, ChevronDown, Palette, Users, BookOpen, Copy, ExternalLink, CheckCheck, Terminal, Key, User, Lock, FileText, Bell, Mail, Cpu, Globe, Target, ShieldCheck, Layers, Activity, Sliders, Plus, Send, Search, Building2, X } from 'lucide-react';
+import { Shield, RefreshCw, CheckCircle, Wifi, AlertTriangle, Save, Trash2, FolderOpen, RotateCcw, Database, Zap, Clock, ChevronDown, Palette, Users, BookOpen, Copy, ExternalLink, CheckCheck, Terminal, Key, User, Lock, FileText, Bell, Mail, Cpu, Globe, Target, ShieldCheck, Layers, Activity, Sliders, Plus, Send, Search, Building2, X, Server } from 'lucide-react';
 import { UserManagement } from './UserManagement';
+import { SystemHealth } from './SystemHealth';
 import { AWS_REGIONS } from '../constants/awsRegions';
 
 interface SettingsProps {
-  initialSubTab?: 'aws' | 'themes' | 'users' | 'setup' | 'profiles' | 'alerts';
+  initialSubTab?: 'aws' | 'themes' | 'users' | 'setup' | 'profiles' | 'alerts' | 'system';
   userRole?: string;
 }
 
 export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userRole }) => {
   const resolvedSubTab = initialSubTab === 'profiles' ? 'aws' : initialSubTab;
-  const [currentSubTab, setCurrentSubTab] = useState<'aws' | 'themes' | 'users' | 'setup' | 'alerts'>(resolvedSubTab as any);
+  const [currentSubTab, setCurrentSubTab] = useState<'aws' | 'themes' | 'users' | 'setup' | 'alerts' | 'system'>(resolvedSubTab as any);
 
   useEffect(() => {
     if (initialSubTab) {
@@ -1290,7 +1291,32 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
         >
           <Sliders size={16} color="var(--color-success)" /> System Setup & IAM Policy
         </button>
+
+        <button
+          onClick={() => setCurrentSubTab('system')}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '8px',
+            border: 'none',
+            background: currentSubTab === 'system' ? 'rgba(0, 242, 254, 0.15)' : 'transparent',
+            color: currentSubTab === 'system' ? 'var(--color-primary)' : 'var(--text-muted)',
+            fontWeight: currentSubTab === 'system' ? 800 : 500,
+            fontSize: '12.5px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            transition: 'all 0.15s ease'
+          }}
+        >
+          <Server size={16} color="var(--color-primary)" /> System Health
+        </button>
       </div>
+
+      {/* Sub-Tab: System & Infrastructure Health */}
+      {currentSubTab === 'system' && (
+        <SystemHealth />
+      )}
 
       {/* Sub-Tab 1: Visual Themes */}
       {currentSubTab === 'themes' && (

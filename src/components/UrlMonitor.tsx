@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   Activity, Wifi, WifiOff, Trash2, Play, Pause, Plus, RefreshCw, 
   TrendingUp, Edit, Copy, ChevronDown, ChevronRight, Search, 
   ExternalLink, FileText, Clock, AlertTriangle, Award, Check,
-  Bell, Calendar, Zap
+  Bell, Calendar, Zap, Folder
 } from 'lucide-react';
 
 export interface SyntheticStep {
@@ -135,6 +135,24 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
   const [retries, setRetries] = useState('');
   const [retryInterval, setRetryInterval] = useState('');
   const [group, setGroup] = useState('');
+  const [savedCustomGroups, setSavedCustomGroups] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('nova_url_monitor_groups');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const availableGroups = Array.from(
+    new Set(
+      [
+        ...targets.map(t => t.group?.trim()).filter(Boolean),
+        ...savedCustomGroups
+      ]
+    )
+  ).filter(Boolean) as string[];
+
   const [bodyEncoding, setBodyEncoding] = useState('JSON');
   const [ignoredStatusCodes, setIgnoredStatusCodes] = useState('');
   const [scenarioSteps, setScenarioSteps] = useState<SyntheticStep[]>([]);
@@ -143,8 +161,18 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
 
   const [checkingId, setCheckingId] = useState<string | null>(null);
 
-  // Authenticated Fetch Wrapper
-  const authFetch = async (url: string, options: RequestInit = {}) => {
+  // Inline delete confirmation state (replaces window.confirm)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Error toast for async operations
+  const [errorToast, setErrorToast] = useState<string | null>(null);
+  const showError = useCallback((msg: string) => {
+    setErrorToast(msg);
+    setTimeout(() => setErrorToast(null), 4000);
+  }, []);
+
+  // Authenticated Fetch Wrapper (stable reference via useCallback)
+  const authFetch = useCallback(async (url: string, options: RequestInit = {}) => {
     const headers = new Headers(options.headers || {});
     if (token) {
       headers.set('Authorization', `Bearer ${token}`);
@@ -155,10 +183,10 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
       throw new Error('Unauthorized');
     }
     return res;
-  };
+  }, [token, onLogout]);
 
   // Fetch targets
-  const fetchTargets = async () => {
+  const fetchTargets = useCallback(async () => {
     setLoading(true);
     try {
       const res = await authFetch('/api/url-monitor/targets');
@@ -173,10 +201,10 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [authFetch, selectedTarget]);
 
   // Fetch history for selected target
-  const fetchHistory = async (targetId: string) => {
+  const fetchHistory = useCallback(async (targetId: string) => {
     setLoadingHistory(true);
     try {
       const res = await authFetch(`/api/url-monitor/history/${targetId}`);
@@ -187,10 +215,10 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
     } finally {
       setLoadingHistory(false);
     }
-  };
+  }, [authFetch]);
 
   // Fetch SLA metrics for selected target
-  const fetchSla = async (targetId: string) => {
+  const fetchSla = useCallback(async (targetId: string) => {
     try {
       const res = await authFetch(`/api/url-monitor/sla/${targetId}`);
       const data = await res.json();
@@ -198,10 +226,10 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
     } catch (e) {
       console.error('Failed to fetch SLA:', e);
     }
-  };
+  }, [authFetch]);
 
   // Fetch outage incidents for selected target
-  const fetchIncidents = async (targetId: string) => {
+  const fetchIncidents = useCallback(async (targetId: string) => {
     setLoadingIncidents(true);
     try {
       const res = await authFetch(`/api/url-monitor/incidents/${targetId}`);
@@ -212,9 +240,9 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
     } finally {
       setLoadingIncidents(false);
     }
-  };
+  }, [authFetch]);
 
-  const fetchAlerts = async () => {
+  const fetchAlerts = useCallback(async () => {
     try {
       const res = await authFetch('/api/url-monitor/alerts');
       if (res.ok) {
@@ -222,9 +250,9 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
         if (data.destinations) setAlertDestinations(data.destinations);
       }
     } catch {}
-  };
+  }, [authFetch]);
 
-  const fetchMaintenance = async () => {
+  const fetchMaintenance = useCallback(async () => {
     try {
       const res = await authFetch('/api/url-monitor/maintenance');
       if (res.ok) {
@@ -232,9 +260,9 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
         if (data.windows) setMaintenanceWindows(data.windows);
       }
     } catch {}
-  };
+  }, [authFetch]);
 
-  const handleAddAlert = async () => {
+  const handleAddAlert = useCallback(async () => {
     if (!newAlertName || !newAlertUrl) return;
     try {
       const res = await authFetch('/api/url-monitor/alerts', {
@@ -247,17 +275,17 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
         setNewAlertUrl('');
         await fetchAlerts();
       }
-    } catch {}
-  };
+    } catch { showError('Failed to add alert webhook.'); }
+  }, [authFetch, fetchAlerts, newAlertName, newAlertType, newAlertUrl, showError]);
 
-  const handleDeleteAlert = async (id: string) => {
+  const handleDeleteAlert = useCallback(async (id: string) => {
     try {
       await authFetch(`/api/url-monitor/alerts/${id}`, { method: 'DELETE' });
       await fetchAlerts();
-    } catch {}
-  };
+    } catch { showError('Failed to delete alert webhook.'); }
+  }, [authFetch, fetchAlerts, showError]);
 
-  const handleTestAlert = async (id: string) => {
+  const handleTestAlert = useCallback(async (id: string) => {
     setTestingAlertId(id);
     try {
       await authFetch('/api/url-monitor/alerts/test', {
@@ -268,9 +296,9 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
     } catch {} finally {
       setTimeout(() => setTestingAlertId(null), 1500);
     }
-  };
+  }, [authFetch]);
 
-  const handleAddMaintenance = async () => {
+  const handleAddMaintenance = useCallback(async () => {
     if (!maintTitle || !maintStartTime || !maintEndTime) return;
     try {
       const res = await authFetch('/api/url-monitor/maintenance', {
@@ -291,15 +319,15 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
         setMaintEndTime('');
         await fetchMaintenance();
       }
-    } catch {}
-  };
+    } catch { showError('Failed to schedule maintenance window.'); }
+  }, [authFetch, fetchMaintenance, maintDesc, maintEndTime, maintStartTime, maintTitle, selectedTarget, showError]);
 
-  const handleDeleteMaintenance = async (id: string) => {
+  const handleDeleteMaintenance = useCallback(async (id: string) => {
     try {
       await authFetch(`/api/url-monitor/maintenance/${id}`, { method: 'DELETE' });
       await fetchMaintenance();
-    } catch {}
-  };
+    } catch { showError('Failed to delete maintenance window.'); }
+  }, [authFetch, fetchMaintenance, showError]);
 
   useEffect(() => {
     if (token) {
@@ -311,7 +339,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
 
   const [sloData, setSloData] = useState<any>(null);
 
-  const fetchSloData = async (targetId: string) => {
+  const fetchSloData = useCallback(async (targetId: string) => {
     try {
       const res = await authFetch(`/api/url-monitor/slo/${targetId}?slo=99.9`);
       if (res.ok) {
@@ -319,58 +347,54 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
         if (data.slo) setSloData(data.slo);
       }
     } catch {}
-  };
+  }, [authFetch]);
 
   useEffect(() => {
     if (token && selectedTarget) {
-      setLogsVisible(10); // reset pagination when switching targets
+      setLogsVisible(10);
       setIncidentsVisible(5);
+      // Immediate fetch on target switch
       fetchHistory(selectedTarget.id);
       fetchSla(selectedTarget.id);
       fetchIncidents(selectedTarget.id);
       fetchSloData(selectedTarget.id);
-      
-      const handle = window.setInterval(() => {
+
+      // Poll detail data every 30s (WS handles real-time heartbeat updates)
+      const detailHandle = window.setInterval(() => {
         fetchHistory(selectedTarget.id);
         fetchSla(selectedTarget.id);
         fetchIncidents(selectedTarget.id);
         fetchSloData(selectedTarget.id);
-      }, 10000);
-      return () => clearInterval(handle);
+      }, 30000);
+
+      // Poll targets list every 15s (for sidebar status dots)
+      const targetsHandle = window.setInterval(() => {
+        fetchTargets();
+      }, 15000);
+
+      return () => {
+        clearInterval(detailHandle);
+        clearInterval(targetsHandle);
+      };
     }
   }, [token, selectedTarget?.id]);
 
-
-  // Periodic poll targets list updates (runs every 10s)
-  useEffect(() => {
-    if (token) {
-      const handle = window.setInterval(async () => {
-        try {
-          const res = await authFetch('/api/url-monitor/targets');
-          const data = await res.json();
-          const freshTargets = data.targets || [];
-          setTargets(freshTargets);
-          
-          if (selectedTarget) {
-            const match = freshTargets.find((t: any) => t.id === selectedTarget.id);
-            if (match) setSelectedTarget(match);
-          }
-        } catch {}
-      }, 10000);
-      return () => clearInterval(handle);
-    }
-  }, [token, selectedTarget]);
-
-  // Real-time WebSocket target ping listener (instant live updates for heartbeat bars)
+  // Real-time WebSocket target ping listener with exponential-backoff reconnection
+  const wsRef = useRef<WebSocket | null>(null);
   useEffect(() => {
     if (!token) return;
+    let destroyed = false;
+    let retryDelay = 1000;
+    const MAX_DELAY = 30000;
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-    let ws: WebSocket | null = null;
+    const connect = () => {
+      if (destroyed) return;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+      wsRef.current = ws;
 
-    try {
-      ws = new WebSocket(wsUrl);
+      ws.onopen = () => { retryDelay = 1000; }; // reset backoff on successful connect
+
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -381,10 +405,20 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
           }
         } catch {}
       };
-    } catch {}
 
+      ws.onclose = () => {
+        if (!destroyed) {
+          setTimeout(() => { retryDelay = Math.min(retryDelay * 2, MAX_DELAY); connect(); }, retryDelay);
+        }
+      };
+
+      ws.onerror = () => { try { ws.close(); } catch {} };
+    };
+
+    connect();
     return () => {
-      if (ws) ws.close();
+      destroyed = true;
+      if (wsRef.current) wsRef.current.close();
     };
   }, [token]);
 
@@ -441,6 +475,13 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
       const data = await res.json();
       
       if (data.success) {
+        if (group.trim()) {
+          const updatedGroups = Array.from(new Set([...savedCustomGroups, group.trim()]));
+          setSavedCustomGroups(updatedGroups);
+          try {
+            localStorage.setItem('nova_url_monitor_groups', JSON.stringify(updatedGroups));
+          } catch {}
+        }
         // Reset states
         setName('');
         setUrl('');
@@ -489,9 +530,14 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
     }
   };
 
-  // Delete Target
-  const handleDeleteTarget = async (id: string) => {
-    if (!window.confirm('Are you sure you want to stop monitoring this URL?')) return;
+  // Delete Target — uses inline confirmation instead of window.confirm()
+  const handleDeleteTarget = useCallback(async (id: string) => {
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      setTimeout(() => setConfirmDeleteId(null), 4000); // auto-cancel after 4s
+      return;
+    }
+    setConfirmDeleteId(null);
     try {
       const res = await authFetch(`/api/url-monitor/targets/${id}`, { method: 'DELETE' });
       if (res.ok) {
@@ -502,13 +548,19 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
         }
       }
     } catch (e) {
+      showError('Failed to delete monitor.');
       console.error(e);
     }
-  };
+  }, [authFetch, confirmDeleteId, targets, selectedTarget, showError]);
 
-  // Clone Target
-  const handleCloneTarget = async (id: string) => {
-    if (!window.confirm('Clone this URL monitor configuration?')) return;
+  // Clone Target — uses inline confirmation instead of window.confirm()
+  const handleCloneTarget = useCallback(async (id: string) => {
+    if (confirmDeleteId !== `clone-${id}`) {
+      setConfirmDeleteId(`clone-${id}`);
+      setTimeout(() => setConfirmDeleteId(null), 4000);
+      return;
+    }
+    setConfirmDeleteId(null);
     try {
       const res = await authFetch('/api/url-monitor/targets/clone', {
         method: 'POST',
@@ -520,12 +572,13 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
         await fetchTargets();
         if (data.target) setSelectedTarget(data.target);
       } else {
-        alert(data.error || 'Failed to clone target.');
+        showError(data.error || 'Failed to clone target.');
       }
     } catch (e) {
+      showError('Failed to clone monitor.');
       console.error(e);
     }
-  };
+  }, [authFetch, confirmDeleteId, fetchTargets, showError]);
 
   // Start Edit Mode
   const handleStartEdit = (target: UrlTarget) => {
@@ -711,29 +764,34 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
 
 
   // Computes SLA ratio
-  const activeCount = targets.filter(t => t.status === 'active').length;
-  const upCount = targets.filter(t => t.status === 'active' && t.isUp).length;
-  const downCount = targets.filter(t => t.status === 'active' && !t.isUp).length;
+  const activeCount = useMemo(() => targets.filter(t => t.status === 'active').length, [targets]);
+  const upCount = useMemo(() => targets.filter(t => t.status === 'active' && t.isUp).length, [targets]);
+  const downCount = useMemo(() => targets.filter(t => t.status === 'active' && !t.isUp).length, [targets]);
   const uptimeRatio = activeCount > 0 ? Math.round((upCount / activeCount) * 100) : 100;
 
   // Grouping & Filtering for Sidebar
-  const filteredTargets = targets.filter(t => 
+  const filteredTargets = useMemo(() => targets.filter(t =>
     t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     t.url.toLowerCase().includes(searchQuery.toLowerCase()) ||
     (t.group || '').toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  ), [targets, searchQuery]);
 
-  const groupedTargets: Record<string, UrlTarget[]> = {};
-  filteredTargets.forEach(t => {
-    const grp = t.group?.trim() || 'General';
-    if (!groupedTargets[grp]) groupedTargets[grp] = [];
-    groupedTargets[grp].push(t);
-  });
+  const groupedTargets: Record<string, UrlTarget[]> = useMemo(() => {
+    const map: Record<string, UrlTarget[]> = {};
+    filteredTargets.forEach(t => {
+      const grp = t.group?.trim() || 'General';
+      if (!map[grp]) map[grp] = [];
+      map[grp].push(t);
+    });
+    return map;
+  }, [filteredTargets]);
 
   // Calculate statistics for selected monitor
-  const uptime24h = history.length > 0
+  // history is already sorted ASC from the server (ORDER BY timestamp ASC after server reverse)
+  // Server returns DESC then we reverse — just use DESC directly from API
+  const uptime24h = useMemo(() => history.length > 0
     ? Math.round((history.filter(h => h.isUp).length / history.length) * 1000) / 10
-    : 100;
+    : 100, [history]);
 
   // Render SVG Sparkline
   const renderSVGChart = () => {
@@ -803,7 +861,35 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
 
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      
+
+      {/* Error Toast Notification */}
+      {errorToast && (
+        <div style={{
+          position: 'fixed', bottom: '24px', right: '24px', zIndex: 9999,
+          padding: '12px 20px', borderRadius: '10px',
+          backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.35)',
+          backdropFilter: 'blur(10px)', color: 'var(--color-error)', fontSize: '13px', fontWeight: 600,
+          display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 24px rgba(239,68,68,0.15)',
+          animation: 'fadeIn 0.2s ease'
+        }}>
+          <AlertTriangle size={14} /> {errorToast}
+        </div>
+      )}
+
+      {/* Inline Delete/Clone Confirmation Banner */}
+      {confirmDeleteId && (
+        <div style={{
+          padding: '10px 16px', borderRadius: '8px',
+          backgroundColor: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px'
+        }}>
+          <span style={{ fontSize: '13px', color: 'var(--color-error)', fontWeight: 600 }}>
+            {confirmDeleteId.startsWith('clone-') ? '⚠️ Click Clone again to confirm cloning this monitor.' : '⚠️ Click Delete again to confirm. This action cannot be undone.'}
+          </span>
+          <button onClick={() => setConfirmDeleteId(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '18px', lineHeight: 1 }}>✕</button>
+        </div>
+      )}
+
       {/* 1. Header Summary Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
         <div className="glass-panel" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -1142,21 +1228,89 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>GROUP / CATEGORY</label>
-                        <input
-                          type="text"
-                          className="input-field"
-                          placeholder="e.g. Production, DevOps, UAT"
-                          value={group}
-                          onChange={(e) => setGroup(e.target.value)}
-                          list="group-suggestions"
-                        />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>GROUP / CATEGORY</label>
+                          {availableGroups.length > 0 && (
+                            <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                              {availableGroups.length} existing {availableGroups.length === 1 ? 'group' : 'groups'}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <input
+                            type="text"
+                            className="input-field"
+                            placeholder="e.g. Production, DevOps, UAT"
+                            value={group}
+                            onChange={(e) => setGroup(e.target.value)}
+                            list="group-suggestions"
+                            style={{ flex: 1 }}
+                          />
+                          {availableGroups.length > 0 && (
+                            <select
+                              value={availableGroups.includes(group) ? group : ''}
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  setGroup(e.target.value);
+                                }
+                              }}
+                              className="input-field"
+                              style={{ width: 'auto', minWidth: '110px', padding: '0 8px', fontSize: '11px', color: 'var(--color-primary)', cursor: 'pointer' }}
+                              title="Pick an existing group"
+                            >
+                              <option value="">-- Select --</option>
+                              {availableGroups.map((g) => (
+                                <option key={g} value={g}>{g}</option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
                         <datalist id="group-suggestions">
-                          {Array.from(new Set(targets.map(t => t.group).filter(Boolean))).map(g => (
+                          {availableGroups.map(g => (
                             <option key={g} value={g} />
                           ))}
                         </datalist>
+
+                        {/* Interactive Clickable Group Pills */}
+                        {availableGroups.length > 0 && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '2px' }}>
+                            <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                              Previously Created Groups:
+                            </span>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', maxHeight: '76px', overflowY: 'auto', padding: '2px 0' }}>
+                              {availableGroups.map((g) => {
+                                const isSelected = group.trim().toLowerCase() === g.toLowerCase();
+                                return (
+                                  <button
+                                    key={g}
+                                    type="button"
+                                    onClick={() => setGroup(isSelected ? '' : g)}
+                                    style={{
+                                      padding: '2px 8px',
+                                      borderRadius: '6px',
+                                      fontSize: '11px',
+                                      fontWeight: isSelected ? 700 : 500,
+                                      cursor: 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      border: isSelected ? '1px solid var(--color-primary)' : '1px solid var(--border-main)',
+                                      backgroundColor: isSelected ? 'rgba(0, 242, 254, 0.15)' : 'rgba(255, 255, 255, 0.04)',
+                                      color: isSelected ? 'var(--color-primary)' : 'var(--text-secondary)',
+                                      transition: 'all 0.15s ease'
+                                    }}
+                                    title={isSelected ? `Selected: ${g} (click to deselect)` : `Select "${g}"`}
+                                  >
+                                    <Folder size={11} color={isSelected ? 'var(--color-primary)' : 'var(--text-muted)'} />
+                                    <span>{g}</span>
+                                    {isSelected && <Check size={11} color="var(--color-primary)" />}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -1816,7 +1970,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
                           <td colSpan={4} style={{ textAlign: 'center', padding: '16px', color: 'var(--text-muted)' }}>No logs compiled.</td>
                         </tr>
                       ) : (
-                        history.slice().reverse().slice(0, logsVisible).map((h, i) => (
+                        history.slice(0, logsVisible).map((h, i) => (
                           <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.01)' }}>
                             <td style={{ padding: '8px 12px' }}>
                               <span style={{ 

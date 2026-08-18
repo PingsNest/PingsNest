@@ -5,7 +5,6 @@ import { RoutePerformance } from './components/RoutePerformance';
 import { LiveLogs } from './components/LiveLogs';
 import { Settings } from './components/Settings';
 import { UrlMonitor } from './components/UrlMonitor';
-import { SystemHealth } from './components/SystemHealth';
 import { SloManager } from './components/SloManager';
 
 import { StatusPortal } from './components/StatusPortal';
@@ -112,9 +111,9 @@ function MainAppShell() {
       setOpenSections(prev => prev['api-gateway'] ? prev : { ...prev, 'api-gateway': true });
     } else if (activeTab === 'lambda') {
       setOpenSections(prev => prev['lambda'] ? prev : { ...prev, 'lambda': true });
-    } else if (['url-monitor', 'status_portal', 'system'].includes(activeTab)) {
+    } else if (['url-monitor', 'status_portal'].includes(activeTab)) {
       setOpenSections(prev => prev['url'] ? prev : { ...prev, 'url': true });
-    } else if (['settings', 'users', 'alerts'].includes(activeTab)) {
+    } else if (['settings', 'users', 'alerts', 'system'].includes(activeTab)) {
       setOpenSections(prev => prev['settings'] ? prev : { ...prev, 'settings': true });
     }
   }, [activeTab]);
@@ -817,7 +816,7 @@ function MainAppShell() {
                 <span style={{ color: 'var(--text-secondary)', fontWeight: 800 }}>URL & ENDPOINT MONITORING</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span className="nav-section-badge">3</span>
+                <span className="nav-section-badge">2</span>
                 {openSections['url'] ? (
                   <ChevronDown size={14} className="nav-section-chevron" />
                 ) : (
@@ -845,15 +844,6 @@ function MainAppShell() {
                   <ShieldCheck size={18} />
                   <span className="sidebar-text">Status Portal</span>
                 </button>
-
-                <button
-                  onClick={() => { setActiveTab('system'); setMobileSidebarOpen(false); }}
-                  className={`tab-link ${activeTab === 'system' ? 'active' : ''}`}
-                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
-                >
-                  <Server size={18} />
-                  <span className="sidebar-text">System Health</span>
-                </button>
               </div>
             )}
           </div>
@@ -871,7 +861,7 @@ function MainAppShell() {
                 <span style={{ color: 'var(--text-secondary)', fontWeight: 800 }}>SETTINGS & ADMIN</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span className="nav-section-badge">3</span>
+                <span className="nav-section-badge">4</span>
                 {openSections['settings'] ? (
                   <ChevronDown size={14} className="nav-section-chevron" />
                 ) : (
@@ -905,6 +895,14 @@ function MainAppShell() {
                 >
                   <Bell size={18} color="#3b82f6" />
                   <span className="sidebar-text">Alert Management</span>
+                </button>
+                <button
+                  onClick={() => { setActiveTab('system'); setMobileSidebarOpen(false); }}
+                  className={`tab-link ${activeTab === 'system' ? 'active' : ''}`}
+                  style={{ background: 'transparent', border: 'none', textAlign: 'left', width: '100%' }}
+                >
+                  <Server size={18} color="var(--color-primary)" />
+                  <span className="sidebar-text">System Health</span>
                 </button>
               </div>
             )}
@@ -1252,7 +1250,7 @@ function MainAppShell() {
           {activeTab === 'topology' && <TopologyMesh />}
           {activeTab === 'playbooks' && <Playbooks />}
           {activeTab === 'lambda' && <LambdaMonitor activeSubTab={lambdaSubTab} onNavigateTab={(tab) => setActiveTab(tab as any)} />}
-          {activeTab === 'system' && <SystemHealth />}
+          {activeTab === 'system' && <Settings initialSubTab="system" userRole={userRole} />}
           {activeTab === 'url-monitor' && <UrlMonitor token={token} onLogout={handleLogout} />}
           {activeTab === 'status_portal' && <StatusPortal />}
           {activeTab === 'settings' && <Settings initialSubTab="aws" userRole={userRole} />}
