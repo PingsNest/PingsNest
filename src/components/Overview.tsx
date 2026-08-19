@@ -261,15 +261,16 @@ export const Overview: React.FC = () => {
           color="purple"
           sparklineData={integrationHistory}
         />
+        {/* Bug 5 fix: derive sparkline from real chartData integration history instead of hardcoded rising curve */}
         <MetricCard
           title="CACHE HIT RATE"
           value={`${overallStats.cacheHitRate}%`}
           subText="API Gateway edge cache"
           icon={<Cpu size={18} />}
           color="aws"
-          {/* Bug 5 fix: derive sparkline from real chartData integration history instead of hardcoded rising curve */}
           sparklineData={integrationHistory.length > 0 ? integrationHistory : [overallStats.cacheHitRate]}
         />
+        {/* Bug 6 fix: derive error sparkline from real chartData instead of hardcoded V-shape */}
         <MetricCard
           title="ERROR RATE"
           value={`${overallStats.errorRate}%`}
@@ -278,7 +279,6 @@ export const Overview: React.FC = () => {
           color={overallStats.errorRate > 5 ? 'error' : 'warning'}
           trend={overallStats.errorRate > 5 ? 'up' : 'neutral'}
           trendValue={overallStats.errorRate > 0 ? `${overallStats.errorRate}%` : '0%'}
-          {/* Bug 6 fix: derive error sparkline from real chartData instead of hardcoded V-shape */}
           sparklineData={chartData.length > 0 ? chartData.map((d: any) => d.errorRate ?? d.values?.[3] ?? 0) : [overallStats.errorRate]}
         />
       </div>
