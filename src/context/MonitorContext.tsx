@@ -461,7 +461,11 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
     try {
       const response = await fetch('/api/aws/routes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(activeProfileId ? { 'x-aws-profile-id': activeProfileId } : {}),
+          ...getAuthHeader()
+        },
         body: JSON.stringify({
           region: awsConfig.region,
           accessKeyId: awsConfig.accessKeyId,
@@ -490,7 +494,11 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
     try {
       const response = await fetch('/api/aws/metrics', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(activeProfileId ? { 'x-aws-profile-id': activeProfileId } : {}),
+          ...getAuthHeader()
+        },
         body: JSON.stringify({
           region: awsConfig.region,
           accessKeyId: awsConfig.accessKeyId,

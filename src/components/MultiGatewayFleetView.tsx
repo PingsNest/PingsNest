@@ -24,7 +24,7 @@ export interface FleetGatewayItem {
 export const MultiGatewayFleetView: React.FC<{
   onSelectGateway?: (gw: { id: string; name: string; protocol: 'REST' | 'HTTP' | 'WEBSOCKET' }) => void;
 }> = ({ onSelectGateway }) => {
-  const { awsConfig } = useMonitor() as any;
+  const { awsConfig, activeProfileId } = useMonitor() as any;
   const [fleetData, setFleetData] = useState<any>(null);
   const [loadingFleet, setLoadingFleet] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -37,11 +37,14 @@ export const MultiGatewayFleetView: React.FC<{
     try {
       const res = await fetch('/api/gateways/fleet-summary', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(activeProfileId ? { 'x-aws-profile-id': activeProfileId } : {})
+        },
         body: JSON.stringify({
           region: awsConfig?.region || 'us-east-1',
-          accessKeyId: awsConfig?.accessKeyId || 'demo-access-key',
-          secretAccessKey: awsConfig?.secretAccessKey || 'demo-secret-key'
+          accessKeyId: awsConfig?.accessKeyId,
+          secretAccessKey: awsConfig?.secretAccessKey
         })
       });
       if (res.ok) {
