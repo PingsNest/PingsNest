@@ -440,7 +440,7 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
   const [functions, setFunctions] = useState<LambdaFunctionItem[]>([]);
   const [selectedFunctionName, setSelectedFunctionName] = useState<string>('PaymentProcessor');
   const [loading, setLoading] = useState(false);
-  const [autoRefreshSec, setAutoRefreshSec] = useState<number>(5);
+  const [autoRefreshSec, setAutoRefreshSec] = useState<number>(30);
   const [lastSyncTime, setLastSyncTime] = useState<Date>(new Date());
 
   // 17-Column Lambda Table State
@@ -787,7 +787,7 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
     fetchFleetTelemetry();
     runSecurityAudit(true); // initial silent load
 
-    const telemetryInterval = setInterval(fetchFleetTelemetry, 10_000);
+    const telemetryInterval = setInterval(fetchFleetTelemetry, 30_000);
     const FOUR_HOURS_MS = 4 * 60 * 60 * 1_000;
     const auditInterval = setInterval(() => runSecurityAudit(true), FOUR_HOURS_MS);
 

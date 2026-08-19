@@ -276,32 +276,11 @@ import {
 } from './lambdaEngine.js';
 import { broadcastLambdaTelemetry } from './ws.js';
 
-// â”€â”€â”€ Real-Time Lambda Background Poller & Fanout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Only compute and broadcast when at least one WebSocket client is connected
-// â€” avoids wasted CPU cycles when the dashboard is closed.
-setInterval(() => {
-  try {
-    if (getClientCount() === 0) return; // skip fanout when no clients are listening
-    const fnName = 'PaymentProcessor';
-    const health = getFunctionHealth(fnName);
-    const metrics = getPerformanceMetrics(fnName, '24h');
-    const memory = getMemoryRecommendation(fnName);
-    const coldstarts = getColdStartDiagnostic(fnName);
+// ─── Real-Time Lambda Background Poller & Fanout ─────────────────────────────
+// Disabled un-awaited periodic AWS query loop to prevent AWS CloudWatch throttling.
+// Real-time telemetry is pushed via cached REST/WebSocket handlers.
 
-    broadcastLambdaTelemetry({
-      timestamp: new Date().toISOString(),
-      functionName: fnName,
-      health,
-      metrics,
-      memory,
-      coldstarts
-    });
-  } catch (err: any) {
-    console.warn('[Lambda Realtime Poller Warning]:', err.message);
-  }
-}, 10_000);
-
-// â”€â”€â”€ AWS Credentials Resolver â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── AWS Credentials Resolver ────────────────────────────────────────────────
 async function getAwsCredentialsFromReq(req: any) {
   let accessKeyId = (req.headers['x-aws-access-key-id'] as string) || (req.query.accessKeyId as string) || req.body?.accessKeyId;
   let secretAccessKey = (req.headers['x-aws-secret-access-key'] as string) || (req.query.secretAccessKey as string) || req.body?.secretAccessKey;
@@ -336,12 +315,17 @@ async function getAwsCredentialsFromReq(req: any) {
   return { accessKeyId, secretAccessKey, region };
 }
 
-// â”€â”€â”€ Module 3: Lambda Monitoring REST Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Module 3: Lambda Monitoring REST Endpoints (Cached to avoid AWS 429s) ───
 app.get('/api/lambda/functions', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
-    const functions = await discoverLambdaFunctions(creds.region, creds);
-    res.json({ functions });
+    const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || 'anon').digest('hex').slice(0, 12);
+    const cacheKey = `lambda:fns:${creds.region}:${keyHash}`;
+    const result = await cacheGetOrSet(cacheKey, TTL.LAMBDAS, async () => {
+      const functions = await discoverLambdaFunctions(creds.region, creds);
+      return { functions };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -350,8 +334,13 @@ app.get('/api/lambda/functions', async (req, res) => {
 app.post('/api/aws/lambda/list', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
-    const functions = await discoverLambdaFunctions(creds.region, creds);
-    res.json({ functions });
+    const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || 'anon').digest('hex').slice(0, 12);
+    const cacheKey = `lambda:fns:${creds.region}:${keyHash}`;
+    const result = await cacheGetOrSet(cacheKey, TTL.LAMBDAS, async () => {
+      const functions = await discoverLambdaFunctions(creds.region, creds);
+      return { functions };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -359,12 +348,14 @@ app.post('/api/aws/lambda/list', async (req, res) => {
 
 app.get('/api/lambda/function-details', async (req, res) => {
   try {
-    // Bug 1 fix: use real AWS GetFunctionConfiguration when credentials are available.
-    // Old code matched against SAMPLE_FUNCTIONS only — every real function returned PaymentProcessor data.
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
-    const fn = await getFunctionDetails(fnName, creds);
-    res.json({ function: fn });
+    const cacheKey = `lambda:details:${creds.region}:${fnName}`;
+    const result = await cacheGetOrSet(cacheKey, TTL.LAMBDAS, async () => {
+      const fn = await getFunctionDetails(fnName, creds);
+      return { function: fn };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -375,8 +366,12 @@ app.get('/api/lambda/metrics', async (req, res) => {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
     const timeRange = (req.query.timeRange as string) || '24h';
-    const metrics = await getPerformanceMetrics(fnName, timeRange, creds);
-    res.json({ metrics });
+    const cacheKey = `lambda:metrics:${creds.region}:${fnName}:${timeRange}`;
+    const result = await cacheGetOrSet(cacheKey, TTL.METRICS, async () => {
+      const metrics = await getPerformanceMetrics(fnName, timeRange, creds);
+      return { metrics };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -386,8 +381,12 @@ app.get('/api/lambda/errors', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
-    const errors = await getTopExceptions(fnName, creds);
-    res.json({ errors });
+    const cacheKey = `lambda:errors:${creds.region}:${fnName}`;
+    const result = await cacheGetOrSet(cacheKey, 60, async () => {
+      const errors = await getTopExceptions(fnName, creds);
+      return { errors };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -397,8 +396,12 @@ app.get('/api/lambda/cost', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
-    const cost = await getCostAnalysis(fnName, creds);
-    res.json({ cost });
+    const cacheKey = `lambda:cost:${creds.region}:${fnName}`;
+    const result = await cacheGetOrSet(cacheKey, TTL.FINOPS, async () => {
+      const cost = await getCostAnalysis(fnName, creds);
+      return { cost };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -408,8 +411,12 @@ app.get('/api/lambda/health', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
-    const health = await getFunctionHealth(fnName, creds);
-    res.json({ health });
+    const cacheKey = `lambda:health:${creds.region}:${fnName}`;
+    const result = await cacheGetOrSet(cacheKey, 30, async () => {
+      const health = await getFunctionHealth(fnName, creds);
+      return { health };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -419,8 +426,12 @@ app.get('/api/lambda/security', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
-    const security = await getSecurityPosture(fnName, creds);
-    res.json({ security });
+    const cacheKey = `lambda:security:${creds.region}:${fnName}`;
+    const result = await cacheGetOrSet(cacheKey, 300, async () => {
+      const security = await getSecurityPosture(fnName, creds);
+      return { security };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -431,8 +442,12 @@ app.get('/api/lambda/invocations', async (req, res) => {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
     const filterText = (req.query.filter as string) || '';
-    const invocations = await getInvocationExplorer(fnName, filterText, creds);
-    res.json({ invocations });
+    const cacheKey = `lambda:invs:${creds.region}:${fnName}:${filterText}`;
+    const result = await cacheGetOrSet(cacheKey, 30, async () => {
+      const invocations = await getInvocationExplorer(fnName, filterText, creds);
+      return { invocations };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -442,8 +457,12 @@ app.get('/api/lambda/coldstarts', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
-    const coldstarts = await getColdStartDiagnostic(fnName, creds);
-    res.json({ coldstarts });
+    const cacheKey = `lambda:coldstarts:${creds.region}:${fnName}`;
+    const result = await cacheGetOrSet(cacheKey, 60, async () => {
+      const coldstarts = await getColdStartDiagnostic(fnName, creds);
+      return { coldstarts };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -453,8 +472,12 @@ app.get('/api/lambda/memory', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
-    const memory = await getMemoryRecommendation(fnName, creds);
-    res.json({ memory });
+    const cacheKey = `lambda:memory:${creds.region}:${fnName}`;
+    const result = await cacheGetOrSet(cacheKey, 60, async () => {
+      const memory = await getMemoryRecommendation(fnName, creds);
+      return { memory };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -464,8 +487,12 @@ app.get('/api/lambda/timeout', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
-    const timeout = await getTimeoutDiagnostic(fnName, creds);
-    res.json({ timeout });
+    const cacheKey = `lambda:timeout:${creds.region}:${fnName}`;
+    const result = await cacheGetOrSet(cacheKey, 60, async () => {
+      const timeout = await getTimeoutDiagnostic(fnName, creds);
+      return { timeout };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -475,8 +502,12 @@ app.get('/api/lambda/eventsources', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
-    const eventSources = await getEventSources(fnName, creds);
-    res.json({ eventSources });
+    const cacheKey = `lambda:eventsources:${creds.region}:${fnName}`;
+    const result = await cacheGetOrSet(cacheKey, 300, async () => {
+      const eventSources = await getEventSources(fnName, creds);
+      return { eventSources };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -486,8 +517,12 @@ app.get('/api/lambda/deployments', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
-    const deployments = await getDeploymentEvents(fnName, creds);
-    res.json({ deployments });
+    const cacheKey = `lambda:deployments:${creds.region}:${fnName}`;
+    const result = await cacheGetOrSet(cacheKey, 300, async () => {
+      const deployments = await getDeploymentEvents(fnName, creds);
+      return { deployments };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -497,8 +532,12 @@ app.get('/api/lambda/dependency-map', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
-    const dependencyMap = await getDependencyGraph(fnName, creds);
-    res.json({ dependencyMap });
+    const cacheKey = `lambda:deps:${creds.region}:${fnName}`;
+    const result = await cacheGetOrSet(cacheKey, 300, async () => {
+      const dependencyMap = await getDependencyGraph(fnName, creds);
+      return { dependencyMap };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -508,8 +547,12 @@ app.get('/api/lambda/ai-insights', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
-    const insights = await getAIInsights(fnName, creds);
-    res.json({ insights });
+    const cacheKey = `lambda:insights:${creds.region}:${fnName}`;
+    const result = await cacheGetOrSet(cacheKey, 60, async () => {
+      const insights = await getAIInsights(fnName, creds);
+      return { insights };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -525,7 +568,7 @@ app.post('/api/lambda/discover', async (req, res) => {
   }
 });
 
-// â”€â”€â”€ Enhancement 1: Live CloudWatch Metrics endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Enhancement 1: Live CloudWatch Metrics endpoint ─────────────────────────
 import { getLiveCloudWatchMetrics, getLambdaLogStream, getApiGatewayLambdaTrace, updateFunctionMemory, updateProvisionedConcurrency, rollbackFunctionVersion, getBulkFleetTelemetry, executeBulkRemediation, getBulkFleetSecurityAudit, executeBulkSecurityRemediation } from './lambdaEngine.js';
 
 app.get('/api/lambda/live-metrics', async (req, res) => {
@@ -533,31 +576,37 @@ app.get('/api/lambda/live-metrics', async (req, res) => {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
     const timeRange = (req.query.timeRange as string) || '24h';
-    const metrics = await getLiveCloudWatchMetrics(fnName, creds.region, timeRange, creds);
-    res.json({ metrics });
+    const cacheKey = `lambda:livemetrics:${creds.region}:${fnName}:${timeRange}`;
+    const result = await cacheGetOrSet(cacheKey, TTL.METRICS, async () => {
+      const metrics = await getLiveCloudWatchMetrics(fnName, creds.region, timeRange, creds);
+      return { metrics };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// â”€â”€â”€ Enhancement 2: Live CloudWatch Log Stream endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Enhancement 2: Live CloudWatch Log Stream endpoint ──────────────────────
 app.get('/api/lambda/logs', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
     const filter = (req.query.filter as string) || '';
-    // Bug 9 fix: cap limit to 500 — uncapped value was passed directly to CloudWatch
-    // which rejects limits > 10000 and makes very expensive log scans.
     const rawLimit = parseInt((req.query.limit as string) || '100', 10);
     const limit = Number.isNaN(rawLimit) ? 100 : Math.min(500, Math.max(1, rawLimit));
-    const logs = await getLambdaLogStream(fnName, creds.region, filter, limit, creds);
-    res.json({ logs });
+    const cacheKey = `lambda:logs:${creds.region}:${fnName}:${filter}:${limit}`;
+    const result = await cacheGetOrSet(cacheKey, TTL.LOGS_LIVE, async () => {
+      const logs = await getLambdaLogStream(fnName, creds.region, filter, limit, creds);
+      return { logs };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// â”€â”€â”€ Enhancement 3: API Gateway â†’ Lambda End-to-End Trace endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Enhancement 3: API Gateway → Lambda End-to-End Trace endpoint ───────────
 app.get('/api/lambda/apigw-trace', async (req, res) => {
   try {
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
@@ -569,14 +618,12 @@ app.get('/api/lambda/apigw-trace', async (req, res) => {
   }
 });
 
-// â”€â”€â”€ Auto-Remediation One-Click Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Auto-Remediation One-Click Endpoints ────────────────────────────────────
 app.post('/api/lambda/remediate/memory', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const { functionName, memorySizeMb } = req.body;
     if (!functionName || memorySizeMb === undefined) return res.status(400).json({ error: 'Missing functionName or memorySizeMb' });
-    // Bug 11 fix: validate memory is in AWS-supported range [128, 10240] MB.
-    // Number(undefined) = NaN and values outside range cause InvalidParameterValueException.
     const memMb = Number(memorySizeMb);
     if (Number.isNaN(memMb) || memMb < 128 || memMb > 10240) {
       return res.status(400).json({ error: 'memorySizeMb must be an integer between 128 and 10240 MB' });
@@ -612,12 +659,17 @@ app.post('/api/lambda/remediate/rollback', async (req, res) => {
   }
 });
 
-// â”€â”€â”€ Bulk Fleet Telemetry & Mass Actions Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Bulk Fleet Telemetry & Mass Actions Endpoints ───────────────────────────
 app.get('/api/lambda/fleet/telemetry', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
-    const fleet = await getBulkFleetTelemetry(creds);
-    res.json({ fleet });
+    const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || 'anon').digest('hex').slice(0, 12);
+    const cacheKey = `lambda:fleet:telemetry:${creds.region}:${keyHash}`;
+    const result = await cacheGetOrSet(cacheKey, 30, async () => {
+      const fleet = await getBulkFleetTelemetry(creds);
+      return { fleet };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -640,8 +692,13 @@ app.post('/api/lambda/fleet/bulk-remediate', async (req, res) => {
 app.get('/api/lambda/fleet/security', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
-    const securityAudit = await getBulkFleetSecurityAudit(creds);
-    res.json({ securityAudit });
+    const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || 'anon').digest('hex').slice(0, 12);
+    const cacheKey = `lambda:fleet:security:${creds.region}:${keyHash}`;
+    const result = await cacheGetOrSet(cacheKey, 300, async () => {
+      const securityAudit = await getBulkFleetSecurityAudit(creds);
+      return { securityAudit };
+    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1290,95 +1347,97 @@ app.post('/api/gateways/fleet-summary', async (req, res) => {
     return res.status(400).json({ error: 'Missing region or credentials' });
   }
 
-  const credentials = { accessKeyId, secretAccessKey };
+  const keyHash = crypto.createHash('sha256').update(accessKeyId).digest('hex').slice(0, 12);
+  const cacheKey = `apigw:fleet-summary:${region}:${keyHash}`;
 
   try {
-    const v1 = new APIGatewayClient({ region, credentials });
-    const v2 = new ApiGatewayV2Client({ region, credentials });
+    const result = await cacheGetOrSet(cacheKey, 30, async () => {
+      const credentials = { accessKeyId, secretAccessKey };
+      const v1 = new APIGatewayClient({ region, credentials });
+      const v2 = new ApiGatewayV2Client({ region, credentials });
 
-    const apisList: { id: string; name: string; protocol: 'REST' | 'HTTP' | 'WEBSOCKET'; stage: string }[] = [];
+      const apisList: { id: string; name: string; protocol: 'REST' | 'HTTP' | 'WEBSOCKET'; stage: string }[] = [];
 
-    try {
-      const r1 = await v1.send(new GetRestApisCommand({}));
-      r1.items?.forEach(i => {
-        if (i.id && i.name) {
-          apisList.push({ id: i.id, name: i.name, protocol: 'REST', stage: 'prod' });
-        }
+      try {
+        const r1 = await v1.send(new GetRestApisCommand({}));
+        r1.items?.forEach(i => {
+          if (i.id && i.name) {
+            apisList.push({ id: i.id, name: i.name, protocol: 'REST', stage: 'prod' });
+          }
+        });
+      } catch { }
+
+      try {
+        const r2 = await v2.send(new GetApisCommand({}));
+        r2.Items?.forEach(i => {
+          if (i.ApiId && i.Name) {
+            apisList.push({ id: i.ApiId, name: i.Name, protocol: i.ProtocolType === 'WEBSOCKET' ? 'WEBSOCKET' : 'HTTP', stage: '$default' });
+          }
+        });
+      } catch { }
+
+      if (apisList.length === 0) {
+        apisList.push(
+          { id: 'gw-auth-v1', name: 'Auth & Session API Gateway', protocol: 'REST', stage: 'prod' },
+          { id: 'gw-payment-v2', name: 'Payments & Billing Gateway', protocol: 'HTTP', stage: 'prod' },
+          { id: 'gw-orders-v1', name: 'Orders & Inventory Gateway', protocol: 'REST', stage: 'prod' },
+          { id: 'gw-analytics-v2', name: 'Analytics & Reporting Stream', protocol: 'HTTP', stage: 'staging' },
+          { id: 'gw-realtime-ws', name: 'Realtime WebSockets Gateway', protocol: 'WEBSOCKET', stage: 'prod' }
+        );
+      }
+
+      const fleetMetrics = apisList.map((gw, idx) => {
+        const mockReqs = [450, 1280, 890, 240, 620][idx % 5] + Math.floor(Math.random() * 50);
+        const mockAvgLat = [28, 142, 65, 380, 18][idx % 5];
+        const mockP99Lat = Math.round(mockAvgLat * 2.8);
+        const mockErr4xx = [0.2, 1.4, 0.5, 4.2, 0.1][idx % 5];
+        const mockErr5xx = [0.0, 0.05, 0.0, 2.8, 0.0][idx % 5];
+
+        const healthStatus = mockErr5xx > 1.0 || mockP99Lat > 1000 ? 'CRITICAL' : mockErr4xx > 2.0 || mockAvgLat > 300 ? 'WARNING' : 'HEALTHY';
+
+        const hasApigwLogGroup = idx % 2 === 0;
+        const logSource = hasApigwLogGroup
+          ? { type: 'apigateway_access_logs', label: 'API Gateway Access Logs', logGroup: `/aws/apigateway/${gw.id}-${gw.stage}` }
+          : { type: 'lambda_fallback', label: 'Lambda Log Fallback Active', logGroup: `/aws/lambda/${gw.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-worker` };
+
+        return {
+          ...gw,
+          region,
+          requestsPerMin: mockReqs,
+          avgLatencyMs: mockAvgLat,
+          p99LatencyMs: mockP99Lat,
+          errorRate4xxPct: mockErr4xx,
+          errorRate5xxPct: mockErr5xx,
+          healthStatus,
+          logSource,
+          metricsSimulated: true
+        };
       });
-    } catch { }
 
-    try {
-      const r2 = await v2.send(new GetApisCommand({}));
-      r2.Items?.forEach(i => {
-        if (i.ApiId && i.Name) {
-          apisList.push({ id: i.ApiId, name: i.Name, protocol: i.ProtocolType === 'WEBSOCKET' ? 'WEBSOCKET' : 'HTTP', stage: '$default' });
-        }
-      });
-    } catch { }
-
-    if (apisList.length === 0) {
-      apisList.push(
-        { id: 'gw-auth-v1', name: 'Auth & Session API Gateway', protocol: 'REST', stage: 'prod' },
-        { id: 'gw-payment-v2', name: 'Payments & Billing Gateway', protocol: 'HTTP', stage: 'prod' },
-        { id: 'gw-orders-v1', name: 'Orders & Inventory Gateway', protocol: 'REST', stage: 'prod' },
-        { id: 'gw-analytics-v2', name: 'Analytics & Reporting Stream', protocol: 'HTTP', stage: 'staging' },
-        { id: 'gw-realtime-ws', name: 'Realtime WebSockets Gateway', protocol: 'WEBSOCKET', stage: 'prod' }
-      );
-    }
-
-    const fleetMetrics = apisList.map((gw, idx) => {
-      const mockReqs = [450, 1280, 890, 240, 620][idx % 5] + Math.floor(Math.random() * 50);
-      const mockAvgLat = [28, 142, 65, 380, 18][idx % 5];
-      const mockP99Lat = Math.round(mockAvgLat * 2.8);
-      const mockErr4xx = [0.2, 1.4, 0.5, 4.2, 0.1][idx % 5];
-      const mockErr5xx = [0.0, 0.05, 0.0, 2.8, 0.0][idx % 5];
-
-      const healthStatus = mockErr5xx > 1.0 || mockP99Lat > 1000 ? 'CRITICAL' : mockErr4xx > 2.0 || mockAvgLat > 300 ? 'WARNING' : 'HEALTHY';
-
-      const hasApigwLogGroup = idx % 2 === 0;
-      const logSource = hasApigwLogGroup
-        ? { type: 'apigateway_access_logs', label: 'API Gateway Access Logs', logGroup: `/aws/apigateway/${gw.id}-${gw.stage}` }
-        : { type: 'lambda_fallback', label: 'Lambda Log Fallback Active', logGroup: `/aws/lambda/${gw.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-worker` };
+      const totalFleetRequests = fleetMetrics.reduce((acc, g) => acc + g.requestsPerMin, 0);
+      const totalWeightedLatency = fleetMetrics.reduce((acc, g) => acc + g.avgLatencyMs * g.requestsPerMin, 0);
+      const avgFleetLatency = totalFleetRequests > 0 ? Math.round(totalWeightedLatency / totalFleetRequests) : 0;
+      const healthyCount = fleetMetrics.filter(g => g.healthStatus === 'HEALTHY').length;
+      const warningCount = fleetMetrics.filter(g => g.healthStatus === 'WARNING').length;
+      const criticalCount = fleetMetrics.filter(g => g.healthStatus === 'CRITICAL').length;
+      const lambdaFallbackCount = fleetMetrics.filter(g => g.logSource.type === 'lambda_fallback').length;
 
       return {
-        ...gw,
-        region,
-        requestsPerMin: mockReqs,
-        avgLatencyMs: mockAvgLat,
-        p99LatencyMs: mockP99Lat,
-        errorRate4xxPct: mockErr4xx,
-        errorRate5xxPct: mockErr5xx,
-        healthStatus,
-        logSource,
-        // Bug 2 fix: clearly mark all per-gateway metrics as simulated.
-        // Real metrics require a CloudWatch call per gateway (use /api/aws/metrics for live data).
-        metricsSimulated: true
+        timestamp: new Date().toISOString(),
+        fleetTotals: {
+          totalGateways: fleetMetrics.length,
+          healthyCount,
+          warningCount,
+          criticalCount,
+          totalFleetRequests,
+          avgFleetLatency,
+          lambdaFallbackCount
+        },
+        gateways: fleetMetrics
       };
     });
 
-    // Bug 12 fix: weight by requestsPerMin so a 1 req/min 500ms gateway doesn't equal
-    // a 1000 req/min 20ms gateway in the fleet average.
-    const totalFleetRequests = fleetMetrics.reduce((acc, g) => acc + g.requestsPerMin, 0);
-    const totalWeightedLatency = fleetMetrics.reduce((acc, g) => acc + g.avgLatencyMs * g.requestsPerMin, 0);
-    const avgFleetLatency = totalFleetRequests > 0 ? Math.round(totalWeightedLatency / totalFleetRequests) : 0;
-    const healthyCount = fleetMetrics.filter(g => g.healthStatus === 'HEALTHY').length;
-    const warningCount = fleetMetrics.filter(g => g.healthStatus === 'WARNING').length;
-    const criticalCount = fleetMetrics.filter(g => g.healthStatus === 'CRITICAL').length;
-    const lambdaFallbackCount = fleetMetrics.filter(g => g.logSource.type === 'lambda_fallback').length;
-
-    res.json({
-      timestamp: new Date().toISOString(),
-      fleetTotals: {
-        totalGateways: fleetMetrics.length,
-        healthyCount,
-        warningCount,
-        criticalCount,
-        totalFleetRequests,
-        avgFleetLatency,
-        lambdaFallbackCount
-      },
-      gateways: fleetMetrics
-    });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
