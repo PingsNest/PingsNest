@@ -36,11 +36,11 @@ export const Overview: React.FC = () => {
     { name: 'Integration Latency', color: 'purple' as const }
   ];
 
-  // Map log status categories to donut data
+  // Bug 10 fix: guard donut values with || 0 so undefined doesn't reach the chart renderer.
   const donutData = [
-    { label: '2xx Success', value: overallStats.status2xx, color: 'success' as const },
-    { label: '4xx Client Err', value: overallStats.status4xx, color: 'warning' as const },
-    { label: '5xx Server Err', value: overallStats.status5xx, color: 'error' as const }
+    { label: '2xx Success', value: overallStats.status2xx || 0, color: 'success' as const },
+    { label: '4xx Client Err', value: overallStats.status4xx || 0, color: 'warning' as const },
+    { label: '5xx Server Err', value: overallStats.status5xx || 0, color: 'error' as const }
   ];
 
   // Filter and display active routes
@@ -82,7 +82,8 @@ export const Overview: React.FC = () => {
               transition: 'all 0.15s ease'
             }}
           >
-            <Layers size={14} /> Multi-Gateway Fleet Matrix (N Gateways)
+            {/* Bug 9 fix: show real gateway count instead of literal 'N' */}
+            <Layers size={14} /> Multi-Gateway Fleet Matrix ({availableGateways?.length ?? 0} Gateways)
           </button>
           <button
             onClick={() => setViewMode('single')}
@@ -115,6 +116,8 @@ export const Overview: React.FC = () => {
         <>
       
       {/* Telemetry Status Banner */}
+      {/* Bug 7 fix: banner reflects metricsAccessDenied; was always showing green "Live" even when CW access denied */}
+      {/* Bug 8 fix: show placeholder text when no gateway is selected yet */}
       <div
         className="glass-panel"
         style={{
@@ -122,8 +125,8 @@ export const Overview: React.FC = () => {
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          borderColor: 'rgba(255, 153, 0, 0.25)',
-          backgroundColor: 'rgba(255, 153, 0, 0.03)',
+          borderColor: metricsAccessDenied ? 'rgba(245, 158, 11, 0.4)' : 'rgba(255, 153, 0, 0.25)',
+          backgroundColor: metricsAccessDenied ? 'rgba(245, 158, 11, 0.05)' : 'rgba(255, 153, 0, 0.03)',
           borderRadius: '12px',
           flexWrap: 'wrap',
           gap: 12
@@ -131,23 +134,26 @@ export const Overview: React.FC = () => {
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span
-            className="pulse-green"
             style={{
               width: '8px',
               height: '8px',
               borderRadius: '50%',
-              backgroundColor: 'var(--color-success)',
-              boxShadow: 'var(--glow-success)',
-              display: 'inline-block'
+              backgroundColor: metricsAccessDenied ? 'var(--color-warning)' : 'var(--color-success)',
+              boxShadow: metricsAccessDenied ? 'var(--glow-warning)' : 'var(--glow-success)',
+              display: 'inline-block',
+              flexShrink: 0
             }}
           />
           <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            Live AWS CloudWatch Telemetry Active: <strong style={{ color: 'var(--text-primary)' }}>{selectedGateway?.name}</strong>
+            {metricsAccessDenied
+              ? <><strong style={{ color: 'var(--color-warning)' }}>CloudWatch Access Denied</strong> — metrics are unavailable until IAM policy is updated</>  
+              : <>Live AWS CloudWatch Telemetry Active: <strong style={{ color: 'var(--text-primary)' }}>{selectedGateway?.name ?? '—'}</strong></>
+            }
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-            API ID: {selectedGateway?.id}
+            API ID: {selectedGateway?.id ?? '—'}
           </div>
           <button
             onClick={handleRefreshMetrics}
@@ -261,7 +267,8 @@ export const Overview: React.FC = () => {
           subText="API Gateway edge cache"
           icon={<Cpu size={18} />}
           color="aws"
-          sparklineData={[12, 14, 15, 14, 25, 24, 28, 26, 28, 30, overallStats.cacheHitRate]}
+          {/* Bug 5 fix: derive sparkline from real chartData integration history instead of hardcoded rising curve */}
+          sparklineData={integrationHistory.length > 0 ? integrationHistory : [overallStats.cacheHitRate]}
         />
         <MetricCard
           title="ERROR RATE"
@@ -271,7 +278,8 @@ export const Overview: React.FC = () => {
           color={overallStats.errorRate > 5 ? 'error' : 'warning'}
           trend={overallStats.errorRate > 5 ? 'up' : 'neutral'}
           trendValue={overallStats.errorRate > 0 ? `${overallStats.errorRate}%` : '0%'}
-          sparklineData={[1, 0, 2, 4, 3, 2, 6, 8, 4, 3, overallStats.errorRate]}
+          {/* Bug 6 fix: derive error sparkline from real chartData instead of hardcoded V-shape */}
+          sparklineData={chartData.length > 0 ? chartData.map((d: any) => d.errorRate ?? d.values?.[3] ?? 0) : [overallStats.errorRate]}
         />
       </div>
 
@@ -330,28 +338,66 @@ export const Overview: React.FC = () => {
           </span>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginTop: 4 }}>
-          {[
-            { region: awsConfig?.region || 'us-east-1', gateways: availableGateways?.length || 1, requests: overallStats.totalRequests || 1420, status: 'HEALTHY', latency: `${overallStats.avgLatency || 24}ms` },
-            { region: 'us-west-2', gateways: 2, requests: 840, status: 'HEALTHY', latency: '32ms' },
-            { region: 'eu-west-1', gateways: 1, requests: 620, status: 'HEALTHY', latency: '45ms' },
-            { region: 'ap-south-1', gateways: 1, requests: 390, status: 'HEALTHY', latency: '68ms' }
-          ].map((r, i) => (
-            <div key={r.region} style={{
-              padding: '12px 14px', borderRadius: 10, backgroundColor: 'var(--bg-input)', border: `1px solid ${i === 0 ? 'var(--color-aws)' : 'var(--border-main)'}`,
-              display: 'flex', flexDirection: 'column', gap: 6
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>{r.region}</span>
-                <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 3, backgroundColor: 'rgba(16,185,129,0.15)', color: '#34d399', border: '1px solid rgba(16,185,129,0.3)' }}>{r.status}</span>
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between' }}>
-                <span>Gateways: <strong style={{ color: 'var(--text-primary)' }}>{r.gateways}</strong></span>
-                <span>Latency: <strong style={{ color: 'var(--color-primary)' }}>{r.latency}</strong></span>
-              </div>
+        {/* Bug 1+2+3 fix: build region cards from real availableGateways data filtered by region.
+             Old code hardcoded 3 phantom regions (us-west-2/eu-west-1/ap-south-1) as always HEALTHY with
+             static latency values. Now only the regions that have real monitored gateways are shown.
+             Bug 4 fix: use ?? 24 (nullish coalescing) not || 24 so a real 0ms latency is not masked.
+             Bug 3 fix: non-active-region cards are marked ESTIMATED to prevent operational confusion. */}
+        {(() => {
+          const activeRegion = awsConfig?.region || 'us-east-1';
+          // Group real gateways by region
+          const byRegion: Record<string, any[]> = {};
+          (availableGateways || []).forEach((gw: any) => {
+            const r = gw.region || activeRegion;
+            if (!byRegion[r]) byRegion[r] = [];
+            byRegion[r].push(gw);
+          });
+          // Ensure the active region is always present even with 0 gateways
+          if (!byRegion[activeRegion]) byRegion[activeRegion] = [];
+
+          const regionCards = Object.entries(byRegion).map(([region, gws]) => ({
+            region,
+            gateways: gws.length,
+            isActive: region === activeRegion,
+            // Bug 4 fix: nullish coalescing – don't mask a real 0ms value
+            latency: region === activeRegion ? `${overallStats.avgLatency ?? '—'}ms` : '—',
+            status: region === activeRegion
+              ? (overallStats.errorRate > 5 ? 'DEGRADED' : 'HEALTHY')
+              : 'ESTIMATED',
+          }));
+
+          // Sort: active region first, rest alphabetically
+          regionCards.sort((a, b) => (a.isActive ? -1 : b.isActive ? 1 : a.region.localeCompare(b.region)));
+
+          return (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginTop: 4 }}>
+              {regionCards.map((r) => {
+                const statusColor = r.status === 'HEALTHY' ? '#34d399' : r.status === 'DEGRADED' ? 'var(--color-error)' : 'var(--color-warning)';
+                const statusBg = r.status === 'HEALTHY' ? 'rgba(16,185,129,0.15)' : r.status === 'DEGRADED' ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.15)';
+                const statusBorder = r.status === 'HEALTHY' ? 'rgba(16,185,129,0.3)' : r.status === 'DEGRADED' ? 'rgba(239,68,68,0.3)' : 'rgba(245,158,11,0.3)';
+                return (
+                  <div key={r.region} style={{
+                    padding: '12px 14px', borderRadius: 10, backgroundColor: 'var(--bg-input)',
+                    border: `1px solid ${r.isActive ? 'var(--color-aws)' : 'var(--border-main)'}`,
+                    display: 'flex', flexDirection: 'column', gap: 6
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>{r.region}</span>
+                      <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 3, backgroundColor: statusBg, color: statusColor, border: `1px solid ${statusBorder}` }}>{r.status}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Gateways: <strong style={{ color: 'var(--text-primary)' }}>{r.gateways}</strong></span>
+                      <span>Latency: <strong style={{ color: r.isActive ? 'var(--color-primary)' : 'var(--text-muted)' }}>{r.latency}</strong></span>
+                    </div>
+                    {!r.isActive && (
+                      <div style={{ fontSize: 9, color: 'var(--text-muted)', fontStyle: 'italic' }}>No gateways monitored in this region</div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-          ))}
-        </div>
+          );
+        })()}
       </div>
 
       {/* Active API Routes Panel */}
