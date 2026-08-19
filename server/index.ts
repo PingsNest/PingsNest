@@ -1,4 +1,4 @@
-﻿import express from 'express';
+import express from 'express';
 import compression from 'compression';
 import cors from 'cors';
 import fs from 'fs';
@@ -271,6 +271,7 @@ import {
   getSecurityPosture,
   getDependencyGraph,
   getAIInsights,
+  getFunctionDetails,
   SAMPLE_FUNCTIONS
 } from './lambdaEngine.js';
 import { broadcastLambdaTelemetry } from './ws.js';
@@ -358,8 +359,11 @@ app.post('/api/aws/lambda/list', async (req, res) => {
 
 app.get('/api/lambda/function-details', async (req, res) => {
   try {
+    // Bug 1 fix: use real AWS GetFunctionConfiguration when credentials are available.
+    // Old code matched against SAMPLE_FUNCTIONS only — every real function returned PaymentProcessor data.
+    const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
-    const fn = SAMPLE_FUNCTIONS.find(f => f.functionName.toLowerCase() === fnName.toLowerCase()) || SAMPLE_FUNCTIONS[0];
+    const fn = await getFunctionDetails(fnName, creds);
     res.json({ function: fn });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -542,7 +546,10 @@ app.get('/api/lambda/logs', async (req, res) => {
     const creds = await getAwsCredentialsFromReq(req);
     const fnName = (req.query.functionName as string) || 'PaymentProcessor';
     const filter = (req.query.filter as string) || '';
-    const limit = parseInt((req.query.limit as string) || '100', 10);
+    // Bug 9 fix: cap limit to 500 — uncapped value was passed directly to CloudWatch
+    // which rejects limits > 10000 and makes very expensive log scans.
+    const rawLimit = parseInt((req.query.limit as string) || '100', 10);
+    const limit = Number.isNaN(rawLimit) ? 100 : Math.min(500, Math.max(1, rawLimit));
     const logs = await getLambdaLogStream(fnName, creds.region, filter, limit, creds);
     res.json({ logs });
   } catch (err: any) {
@@ -567,8 +574,14 @@ app.post('/api/lambda/remediate/memory', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const { functionName, memorySizeMb } = req.body;
-    if (!functionName || !memorySizeMb) return res.status(400).json({ error: 'Missing functionName or memorySizeMb' });
-    const result = await updateFunctionMemory(functionName, Number(memorySizeMb), creds);
+    if (!functionName || memorySizeMb === undefined) return res.status(400).json({ error: 'Missing functionName or memorySizeMb' });
+    // Bug 11 fix: validate memory is in AWS-supported range [128, 10240] MB.
+    // Number(undefined) = NaN and values outside range cause InvalidParameterValueException.
+    const memMb = Number(memorySizeMb);
+    if (Number.isNaN(memMb) || memMb < 128 || memMb > 10240) {
+      return res.status(400).json({ error: 'memorySizeMb must be an integer between 128 and 10240 MB' });
+    }
+    const result = await updateFunctionMemory(functionName, Math.round(memMb), creds);
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
