@@ -27,9 +27,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
-// ─── Middleware ───────────────────────────────────────────────────────────────
+// â”€â”€â”€ Middleware â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.use(securityHeadersMiddleware);
-app.use(compression()); // gzip/brotli — reduces payload sizes 3–10× on log/metric endpoints
+app.use(compression()); // gzip/brotli â€” reduces payload sizes 3â€“10Ã— on log/metric endpoints
 app.use(cors());
 app.use(express.json({ limit: '100mb' }));
 app.use(rateLimiterMiddleware({ windowMs: 60 * 1000, max: 200 }));
@@ -43,7 +43,7 @@ app.use((req, res, next) => {
     });
     next();
 });
-// ─── SRE Observability & Health Endpoints ─────────────────────────────────────
+// â”€â”€â”€ SRE Observability & Health Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Prometheus metrics scraping endpoint
 app.get('/metrics', (_req, res) => {
     metricsRegistry.setGauge('active_websocket_connections', {}, getClientCount());
@@ -86,12 +86,13 @@ import { handleCloudWatchPushIngestion } from './pushIngestion.js';
 import { handleOtlpTraces, handleOtlpMetrics } from './otlp.js';
 import { detectLatencyAnomalies } from './anomalyEngine.js';
 import { calculateRouteFinOpsCosts } from './finops.js';
-// ─── OpenTelemetry (OTLP) Native Ingestion Endpoints ──────────────────────────
+import { getSlaFromRollups, startSlaRollupJobs } from './slaRollup.js';
+// â”€â”€â”€ OpenTelemetry (OTLP) Native Ingestion Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/v1/traces', express.json({ limit: '50mb' }), handleOtlpTraces);
 app.post('/v1/metrics', express.json({ limit: '50mb' }), handleOtlpMetrics);
-// ─── Push-Based CloudWatch Ingestion Endpoint ─────────────────────────────────
+// â”€â”€â”€ Push-Based CloudWatch Ingestion Endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/ingest/cloudwatch-logs', express.raw({ type: '*/*', limit: '50mb' }), handleCloudWatchPushIngestion);
-// ─── ML Statistical Anomaly Detection Endpoint ───────────────────────────────
+// â”€â”€â”€ ML Statistical Anomaly Detection Endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/anomalies', async (req, res) => {
     const { apiId, stage } = req.query;
     if (!apiId || !stage)
@@ -105,7 +106,7 @@ app.get('/api/anomalies', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── AWS FinOps Cost Optimization Endpoint ───────────────────────────────────
+// â”€â”€â”€ AWS FinOps Cost Optimization Endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/finops/costs', async (req, res) => {
     const { apiId, stage, protocol } = req.query;
     if (!apiId || !stage)
@@ -119,7 +120,7 @@ app.get('/api/finops/costs', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── SLA Compliance & Post-Mortem PDF Exporter Endpoint ───────────────────────
+// â”€â”€â”€ SLA Compliance & Post-Mortem PDF Exporter Endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/reports/sla-compliance', async (req, res) => {
     try {
         // Query actual telemetry data from database
@@ -164,7 +165,7 @@ app.get('/api/reports/sla-compliance', async (req, res) => {
         res.status(500).json({ error: 'Failed generating SLA report: ' + err.message });
     }
 });
-// ─── Remediation Playbooks & Approval Queue Endpoints ─────────────────────────
+// â”€â”€â”€ Remediation Playbooks & Approval Queue Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/playbooks', async (req, res) => {
     try {
         const { rows: playbooks } = await query(`SELECT * FROM remediation_playbooks ORDER BY "createdAt" DESC`);
@@ -222,34 +223,11 @@ app.get('/api/playbooks/history', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-import { discoverLambdaFunctions, getFunctionHealth, getPerformanceMetrics, getTopExceptions, getColdStartDiagnostic, getCostAnalysis, getDeploymentEvents, getMemoryRecommendation, getTimeoutDiagnostic, getEventSources, getInvocationExplorer, getSecurityPosture, getDependencyGraph, getAIInsights, SAMPLE_FUNCTIONS } from './lambdaEngine.js';
-import { broadcastLambdaTelemetry } from './ws.js';
-// ─── Real-Time Lambda Background Poller & Fanout ──────────────────────────────
-// Only compute and broadcast when at least one WebSocket client is connected
-// — avoids wasted CPU cycles when the dashboard is closed.
-setInterval(() => {
-    try {
-        if (getClientCount() === 0)
-            return; // skip fanout when no clients are listening
-        const fnName = 'PaymentProcessor';
-        const health = getFunctionHealth(fnName);
-        const metrics = getPerformanceMetrics(fnName, '24h');
-        const memory = getMemoryRecommendation(fnName);
-        const coldstarts = getColdStartDiagnostic(fnName);
-        broadcastLambdaTelemetry({
-            timestamp: new Date().toISOString(),
-            functionName: fnName,
-            health,
-            metrics,
-            memory,
-            coldstarts
-        });
-    }
-    catch (err) {
-        console.warn('[Lambda Realtime Poller Warning]:', err.message);
-    }
-}, 10_000);
-// ─── AWS Credentials Resolver ──────────────────────────────────────────────────
+import { discoverLambdaFunctions, getFunctionHealth, getPerformanceMetrics, getTopExceptions, getColdStartDiagnostic, getCostAnalysis, getDeploymentEvents, getMemoryRecommendation, getTimeoutDiagnostic, getEventSources, getInvocationExplorer, getSecurityPosture, getDependencyGraph, getAIInsights, getFunctionDetails } from './lambdaEngine.js';
+// ─── Real-Time Lambda Background Poller & Fanout ─────────────────────────────
+// Disabled un-awaited periodic AWS query loop to prevent AWS CloudWatch throttling.
+// Real-time telemetry is pushed via cached REST/WebSocket handlers.
+// ─── AWS Credentials Resolver ────────────────────────────────────────────────
 async function getAwsCredentialsFromReq(req) {
     let accessKeyId = req.headers['x-aws-access-key-id'] || req.query.accessKeyId || req.body?.accessKeyId;
     let secretAccessKey = req.headers['x-aws-secret-access-key'] || req.query.secretAccessKey || req.body?.secretAccessKey;
@@ -283,12 +261,17 @@ async function getAwsCredentialsFromReq(req) {
         secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
     return { accessKeyId, secretAccessKey, region };
 }
-// ─── Module 3: Lambda Monitoring REST Endpoints ──────────────────────────────
+// ─── Module 3: Lambda Monitoring REST Endpoints (Cached to avoid AWS 429s) ───
 app.get('/api/lambda/functions', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const functions = await discoverLambdaFunctions(creds.region, creds);
-        res.json({ functions });
+        const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || 'anon').digest('hex').slice(0, 12);
+        const cacheKey = `lambda:fns:${creds.region}:${keyHash}`;
+        const result = await cacheGetOrSet(cacheKey, TTL.LAMBDAS, async () => {
+            const functions = await discoverLambdaFunctions(creds.region, creds);
+            return { functions };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -297,8 +280,13 @@ app.get('/api/lambda/functions', async (req, res) => {
 app.post('/api/aws/lambda/list', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const functions = await discoverLambdaFunctions(creds.region, creds);
-        res.json({ functions });
+        const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || 'anon').digest('hex').slice(0, 12);
+        const cacheKey = `lambda:fns:${creds.region}:${keyHash}`;
+        const result = await cacheGetOrSet(cacheKey, TTL.LAMBDAS, async () => {
+            const functions = await discoverLambdaFunctions(creds.region, creds);
+            return { functions };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -306,9 +294,14 @@ app.post('/api/aws/lambda/list', async (req, res) => {
 });
 app.get('/api/lambda/function-details', async (req, res) => {
     try {
+        const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
-        const fn = SAMPLE_FUNCTIONS.find(f => f.functionName.toLowerCase() === fnName.toLowerCase()) || SAMPLE_FUNCTIONS[0];
-        res.json({ function: fn });
+        const cacheKey = `lambda:details:${creds.region}:${fnName}`;
+        const result = await cacheGetOrSet(cacheKey, TTL.LAMBDAS, async () => {
+            const fn = await getFunctionDetails(fnName, creds);
+            return { function: fn };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -319,8 +312,12 @@ app.get('/api/lambda/metrics', async (req, res) => {
         const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
         const timeRange = req.query.timeRange || '24h';
-        const metrics = await getPerformanceMetrics(fnName, timeRange, creds);
-        res.json({ metrics });
+        const cacheKey = `lambda:metrics:${creds.region}:${fnName}:${timeRange}`;
+        const result = await cacheGetOrSet(cacheKey, TTL.METRICS, async () => {
+            const metrics = await getPerformanceMetrics(fnName, timeRange, creds);
+            return { metrics };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -330,8 +327,12 @@ app.get('/api/lambda/errors', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
-        const errors = await getTopExceptions(fnName, creds);
-        res.json({ errors });
+        const cacheKey = `lambda:errors:${creds.region}:${fnName}`;
+        const result = await cacheGetOrSet(cacheKey, 60, async () => {
+            const errors = await getTopExceptions(fnName, creds);
+            return { errors };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -341,8 +342,12 @@ app.get('/api/lambda/cost', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
-        const cost = await getCostAnalysis(fnName, creds);
-        res.json({ cost });
+        const cacheKey = `lambda:cost:${creds.region}:${fnName}`;
+        const result = await cacheGetOrSet(cacheKey, TTL.FINOPS, async () => {
+            const cost = await getCostAnalysis(fnName, creds);
+            return { cost };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -352,8 +357,12 @@ app.get('/api/lambda/health', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
-        const health = await getFunctionHealth(fnName, creds);
-        res.json({ health });
+        const cacheKey = `lambda:health:${creds.region}:${fnName}`;
+        const result = await cacheGetOrSet(cacheKey, 30, async () => {
+            const health = await getFunctionHealth(fnName, creds);
+            return { health };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -363,8 +372,12 @@ app.get('/api/lambda/security', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
-        const security = await getSecurityPosture(fnName, creds);
-        res.json({ security });
+        const cacheKey = `lambda:security:${creds.region}:${fnName}`;
+        const result = await cacheGetOrSet(cacheKey, 300, async () => {
+            const security = await getSecurityPosture(fnName, creds);
+            return { security };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -375,8 +388,12 @@ app.get('/api/lambda/invocations', async (req, res) => {
         const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
         const filterText = req.query.filter || '';
-        const invocations = await getInvocationExplorer(fnName, filterText, creds);
-        res.json({ invocations });
+        const cacheKey = `lambda:invs:${creds.region}:${fnName}:${filterText}`;
+        const result = await cacheGetOrSet(cacheKey, 30, async () => {
+            const invocations = await getInvocationExplorer(fnName, filterText, creds);
+            return { invocations };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -386,8 +403,12 @@ app.get('/api/lambda/coldstarts', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
-        const coldstarts = await getColdStartDiagnostic(fnName, creds);
-        res.json({ coldstarts });
+        const cacheKey = `lambda:coldstarts:${creds.region}:${fnName}`;
+        const result = await cacheGetOrSet(cacheKey, 60, async () => {
+            const coldstarts = await getColdStartDiagnostic(fnName, creds);
+            return { coldstarts };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -397,8 +418,12 @@ app.get('/api/lambda/memory', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
-        const memory = await getMemoryRecommendation(fnName, creds);
-        res.json({ memory });
+        const cacheKey = `lambda:memory:${creds.region}:${fnName}`;
+        const result = await cacheGetOrSet(cacheKey, 60, async () => {
+            const memory = await getMemoryRecommendation(fnName, creds);
+            return { memory };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -408,8 +433,12 @@ app.get('/api/lambda/timeout', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
-        const timeout = await getTimeoutDiagnostic(fnName, creds);
-        res.json({ timeout });
+        const cacheKey = `lambda:timeout:${creds.region}:${fnName}`;
+        const result = await cacheGetOrSet(cacheKey, 60, async () => {
+            const timeout = await getTimeoutDiagnostic(fnName, creds);
+            return { timeout };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -419,8 +448,12 @@ app.get('/api/lambda/eventsources', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
-        const eventSources = await getEventSources(fnName, creds);
-        res.json({ eventSources });
+        const cacheKey = `lambda:eventsources:${creds.region}:${fnName}`;
+        const result = await cacheGetOrSet(cacheKey, 300, async () => {
+            const eventSources = await getEventSources(fnName, creds);
+            return { eventSources };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -430,8 +463,12 @@ app.get('/api/lambda/deployments', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
-        const deployments = await getDeploymentEvents(fnName, creds);
-        res.json({ deployments });
+        const cacheKey = `lambda:deployments:${creds.region}:${fnName}`;
+        const result = await cacheGetOrSet(cacheKey, 300, async () => {
+            const deployments = await getDeploymentEvents(fnName, creds);
+            return { deployments };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -441,8 +478,12 @@ app.get('/api/lambda/dependency-map', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
-        const dependencyMap = await getDependencyGraph(fnName, creds);
-        res.json({ dependencyMap });
+        const cacheKey = `lambda:deps:${creds.region}:${fnName}`;
+        const result = await cacheGetOrSet(cacheKey, 300, async () => {
+            const dependencyMap = await getDependencyGraph(fnName, creds);
+            return { dependencyMap };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -452,8 +493,12 @@ app.get('/api/lambda/ai-insights', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
-        const insights = await getAIInsights(fnName, creds);
-        res.json({ insights });
+        const cacheKey = `lambda:insights:${creds.region}:${fnName}`;
+        const result = await cacheGetOrSet(cacheKey, 60, async () => {
+            const insights = await getAIInsights(fnName, creds);
+            return { insights };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -476,28 +521,37 @@ app.get('/api/lambda/live-metrics', async (req, res) => {
         const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
         const timeRange = req.query.timeRange || '24h';
-        const metrics = await getLiveCloudWatchMetrics(fnName, creds.region, timeRange, creds);
-        res.json({ metrics });
+        const cacheKey = `lambda:livemetrics:${creds.region}:${fnName}:${timeRange}`;
+        const result = await cacheGetOrSet(cacheKey, TTL.METRICS, async () => {
+            const metrics = await getLiveCloudWatchMetrics(fnName, creds.region, timeRange, creds);
+            return { metrics };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── Enhancement 2: Live CloudWatch Log Stream endpoint ───────────────────────
+// ─── Enhancement 2: Live CloudWatch Log Stream endpoint ──────────────────────
 app.get('/api/lambda/logs', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
         const fnName = req.query.functionName || 'PaymentProcessor';
         const filter = req.query.filter || '';
-        const limit = parseInt(req.query.limit || '100', 10);
-        const logs = await getLambdaLogStream(fnName, creds.region, filter, limit, creds);
-        res.json({ logs });
+        const rawLimit = parseInt(req.query.limit || '100', 10);
+        const limit = Number.isNaN(rawLimit) ? 100 : Math.min(500, Math.max(1, rawLimit));
+        const cacheKey = `lambda:logs:${creds.region}:${fnName}:${filter}:${limit}`;
+        const result = await cacheGetOrSet(cacheKey, TTL.LOGS_LIVE, async () => {
+            const logs = await getLambdaLogStream(fnName, creds.region, filter, limit, creds);
+            return { logs };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── Enhancement 3: API Gateway → Lambda End-to-End Trace endpoint ────────────
+// ─── Enhancement 3: API Gateway → Lambda End-to-End Trace endpoint ───────────
 app.get('/api/lambda/apigw-trace', async (req, res) => {
     try {
         const fnName = req.query.functionName || 'PaymentProcessor';
@@ -509,14 +563,18 @@ app.get('/api/lambda/apigw-trace', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── Auto-Remediation One-Click Endpoints ─────────────────────────────────────
+// ─── Auto-Remediation One-Click Endpoints ────────────────────────────────────
 app.post('/api/lambda/remediate/memory', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
         const { functionName, memorySizeMb } = req.body;
-        if (!functionName || !memorySizeMb)
+        if (!functionName || memorySizeMb === undefined)
             return res.status(400).json({ error: 'Missing functionName or memorySizeMb' });
-        const result = await updateFunctionMemory(functionName, Number(memorySizeMb), creds);
+        const memMb = Number(memorySizeMb);
+        if (Number.isNaN(memMb) || memMb < 128 || memMb > 10240) {
+            return res.status(400).json({ error: 'memorySizeMb must be an integer between 128 and 10240 MB' });
+        }
+        const result = await updateFunctionMemory(functionName, Math.round(memMb), creds);
         res.json(result);
     }
     catch (err) {
@@ -549,12 +607,17 @@ app.post('/api/lambda/remediate/rollback', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── Bulk Fleet Telemetry & Mass Actions Endpoints ────────────────────────────
+// ─── Bulk Fleet Telemetry & Mass Actions Endpoints ───────────────────────────
 app.get('/api/lambda/fleet/telemetry', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fleet = await getBulkFleetTelemetry(creds);
-        res.json({ fleet });
+        const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || 'anon').digest('hex').slice(0, 12);
+        const cacheKey = `lambda:fleet:telemetry:${creds.region}:${keyHash}`;
+        const result = await cacheGetOrSet(cacheKey, 30, async () => {
+            const fleet = await getBulkFleetTelemetry(creds);
+            return { fleet };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -577,8 +640,13 @@ app.post('/api/lambda/fleet/bulk-remediate', async (req, res) => {
 app.get('/api/lambda/fleet/security', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const securityAudit = await getBulkFleetSecurityAudit(creds);
-        res.json({ securityAudit });
+        const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || 'anon').digest('hex').slice(0, 12);
+        const cacheKey = `lambda:fleet:security:${creds.region}:${keyHash}`;
+        const result = await cacheGetOrSet(cacheKey, 300, async () => {
+            const securityAudit = await getBulkFleetSecurityAudit(creds);
+            return { securityAudit };
+        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -598,53 +666,7 @@ app.post('/api/lambda/remediate/security-bulk', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── Launch Subscriptions & Background Subscriber File Writer ────────────────
-const SUBSCRIBERS_FILE = path.join(process.cwd(), 'subscribers.txt');
-app.post('/api/subscribe', async (req, res) => {
-    try {
-        const { name, email } = req.body;
-        if (!email || typeof email !== 'string' || !email.includes('@')) {
-            return res.status(400).json({ error: 'Valid email address is required.' });
-        }
-        const timestamp = new Date().toISOString();
-        const subscriberLine = `[${timestamp}] Email: ${email.trim()} | Name: ${(name || 'Anonymous').trim()}\n`;
-        // 1. Append subscriber email to subscribers.txt file in background
-        fs.appendFile(SUBSCRIBERS_FILE, subscriberLine, (err) => {
-            if (err)
-                console.error('[Subscriber File Write Error]:', err.message);
-            else
-                console.log(`[Subscriber Saved to File]: ${email}`);
-        });
-        // 2. Persist to DB table if connected
-        try {
-            await query(`INSERT INTO launch_subscribers (id, name, email, "subscribedAt")
-         VALUES ($1, $2, $3, NOW())
-         ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name`, [`sub-${crypto.randomUUID()}`, name || '', email]);
-        }
-        catch { }
-        res.json({ success: true, message: 'Subscriber saved successfully!' });
-    }
-    catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-app.get('/api/subscribers', authenticateToken, async (_req, res) => {
-    try {
-        let fileContent = '';
-        if (fs.existsSync(SUBSCRIBERS_FILE)) {
-            fileContent = fs.readFileSync(SUBSCRIBERS_FILE, 'utf8');
-        }
-        const subscribers = fileContent
-            .split('\n')
-            .filter(Boolean)
-            .map(line => line.trim());
-        res.json({ count: subscribers.length, subscribers, filePath: SUBSCRIBERS_FILE });
-    }
-    catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-// ─── Audit Logs Endpoint ───────────────────────────────────────────────────
+// â”€â”€â”€ Audit Logs Endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/audit-logs', authenticateToken, async (req, res) => {
     try {
         const limit = Math.min(100, parseInt(req.query.limit || '50', 10));
@@ -676,15 +698,11 @@ app.post('/api/lambda/alerts', async (req, res) => {
 // Serve built React SPA in production
 const distPath = fs.existsSync(path.join(__dirname, '../../dist'))
     ? path.join(__dirname, '../../dist')
-    : fs.existsSync(path.join(__dirname, '../../html_folder'))
-        ? path.join(__dirname, '../../html_folder')
-        : fs.existsSync(path.join(__dirname, '../html_folder'))
-            ? path.join(__dirname, '../html_folder')
-            : path.join(__dirname, '../dist');
+    : path.join(__dirname, '../dist');
 if (fs.existsSync(distPath)) {
     app.use(express.static(distPath));
 }
-// ─── Cache TTL constants (seconds) ────────────────────────────────────────────
+// â”€â”€â”€ Cache TTL constants (seconds) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const TTL = {
     APIS: 5 * 60,
     ROUTES: 5 * 60,
@@ -693,18 +711,21 @@ const TTL = {
     LAMBDAS: 5 * 60,
     LOGS_LIVE: 10,
     LOGS_HIST: 10 * 60,
-    PLAYBOOKS: 30, // playbook list — read-heavy, rarely changes
-    PB_HISTORY: 15, // playbook history — polling-heavy in UI
-    ALERTS: 60, // alert rules — stable config data
-    ALERT_HIST: 15, // alert history — poll-heavy in dashboard
-    FINOPS: 2 * 60, // finops aggregation — expensive TimescaleDB query
-    ANOMALIES: 30, // z-score detection — expensive stat computation
-    AUDIT_LOGS: 30, // audit logs — read-only history
-    SLO: 30, // slo targets — 30s TTL
+    PLAYBOOKS: 30, // playbook list â€” read-heavy, rarely changes
+    PB_HISTORY: 15, // playbook history â€” polling-heavy in UI
+    ALERTS: 60, // alert rules â€” stable config data
+    ALERT_HIST: 15, // alert history â€” poll-heavy in dashboard
+    FINOPS: 2 * 60, // finops aggregation â€” expensive TimescaleDB query
+    ANOMALIES: 30, // z-score detection â€” expensive stat computation
+    AUDIT_LOGS: 30, // audit logs â€” read-only history
+    SLO: 30, // slo targets â€” 30s TTL
 };
-// ─── Helper: Clean Lambda function name ───────────────────────────────────────
+// Bug 9 fix: alert dedup (5 min cooldown) prevents alert storms
+const gatewayAlertCooldowns = new Map();
+const GATEWAY_ALERT_COOLDOWN_MS = 5 * 60 * 1000;
+// â”€â”€â”€ Helper: Clean Lambda function name â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function cleanLambdaRoute(lambdaName) {
-    let cleanName = lambdaName.replace(/^(awln-|lmd-|lmb-|dev-|prod-|test-|regx-)+/i, '');
+    let cleanName = lambdaName.replace(/^(demo-|lmd-|lmb-|dev-|prod-|test-|regx-)+/i, '');
     cleanName = cleanName.toLowerCase();
     cleanName = cleanName.replace(/-(\d+|dev|prod|stg|staging)$/i, '');
     let method = 'POST';
@@ -718,11 +739,20 @@ function cleanLambdaRoute(lambdaName) {
     routePart = routePart.replace(/^(get|post|delete|put|patch|fetch|list)-/, '');
     return { route: `/${routePart.replace(/_/g, '/').replace(/-/g, '/')}`, method };
 }
-// ─── Auth constant ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Auth constant â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const AUTH_SALT = 'nova_uptime_auth_salt_2026';
-// ─── Credentials & Multi-Account Profiles Helpers ─────────────────────────────
-const CREDS_PATH = path.join(process.cwd(), 'credentials.json');
-const PROFILES_PATH = path.join(process.cwd(), 'profiles.json');
+// â”€â”€â”€ Credentials & Multi-Account Profiles Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// CREDENTIALS_DIR is mounted as a persistent Docker volume at /app/credentials.
+// Falling back to a local ./credentials dir for local dev without Docker.
+const CREDENTIALS_DIR = process.env.CREDENTIALS_DIR || path.join(process.cwd(), 'credentials');
+if (!fs.existsSync(CREDENTIALS_DIR)) {
+    try {
+        fs.mkdirSync(CREDENTIALS_DIR, { recursive: true });
+    }
+    catch { }
+}
+const CREDS_PATH = path.join(CREDENTIALS_DIR, 'credentials.json');
+const PROFILES_PATH = path.join(CREDENTIALS_DIR, 'profiles.json');
 function loadProfilesFromFile() {
     if (fs.existsSync(PROFILES_PATH)) {
         try {
@@ -754,11 +784,11 @@ function loadProfilesFromFile() {
     }
     return [];
 }
-app.get('/api/aws/account-profiles', (_req, res) => {
+app.get('/api/aws/account-profiles', requireAuth, (_req, res) => {
     const profiles = loadProfilesFromFile();
     res.json({ profiles });
 });
-app.post('/api/aws/account-profiles', (req, res) => {
+app.post('/api/aws/account-profiles', requireAuth, requireAdmin, (req, res) => {
     const { id, name, accountId, region, authType, accessKeyId, secretAccessKey, roleArn, externalId, isDefault } = req.body;
     if (!name || !region)
         return res.status(400).json({ error: 'Missing profile name or region' });
@@ -802,7 +832,7 @@ app.post('/api/aws/account-profiles', (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-app.delete('/api/aws/account-profiles/:id', (req, res) => {
+app.delete('/api/aws/account-profiles/:id', requireAuth, requireAdmin, (req, res) => {
     try {
         let profiles = loadProfilesFromFile();
         profiles = profiles.filter((p) => p.id !== req.params.id);
@@ -813,7 +843,7 @@ app.delete('/api/aws/account-profiles/:id', (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-app.get('/api/aws/saved-credentials', (_req, res) => {
+app.get('/api/aws/saved-credentials', requireAuth, (_req, res) => {
     if (fs.existsSync(CREDS_PATH)) {
         try {
             const data = fs.readFileSync(CREDS_PATH, 'utf8');
@@ -824,7 +854,7 @@ app.get('/api/aws/saved-credentials', (_req, res) => {
     }
     res.json({ hasSaved: false });
 });
-app.post('/api/aws/save-credentials', (req, res) => {
+app.post('/api/aws/save-credentials', requireAuth, requireAdmin, (req, res) => {
     const { region, accessKeyId, secretAccessKey } = req.body;
     if (!region || !accessKeyId || !secretAccessKey)
         return res.status(400).json({ error: 'Missing credentials' });
@@ -842,12 +872,12 @@ app.post('/api/aws/save-credentials', (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-app.post('/api/aws/clear-credentials', (_req, res) => {
+app.post('/api/aws/clear-credentials', requireAuth, requireAdmin, (_req, res) => {
     if (fs.existsSync(CREDS_PATH))
         fs.unlinkSync(CREDS_PATH);
     res.json({ success: true });
 });
-// ─── Dynamic AWS STS & Credentials Resolver ─────────────────────────────────
+// â”€â”€â”€ Dynamic AWS STS & Credentials Resolver â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function resolveAwsCredentials(opts) {
     const region = opts.region || 'us-east-1';
     // 1. STS AssumeRole
@@ -889,8 +919,8 @@ export async function resolveAwsCredentials(opts) {
     // 3. Default Environment SDK Chain
     return { region };
 }
-// ─── Multi-Account Connection Management Endpoints ───────────────────────────
-app.get('/api/aws/connections', async (_req, res) => {
+// â”€â”€â”€ Multi-Account Connection Management Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+app.get('/api/aws/connections', requireAuth, async (_req, res) => {
     try {
         const { rows } = await query(`
       SELECT id, name, region, "authType", "accessKeyId", "roleArn", "externalId", "isDefault", "createdAt", "updatedAt"
@@ -902,7 +932,7 @@ app.get('/api/aws/connections', async (_req, res) => {
         res.json({ connections: [] });
     }
 });
-app.post('/api/aws/connections', async (req, res) => {
+app.post('/api/aws/connections', requireAuth, requireAdmin, async (req, res) => {
     const { id, name, region, authType, accessKeyId, secretAccessKey, roleArn, externalId, isDefault } = req.body;
     if (!name || !region)
         return res.status(400).json({ error: 'Name and Region are required' });
@@ -932,7 +962,7 @@ app.post('/api/aws/connections', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-app.delete('/api/aws/connections/:id', async (req, res) => {
+app.delete('/api/aws/connections/:id', requireAuth, requireAdmin, async (req, res) => {
     try {
         await query(`DELETE FROM aws_connections WHERE id = $1`, [req.params.id]);
         res.json({ success: true });
@@ -941,7 +971,7 @@ app.delete('/api/aws/connections/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── AWS X-Ray Trace Endpoint ────────────────────────────────────────────────
+// â”€â”€â”€ AWS X-Ray Trace Endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/aws/traces/:traceId', async (req, res) => {
     const { traceId } = req.params;
     const { region, accessKeyId, secretAccessKey } = req.query;
@@ -976,7 +1006,7 @@ app.get('/api/aws/traces/:traceId', async (req, res) => {
         }
     });
 });
-// ─── AI Incident Diagnostic Assistant Endpoint ───────────────────────────────
+// â”€â”€â”€ AI Incident Diagnostic Assistant Endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/diagnostics/analyze-spike', async (req, res) => {
     const { apiId, errorLogs, metricSnapshot } = req.body;
     let summary = `Analyzed recent telemetry for API Gateway "${apiId || 'Active Gateway'}".`;
@@ -1019,36 +1049,43 @@ app.post('/api/diagnostics/analyze-spike', async (req, res) => {
         confidenceScore: 0.94
     });
 });
-// ─── Active Remediation: API Gateway Stage Throttling Endpoint ──────────────
+// â”€â”€â”€ Active Remediation: API Gateway Stage Throttling Endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/throttle-stage', async (req, res) => {
-    const { region, accessKeyId, secretAccessKey, apiId, stage, throttlingBurstLimit, throttlingRateLimit } = req.body;
+    const creds = await getAwsCredentialsFromReq(req);
+    const { region, accessKeyId, secretAccessKey } = creds;
+    const { apiId, stage, throttlingBurstLimit, throttlingRateLimit } = req.body;
     if (!region || !apiId || !stage)
         return res.status(400).json({ error: 'Missing required parameters' });
+    if (!accessKeyId || !secretAccessKey)
+        return res.status(400).json({ error: 'AWS credentials required to update throttling' });
     try {
-        if (accessKeyId && secretAccessKey) {
-            const c = new APIGatewayClient({ region, credentials: { accessKeyId, secretAccessKey } });
-            await c.send(new UpdateStageCommand({
-                restApiId: apiId,
-                stageName: stage,
-                patchOperations: [
-                    { op: 'replace', path: '/*/*/throttling/burstLimit', value: String(throttlingBurstLimit || 500) },
-                    { op: 'replace', path: '/*/*/throttling/rateLimit', value: String(throttlingRateLimit || 1000) }
-                ]
-            }));
-        }
+        const c = new APIGatewayClient({ region, credentials: { accessKeyId, secretAccessKey } });
+        await c.send(new UpdateStageCommand({
+            restApiId: apiId,
+            stageName: stage,
+            patchOperations: [
+                { op: 'replace', path: '/*/*/throttling/burstLimit', value: String(throttlingBurstLimit || 500) },
+                { op: 'replace', path: '/*/*/throttling/rateLimit', value: String(throttlingRateLimit || 1000) }
+            ]
+        }));
         return res.json({ success: true, message: `Throttling updated for stage ${stage}: Burst=${throttlingBurstLimit}, Rate=${throttlingRateLimit}` });
     }
     catch (err) {
-        // If permission or mock mode
-        return res.json({ success: true, mock: true, message: `[Simulated] Throttling updated for ${stage}: Burst=${throttlingBurstLimit || 500}, Rate=${throttlingRateLimit || 1000}` });
+        // Bug 1 fix: never return success: true when the AWS call failed.
+        // Old behaviour was to silently lie, making operators believe throttling was applied.
+        console.error('[Throttle] AWS UpdateStage failed:', err.message);
+        return res.status(502).json({ success: false, error: `AWS rejected the throttle update: ${err.message}` });
     }
 });
-// ─── 1. List API Gateways ─────────────────────────────────────────────────────
+// â”€â”€â”€ 1. List API Gateways â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/apis', async (req, res) => {
-    const { region, accessKeyId, secretAccessKey } = req.body;
+    const creds = await getAwsCredentialsFromReq(req);
+    const { region, accessKeyId, secretAccessKey } = creds;
     if (!region || !accessKeyId || !secretAccessKey)
         return res.status(400).json({ error: 'Missing credentials' });
-    const cacheKey = `apis:${region}:${accessKeyId}`;
+    // Bug 5 fix: hash the accessKeyId so raw key material is never stored in Redis key names.
+    const keyHash = crypto.createHash('sha256').update(accessKeyId).digest('hex').slice(0, 16);
+    const cacheKey = `apis:${region}:${keyHash}`;
     const cached = await cacheGet(cacheKey);
     if (cached)
         return res.json(cached);
@@ -1076,9 +1113,11 @@ app.post('/api/aws/apis', async (req, res) => {
     await cacheSet(cacheKey, result, TTL.APIS);
     res.json(result);
 });
-// ─── 1b. List API Gateway Stages ──────────────────────────────────────────────
+// â”€â”€â”€ 1b. List API Gateway Stages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/stages', async (req, res) => {
-    const { region, accessKeyId, secretAccessKey, apiId, protocol, bypassCache } = req.body;
+    const creds = await getAwsCredentialsFromReq(req);
+    const { region, accessKeyId, secretAccessKey } = creds;
+    const { apiId, protocol, bypassCache } = req.body;
     if (!region || !accessKeyId || !secretAccessKey || !apiId || !protocol) {
         return res.status(400).json({ error: 'Missing params' });
     }
@@ -1090,6 +1129,7 @@ app.post('/api/aws/stages', async (req, res) => {
     }
     const credentials = { accessKeyId, secretAccessKey };
     const stagesList = [];
+    let awsError = null;
     try {
         if (protocol === 'REST') {
             const c = new APIGatewayClient({ region, credentials });
@@ -1109,18 +1149,25 @@ app.post('/api/aws/stages', async (req, res) => {
         }
     }
     catch (e) {
+        awsError = e.message;
         console.warn(`[Stages API] Error fetching stages for ${apiId}:`, e.message);
     }
-    if (stagesList.length === 0) {
+    // Bug 10 fix: flag fallback stages so caller knows these are guesses, not real AWS data.
+    // Old behaviour silently injected 'prod'/$default with no indication of failure.
+    const isFallback = stagesList.length === 0;
+    if (isFallback) {
         stagesList.push(protocol === 'REST' ? 'prod' : '$default');
     }
-    const result = { stages: stagesList };
-    await cacheSet(cacheKey, result, TTL.APIS);
+    const result = { stages: stagesList, ...(isFallback && { fallback: true, warning: awsError ? `AWS error: ${awsError}` : 'Could not fetch stages from AWS; showing default values.' }) };
+    if (!isFallback)
+        await cacheSet(cacheKey, result, TTL.APIS);
     res.json(result);
 });
-// ─── 2. List Routes ───────────────────────────────────────────────────────────
+// â”€â”€â”€ 2. List Routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/routes', async (req, res) => {
-    const { region, accessKeyId, secretAccessKey, apiId, protocol, bypassCache } = req.body;
+    const creds = await getAwsCredentialsFromReq(req);
+    const { region, accessKeyId, secretAccessKey } = creds;
+    const { apiId, protocol, bypassCache } = req.body;
     if (!region || !accessKeyId || !secretAccessKey || !apiId || !protocol)
         return res.status(400).json({ error: 'Missing params' });
     const cacheKey = `routes:${apiId}:${protocol}`;
@@ -1154,57 +1201,72 @@ app.post('/api/aws/routes', async (req, res) => {
     try {
         if (protocol === 'REST') {
             const c = new APIGatewayClient({ region, credentials });
-            const r = await c.send(new GetResourcesCommand({ restApiId: apiId, limit: 100 }));
-            if (r.items) {
-                const tasks = [];
-                for (const item of r.items) {
-                    if (!item.path)
-                        continue;
-                    if (item.resourceMethods) {
-                        for (const m of Object.keys(item.resourceMethods)) {
-                            tasks.push((async () => {
-                                let lambdaName;
-                                let integrationType;
-                                try {
-                                    const integ = await c.send(new GetIntegrationCommand({ restApiId: apiId, resourceId: item.id, httpMethod: m }));
-                                    integrationType = integ.type;
-                                    lambdaName = parseLambdaName(integ.uri, integ.type);
-                                }
-                                catch { }
-                                return { method: m, path: item.path, lambdaName, integrationType };
-                            })());
+            // Bug 6 fix: paginate using `position` cursor -- old code used limit:100 with no loop,
+            // silently truncating APIs with >100 resources.
+            let position;
+            do {
+                const r = await c.send(new GetResourcesCommand({ restApiId: apiId, limit: 500, ...(position ? { position } : {}) }));
+                position = r.position;
+                if (r.items) {
+                    const tasks = [];
+                    for (const item of r.items) {
+                        if (!item.path)
+                            continue;
+                        if (item.resourceMethods) {
+                            for (const m of Object.keys(item.resourceMethods)) {
+                                tasks.push((async () => {
+                                    let lambdaName;
+                                    let integrationType;
+                                    try {
+                                        const integ = await c.send(new GetIntegrationCommand({ restApiId: apiId, resourceId: item.id, httpMethod: m }));
+                                        integrationType = integ.type;
+                                        lambdaName = parseLambdaName(integ.uri, integ.type);
+                                    }
+                                    catch { }
+                                    return { method: m, path: item.path, lambdaName, integrationType };
+                                })());
+                            }
+                        }
+                        else {
+                            tasks.push(Promise.resolve({ method: 'ANY', path: item.path }));
                         }
                     }
-                    else {
-                        tasks.push(Promise.resolve({ method: 'ANY', path: item.path }));
-                    }
+                    const resolved = await Promise.all(tasks);
+                    routesList.push(...resolved);
                 }
-                const resolved = await Promise.all(tasks);
-                routesList.push(...resolved);
-            }
+            } while (position);
         }
         else {
             const c = new ApiGatewayV2Client({ region, credentials });
-            const r = await c.send(new GetRoutesCommand({ ApiId: apiId, MaxResults: '100' }));
+            // Bug 6 fix: paginate integrations and routes using NextToken cursor.
             const integMap = new Map();
             try {
-                const integRes = await c.send(new GetIntegrationsCommand({ ApiId: apiId, MaxResults: '100' }));
-                integRes.Items?.forEach(integ => {
-                    if (integ.IntegrationId) {
-                        const lName = parseLambdaName(integ.IntegrationUri, integ.IntegrationType);
-                        integMap.set(integ.IntegrationId, { lambdaName: lName, type: integ.IntegrationType });
-                    }
-                });
+                let nextIntegToken;
+                do {
+                    const integRes = await c.send(new GetIntegrationsCommand({ ApiId: apiId, MaxResults: '500', ...(nextIntegToken ? { NextToken: nextIntegToken } : {}) }));
+                    integRes.Items?.forEach(integ => {
+                        if (integ.IntegrationId) {
+                            const lName = parseLambdaName(integ.IntegrationUri, integ.IntegrationType);
+                            integMap.set(integ.IntegrationId, { lambdaName: lName, type: integ.IntegrationType });
+                        }
+                    });
+                    nextIntegToken = integRes.NextToken;
+                } while (nextIntegToken);
             }
             catch { }
-            r.Items?.forEach(item => {
-                if (!item.RouteKey)
-                    return;
-                const parts = item.RouteKey.split(' ');
-                const targetIntegId = item.Target?.replace('integrations/', '');
-                const integInfo = targetIntegId ? integMap.get(targetIntegId) : undefined;
-                routesList.push(parts.length === 2 ? { method: parts[0], path: parts[1], lambdaName: integInfo?.lambdaName, integrationType: integInfo?.type } : { method: 'ANY', path: item.RouteKey, lambdaName: integInfo?.lambdaName, integrationType: integInfo?.type });
-            });
+            let nextRouteToken;
+            do {
+                const r = await c.send(new GetRoutesCommand({ ApiId: apiId, MaxResults: '500', ...(nextRouteToken ? { NextToken: nextRouteToken } : {}) }));
+                r.Items?.forEach(item => {
+                    if (!item.RouteKey)
+                        return;
+                    const parts = item.RouteKey.split(' ');
+                    const targetIntegId = item.Target?.replace('integrations/', '');
+                    const integInfo = targetIntegId ? integMap.get(targetIntegId) : undefined;
+                    routesList.push(parts.length === 2 ? { method: parts[0], path: parts[1], lambdaName: integInfo?.lambdaName, integrationType: integInfo?.type } : { method: 'ANY', path: item.RouteKey, lambdaName: integInfo?.lambdaName, integrationType: integInfo?.type });
+                });
+                nextRouteToken = r.NextToken;
+            } while (nextRouteToken);
         }
     }
     catch (err) {
@@ -1214,86 +1276,94 @@ app.post('/api/aws/routes', async (req, res) => {
     await cacheSet(cacheKey, result, TTL.ROUTES);
     res.json(result);
 });
-// ─── 2b. Multi-API Gateway Fleet Summary ($N$ Gateways Aggregation) ─────────────
+// â”€â”€â”€ 2b. Multi-API Gateway Fleet Summary ($N$ Gateways Aggregation) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/gateways/fleet-summary', async (req, res) => {
-    const { region, accessKeyId, secretAccessKey } = req.body;
+    const creds = await getAwsCredentialsFromReq(req);
+    const { region, accessKeyId, secretAccessKey } = creds;
     if (!region || !accessKeyId || !secretAccessKey) {
         return res.status(400).json({ error: 'Missing region or credentials' });
     }
-    const credentials = { accessKeyId, secretAccessKey };
+    const keyHash = crypto.createHash('sha256').update(accessKeyId).digest('hex').slice(0, 12);
+    const cacheKey = `apigw:fleet-summary:${region}:${keyHash}`;
     try {
-        const v1 = new APIGatewayClient({ region, credentials });
-        const v2 = new ApiGatewayV2Client({ region, credentials });
-        const apisList = [];
-        try {
-            const r1 = await v1.send(new GetRestApisCommand({}));
-            r1.items?.forEach(i => {
-                if (i.id && i.name) {
-                    apisList.push({ id: i.id, name: i.name, protocol: 'REST', stage: 'prod' });
-                }
+        const result = await cacheGetOrSet(cacheKey, 30, async () => {
+            const credentials = { accessKeyId, secretAccessKey };
+            const v1 = new APIGatewayClient({ region, credentials });
+            const v2 = new ApiGatewayV2Client({ region, credentials });
+            const apisList = [];
+            try {
+                const r1 = await v1.send(new GetRestApisCommand({}));
+                r1.items?.forEach(i => {
+                    if (i.id && i.name) {
+                        apisList.push({ id: i.id, name: i.name, protocol: 'REST', stage: 'prod' });
+                    }
+                });
+            }
+            catch { }
+            try {
+                const r2 = await v2.send(new GetApisCommand({}));
+                r2.Items?.forEach(i => {
+                    if (i.ApiId && i.Name) {
+                        apisList.push({ id: i.ApiId, name: i.Name, protocol: i.ProtocolType === 'WEBSOCKET' ? 'WEBSOCKET' : 'HTTP', stage: '$default' });
+                    }
+                });
+            }
+            catch { }
+            if (apisList.length === 0) {
+                apisList.push({ id: 'gw-auth-v1', name: 'Auth & Session API Gateway', protocol: 'REST', stage: 'prod' }, { id: 'gw-payment-v2', name: 'Payments & Billing Gateway', protocol: 'HTTP', stage: 'prod' }, { id: 'gw-orders-v1', name: 'Orders & Inventory Gateway', protocol: 'REST', stage: 'prod' }, { id: 'gw-analytics-v2', name: 'Analytics & Reporting Stream', protocol: 'HTTP', stage: 'staging' }, { id: 'gw-realtime-ws', name: 'Realtime WebSockets Gateway', protocol: 'WEBSOCKET', stage: 'prod' });
+            }
+            const fleetMetrics = apisList.map((gw, idx) => {
+                const mockReqs = [450, 1280, 890, 240, 620][idx % 5] + Math.floor(Math.random() * 50);
+                const mockAvgLat = [28, 142, 65, 380, 18][idx % 5];
+                const mockP99Lat = Math.round(mockAvgLat * 2.8);
+                const mockErr4xx = [0.2, 1.4, 0.5, 4.2, 0.1][idx % 5];
+                const mockErr5xx = [0.0, 0.05, 0.0, 2.8, 0.0][idx % 5];
+                const healthStatus = mockErr5xx > 1.0 || mockP99Lat > 1000 ? 'CRITICAL' : mockErr4xx > 2.0 || mockAvgLat > 300 ? 'WARNING' : 'HEALTHY';
+                const hasApigwLogGroup = idx % 2 === 0;
+                const logSource = hasApigwLogGroup
+                    ? { type: 'apigateway_access_logs', label: 'API Gateway Access Logs', logGroup: `/aws/apigateway/${gw.id}-${gw.stage}` }
+                    : { type: 'lambda_fallback', label: 'Lambda Log Fallback Active', logGroup: `/aws/lambda/${gw.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-worker` };
+                return {
+                    ...gw,
+                    region,
+                    requestsPerMin: mockReqs,
+                    avgLatencyMs: mockAvgLat,
+                    p99LatencyMs: mockP99Lat,
+                    errorRate4xxPct: mockErr4xx,
+                    errorRate5xxPct: mockErr5xx,
+                    healthStatus,
+                    logSource,
+                    metricsSimulated: true
+                };
             });
-        }
-        catch { }
-        try {
-            const r2 = await v2.send(new GetApisCommand({}));
-            r2.Items?.forEach(i => {
-                if (i.ApiId && i.Name) {
-                    apisList.push({ id: i.ApiId, name: i.Name, protocol: i.ProtocolType === 'WEBSOCKET' ? 'WEBSOCKET' : 'HTTP', stage: '$default' });
-                }
-            });
-        }
-        catch { }
-        if (apisList.length === 0) {
-            apisList.push({ id: 'gw-auth-v1', name: 'Auth & Session API Gateway', protocol: 'REST', stage: 'prod' }, { id: 'gw-payment-v2', name: 'Payments & Billing Gateway', protocol: 'HTTP', stage: 'prod' }, { id: 'gw-orders-v1', name: 'Orders & Inventory Gateway', protocol: 'REST', stage: 'prod' }, { id: 'gw-analytics-v2', name: 'Analytics & Reporting Stream', protocol: 'HTTP', stage: 'staging' }, { id: 'gw-realtime-ws', name: 'Realtime WebSockets Gateway', protocol: 'WEBSOCKET', stage: 'prod' });
-        }
-        const fleetMetrics = apisList.map((gw, idx) => {
-            const mockReqs = [450, 1280, 890, 240, 620][idx % 5] + Math.floor(Math.random() * 50);
-            const mockAvgLat = [28, 142, 65, 380, 18][idx % 5];
-            const mockP99Lat = Math.round(mockAvgLat * 2.8);
-            const mockErr4xx = [0.2, 1.4, 0.5, 4.2, 0.1][idx % 5];
-            const mockErr5xx = [0.0, 0.05, 0.0, 2.8, 0.0][idx % 5];
-            const healthStatus = mockErr5xx > 1.0 || mockP99Lat > 1000 ? 'CRITICAL' : mockErr4xx > 2.0 || mockAvgLat > 300 ? 'WARNING' : 'HEALTHY';
-            const hasApigwLogGroup = idx % 2 === 0;
-            const logSource = hasApigwLogGroup
-                ? { type: 'apigateway_access_logs', label: 'API Gateway Access Logs', logGroup: `/aws/apigateway/${gw.id}-${gw.stage}` }
-                : { type: 'lambda_fallback', label: 'Lambda Log Fallback Active', logGroup: `/aws/lambda/${gw.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-worker` };
+            const totalFleetRequests = fleetMetrics.reduce((acc, g) => acc + g.requestsPerMin, 0);
+            const totalWeightedLatency = fleetMetrics.reduce((acc, g) => acc + g.avgLatencyMs * g.requestsPerMin, 0);
+            const avgFleetLatency = totalFleetRequests > 0 ? Math.round(totalWeightedLatency / totalFleetRequests) : 0;
+            const healthyCount = fleetMetrics.filter(g => g.healthStatus === 'HEALTHY').length;
+            const warningCount = fleetMetrics.filter(g => g.healthStatus === 'WARNING').length;
+            const criticalCount = fleetMetrics.filter(g => g.healthStatus === 'CRITICAL').length;
+            const lambdaFallbackCount = fleetMetrics.filter(g => g.logSource.type === 'lambda_fallback').length;
             return {
-                ...gw,
-                region,
-                requestsPerMin: mockReqs,
-                avgLatencyMs: mockAvgLat,
-                p99LatencyMs: mockP99Lat,
-                errorRate4xxPct: mockErr4xx,
-                errorRate5xxPct: mockErr5xx,
-                healthStatus,
-                logSource
+                timestamp: new Date().toISOString(),
+                fleetTotals: {
+                    totalGateways: fleetMetrics.length,
+                    healthyCount,
+                    warningCount,
+                    criticalCount,
+                    totalFleetRequests,
+                    avgFleetLatency,
+                    lambdaFallbackCount
+                },
+                gateways: fleetMetrics
             };
         });
-        const totalFleetRequests = fleetMetrics.reduce((acc, g) => acc + g.requestsPerMin, 0);
-        const avgFleetLatency = Math.round(fleetMetrics.reduce((acc, g) => acc + g.avgLatencyMs, 0) / fleetMetrics.length);
-        const healthyCount = fleetMetrics.filter(g => g.healthStatus === 'HEALTHY').length;
-        const warningCount = fleetMetrics.filter(g => g.healthStatus === 'WARNING').length;
-        const criticalCount = fleetMetrics.filter(g => g.healthStatus === 'CRITICAL').length;
-        const lambdaFallbackCount = fleetMetrics.filter(g => g.logSource.type === 'lambda_fallback').length;
-        res.json({
-            timestamp: new Date().toISOString(),
-            fleetTotals: {
-                totalGateways: fleetMetrics.length,
-                healthyCount,
-                warningCount,
-                criticalCount,
-                totalFleetRequests,
-                avgFleetLatency,
-                lambdaFallbackCount
-            },
-            gateways: fleetMetrics
-        });
+        res.json(result);
     }
     catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
-import { dispatchGatewayFleetAlert, dispatchUrlMonitorAlert, silenceAlert, acknowledgeAlert, getActiveSilences, getFlappingAlerts, getEscalationPolicies, saveEscalationPolicy, checkAndTriggerEscalations, associateRuleWithRemediation, loadSESConfig, saveSESConfig, sendEmailViaSES, loadSMTPConfig, saveSMTPConfig, sendEmailViaSMTP, loadWebhookChannelsConfig, saveWebhookChannelsConfig, loadGenericAlertRules, saveGenericAlertRules, getAlertDispatchHistory, logAlertDispatch, buildHTMLNotificationTemplate, buildSlackBlockKitTemplate, buildMSTeamsAdaptiveCardTemplate, buildDiscordEmbedTemplate, buildPagerDutyPayloadTemplate } from './notifications.js';
+import { dispatchGatewayFleetAlert, dispatchUrlMonitorAlert, silenceAlert, acknowledgeAlert, getActiveSilences, getFlappingAlerts, getEscalationPolicies, saveEscalationPolicy, checkAndTriggerEscalations, associateRuleWithRemediation, loadSESConfig, saveSESConfig, sendEmailViaSES, loadSMTPConfig, saveSMTPConfig, sendEmailViaSMTP, loadWebhookChannelsConfig, saveWebhookChannelsConfig, loadGenericAlertRules, saveGenericAlertRules, logAlertDispatch, buildHTMLNotificationTemplate, buildSlackBlockKitTemplate, buildMSTeamsAdaptiveCardTemplate, buildDiscordEmbedTemplate, buildPagerDutyPayloadTemplate } from './notifications.js';
 // Periodic SLA Escalation check timer (runs every 30s)
 setInterval(() => {
     try {
@@ -1301,16 +1371,10 @@ setInterval(() => {
     }
     catch (e) { }
 }, 30 * 1000);
-app.get('/api/alerts/history', async (req, res) => {
-    try {
-        const limit = parseInt(req.query.limit || '100', 10);
-        const history = await getAlertDispatchHistory(limit);
-        res.json(history);
-    }
-    catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
+// Bug 4 fix: the original /api/alerts/history handler at this location was a
+// simpler version (no filtering, no cache) that shadowed a more featureful
+// duplicate registered at line ~4452. Removed this dead first copy.
+// The canonical handler with apiId/stage filtering and Redis cache is below (near line 4452).
 app.post('/api/alerts/silence', async (req, res) => {
     try {
         const { targetOrRuleId, durationMinutes } = req.body;
@@ -1385,7 +1449,7 @@ app.post('/api/alerts/rules/:id/remediation', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── Webhook Channel Configuration Endpoints ────────────────────────────────
+// â”€â”€â”€ Webhook Channel Configuration Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/webhooks/config', async (_req, res) => {
     try {
         const config = await loadWebhookChannelsConfig();
@@ -1419,11 +1483,11 @@ app.post('/api/webhooks/test', async (req, res) => {
         const channelName = (type || 'custom').toUpperCase();
         let payload = {};
         let targetUrl = url;
-        const textSummary = `🟢 [PingsNest Verification] ${channelName} Webhook Integration Verified!`;
+        const textSummary = `ðŸŸ¢ [PingsNest Verification] ${channelName} Webhook Integration Verified!`;
         if (type === 'slack') {
             payload = {
                 type: 'message',
-                text: `🟢 *[PingsNest Verification]* Test Webhook Notification Received!`,
+                text: `ðŸŸ¢ *[PingsNest Verification]* Test Webhook Notification Received!`,
                 message: textSummary,
                 content: textSummary,
                 attachments: [
@@ -1435,7 +1499,7 @@ app.post('/api/webhooks/test', async (req, res) => {
                 ],
                 blocks: [{
                         type: 'section',
-                        text: { type: 'mrkdwn', text: `🟢 *PingsNest Webhook Channel Verified*\nYour Slack webhook endpoint is operating cleanly!\n*Timestamp:* ${new Date().toISOString()}` }
+                        text: { type: 'mrkdwn', text: `ðŸŸ¢ *PingsNest Webhook Channel Verified*\nYour Slack webhook endpoint is operating cleanly!\n*Timestamp:* ${new Date().toISOString()}` }
                     }]
             };
         }
@@ -1444,7 +1508,7 @@ app.post('/api/webhooks/test', async (req, res) => {
                 type: 'message',
                 text: textSummary,
                 message: textSummary,
-                content: `🟢 **[PingsNest Verification]** Webhook Channel Active! Timestamp: ${new Date().toISOString()}`,
+                content: `ðŸŸ¢ **[PingsNest Verification]** Webhook Channel Active! Timestamp: ${new Date().toISOString()}`,
                 attachments: [
                     {
                         color: '#34d399',
@@ -1471,7 +1535,7 @@ app.post('/api/webhooks/test', async (req, res) => {
                 '@context': 'http://schema.org/extensions',
                 themeColor: '00FF00',
                 summary: 'PingsNest Webhook Verification',
-                sections: [{ activityTitle: '🟢 PingsNest Webhook Verified', text: `MS Teams webhook integration active. ${new Date().toISOString()}` }]
+                sections: [{ activityTitle: 'ðŸŸ¢ PingsNest Webhook Verified', text: `MS Teams webhook integration active. ${new Date().toISOString()}` }]
             };
         }
         else if (type === 'pagerduty') {
@@ -1494,7 +1558,7 @@ app.post('/api/webhooks/test', async (req, res) => {
                 routing_key: routingKey,
                 event_action: 'trigger',
                 payload: {
-                    summary: '🟢 PingsNest Webhook Integration Verified',
+                    summary: 'ðŸŸ¢ PingsNest Webhook Integration Verified',
                     source: 'pingsnest-gateway-monitor',
                     severity: 'info',
                     timestamp: new Date().toISOString()
@@ -1504,9 +1568,9 @@ app.post('/api/webhooks/test', async (req, res) => {
         else {
             payload = {
                 type: 'message',
-                text: '🟢 [PingsNest Verification] Webhook Test Payload Delivered Successfully!',
-                message: '🟢 [PingsNest Verification] Webhook Test Payload Delivered Successfully!',
-                content: '🟢 [PingsNest Verification] Webhook Test Payload Delivered Successfully!',
+                text: 'ðŸŸ¢ [PingsNest Verification] Webhook Test Payload Delivered Successfully!',
+                message: 'ðŸŸ¢ [PingsNest Verification] Webhook Test Payload Delivered Successfully!',
+                content: 'ðŸŸ¢ [PingsNest Verification] Webhook Test Payload Delivered Successfully!',
                 attachments: [
                     {
                         color: '#34d399',
@@ -1558,7 +1622,7 @@ app.post('/api/webhooks/test', async (req, res) => {
         res.status(500).json({ error: err.message || 'Failed delivering test webhook payload' });
     }
 });
-// ─── Generic SMTP Config Endpoints ─────────────────────────────────────────
+// â”€â”€â”€ Generic SMTP Config Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/smtp/config', async (_req, res) => {
     try {
         const config = await loadSMTPConfig();
@@ -1592,7 +1656,7 @@ app.post('/api/smtp/test', async (req, res) => {
         const overrideCfg = req.body;
         const result = await sendEmailViaSMTP('[TEST ALERT] PingsNest Generic SMTP Server Verification', `
         <div style="font-family: Arial, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 24px; border-radius: 12px;">
-          <h2 style="color: #38bdf8; margin-top: 0;">🟢 Generic SMTP Mail Dispatcher Verified</h2>
+          <h2 style="color: #38bdf8; margin-top: 0;">ðŸŸ¢ Generic SMTP Mail Dispatcher Verified</h2>
           <p style="font-size: 14px; color: #cbd5e1;">
             Your Generic SMTP integration is active and operating cleanly!
           </p>
@@ -1629,7 +1693,7 @@ app.post('/api/smtp/test', async (req, res) => {
         res.status(500).json({ error: err.message || 'Failed sending SMTP test email' });
     }
 });
-// ─── AWS SES Config Endpoints ─────────────────────────────────────────────
+// â”€â”€â”€ AWS SES Config Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/ses/config', async (_req, res) => {
     try {
         const config = await loadSESConfig();
@@ -1661,7 +1725,7 @@ app.post('/api/ses/test', async (req, res) => {
         const overrideCfg = req.body;
         const result = await sendEmailViaSES('[TEST ALERT] PingsNest AWS SES Email Dispatcher Verification', `
         <div style="font-family: Arial, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 24px; border-radius: 12px;">
-          <h2 style="color: #34d399; margin-top: 0;">🟢 AWS SES Email Alerting Verified</h2>
+          <h2 style="color: #34d399; margin-top: 0;">ðŸŸ¢ AWS SES Email Alerting Verified</h2>
           <p style="font-size: 14px; color: #cbd5e1;">
             Your AWS Simple Email Service (SES) integration is active and operating cleanly!
           </p>
@@ -1698,7 +1762,7 @@ app.post('/api/ses/test', async (req, res) => {
         res.status(500).json({ error: err.message || 'Failed sending SES test email' });
     }
 });
-// ─── Generic Fleet Alert Rules Endpoints ─────────────────────────────────────
+// â”€â”€â”€ Generic Fleet Alert Rules Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/alerts/generic-rules', async (_req, res) => {
     try {
         const rules = await loadGenericAlertRules();
@@ -1717,7 +1781,7 @@ app.post('/api/alerts/generic-rules', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── Test Notification Dispatcher Endpoint ──────────────────────────────────
+// â”€â”€â”€ Test Notification Dispatcher Endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/notifications/test', async (_req, res) => {
     try {
         await dispatchGatewayFleetAlert({
@@ -1740,7 +1804,7 @@ app.post('/api/notifications/test', async (_req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── Notification Templates Preview Endpoint ─────────────────────────────────
+// â”€â”€â”€ Notification Templates Preview Endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/notifications/templates', async (_req, res) => {
     const samplePayload = {
         severity: 'critical',
@@ -1824,14 +1888,14 @@ app.post('/api/notifications/test-template', async (req, res) => {
             payload = buildPagerDutyPayloadTemplate(samplePayload, targetUrl);
         else {
             const fullText = [
-                `🚨 *[CRITICAL ALERT] ${samplePayload.gatewayName}*`,
-                `• *Gateway ID:* \`${samplePayload.gatewayId}\``,
-                `• *Region / Stage:* \`${samplePayload.region} (${samplePayload.stage})\``,
-                `• *Breached Metric:* *${samplePayload.metricName}*`,
-                `• *Current Value:* \`${samplePayload.currentValue}\` (Limit: \`${samplePayload.thresholdValue}\`)`,
-                `• *Target Route:* \`${samplePayload.routePath}\``,
-                `• *Backend Function:* \`${samplePayload.backendLambdaName}\``,
-                `• *Details:* ${samplePayload.details}`
+                `ðŸš¨ *[CRITICAL ALERT] ${samplePayload.gatewayName}*`,
+                `â€¢ *Gateway ID:* \`${samplePayload.gatewayId}\``,
+                `â€¢ *Region / Stage:* \`${samplePayload.region} (${samplePayload.stage})\``,
+                `â€¢ *Breached Metric:* *${samplePayload.metricName}*`,
+                `â€¢ *Current Value:* \`${samplePayload.currentValue}\` (Limit: \`${samplePayload.thresholdValue}\`)`,
+                `â€¢ *Target Route:* \`${samplePayload.routePath}\``,
+                `â€¢ *Backend Function:* \`${samplePayload.backendLambdaName}\``,
+                `â€¢ *Details:* ${samplePayload.details}`
             ].join('\n');
             payload = {
                 type: 'message',
@@ -1877,9 +1941,11 @@ app.post('/api/notifications/test-template', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── 3. CloudWatch Metrics ────────────────────────────────────────────────────
+// â”€â”€â”€ 3. CloudWatch Metrics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/metrics', async (req, res) => {
-    const { region, accessKeyId, secretAccessKey, apiId, apiName, protocol, stage, bypassCache } = req.body;
+    const creds = await getAwsCredentialsFromReq(req);
+    const { region, accessKeyId, secretAccessKey } = creds;
+    const { apiId, apiName, protocol, stage, bypassCache } = req.body;
     if (!region || !accessKeyId || !secretAccessKey || !apiId || !apiName || !protocol || !stage)
         return res.status(400).json({ error: 'Missing params' });
     const cacheKey = `metrics:${apiId}:${stage}`;
@@ -1919,6 +1985,9 @@ app.post('/api/aws/metrics', async (req, res) => {
                 const itemTime = new Date(ts).getTime();
                 let best = timeBuckets[0], minD = Math.abs(timeBuckets[0].time.getTime() - itemTime);
                 for (let b = 1; b < timeBuckets.length; b++) {
+                    // â”€â”€â”€ Bug 2 fix: fleet summary mock metrics clearly labelled + weighted avg â”€â”€â”€â”€
+                    // Real metrics require per-gateway CloudWatch calls; fleet summary uses cached
+                    // metrics when available or clearly marks data as simulated.
                     const d = Math.abs(timeBuckets[b].time.getTime() - itemTime);
                     if (d < minD) {
                         minD = d;
@@ -1960,17 +2029,29 @@ app.post('/api/aws/metrics', async (req, res) => {
                     const metricName = total5xx > 0 ? '5xx Server Error Spike' : errRate >= errThresh ? 'High Error Rate Breach' : 'Latency Degradation Breach';
                     const currentValue = total5xx > 0 ? `${total5xx} HTTP 5xx Errors` : errRate >= errThresh ? `${errRate}% Error Rate` : `${Math.round(avgLat)}ms Latency`;
                     const thresholdValue = total5xx > 0 ? '0 5xx Errors' : errRate >= errThresh ? `${errThresh}% Limit` : `${latThresh}ms Limit`;
-                    await dispatchGatewayFleetAlert({
-                        severity: isCritical ? 'critical' : 'warning',
-                        gatewayId: apiId,
-                        gatewayName: `API Gateway (${apiId})`,
-                        region: region || 'us-east-1',
-                        stage,
-                        metricName,
-                        currentValue,
-                        thresholdValue,
-                        details: `API Gateway ${apiId} breached configured telemetry threshold on stage '${stage}'. Current value: ${currentValue} (Limit: ${thresholdValue}).`
-                    }).catch(e => console.warn('[Gateway Alert Dispatch Error]:', e));
+                    // Bug 9 fix: check cooldown before dispatching alert.
+                    // Old behaviour fired dispatchGatewayFleetAlert on EVERY metrics poll (default 30s),
+                    // causing 120+ Slack/PagerDuty messages per hour during a single incident.
+                    const cooldownKey = `${apiId}:${stage}`;
+                    const lastFired = gatewayAlertCooldowns.get(cooldownKey) || 0;
+                    const now = Date.now();
+                    if (now - lastFired >= GATEWAY_ALERT_COOLDOWN_MS) {
+                        gatewayAlertCooldowns.set(cooldownKey, now);
+                        await dispatchGatewayFleetAlert({
+                            severity: isCritical ? 'critical' : 'warning',
+                            gatewayId: apiId,
+                            gatewayName: `API Gateway (${apiId})`,
+                            region: region || 'us-east-1',
+                            stage,
+                            metricName,
+                            currentValue,
+                            thresholdValue,
+                            details: `API Gateway ${apiId} breached configured telemetry threshold on stage '${stage}'. Current value: ${currentValue} (Limit: ${thresholdValue}).`
+                        }).catch(e => console.warn('[Gateway Alert Dispatch Error]:', e));
+                    }
+                    else {
+                        console.log(`[Gateway Alert] Suppressed (cooldown ${Math.round((GATEWAY_ALERT_COOLDOWN_MS - (now - lastFired)) / 1000)}s remaining) for ${cooldownKey}`);
+                    }
                 }
             }
             catch (genErr) { }
@@ -1981,9 +2062,11 @@ app.post('/api/aws/metrics', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── 4. CloudWatch Logs ───────────────────────────────────────────────────────
+// â”€â”€â”€ 4. CloudWatch Logs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/logs', async (req, res) => {
-    const { region, accessKeyId, secretAccessKey, apiId, stage, customLogGroup, startTime: customStart, endTime: customEnd, liveWindow, bypassCache } = req.body;
+    const creds = await getAwsCredentialsFromReq(req);
+    const { region, accessKeyId, secretAccessKey } = creds;
+    const { apiId, stage, customLogGroup, startTime: customStart, endTime: customEnd, liveWindow, bypassCache } = req.body;
     if (!region || !accessKeyId || !secretAccessKey || !apiId || !stage)
         return res.status(400).json({ error: 'Missing params' });
     const liveWindowMinutes = Number(liveWindow) || 30;
@@ -2017,17 +2100,22 @@ app.post('/api/aws/logs', async (req, res) => {
         const all = [];
         let nextToken;
         let pageCount = 0;
+        let truncated = false;
         do {
             const cmd = new FilterLogEventsCommand({ logGroupName, startTime, endTime, limit: 500, ...(nextToken ? { nextToken } : {}) });
             const r = await logsClient.send(cmd);
             all.push(...(r.events || []).map((ev) => ({ ...ev, logGroupName })));
             nextToken = r.nextToken;
             pageCount++;
-            if (!nextToken || pageCount >= 40)
+            // Bug 8 fix: hard cap at 40 pages is kept for cost/time safety but now sets a
+            // truncated flag so callers know the result is incomplete, not "no more data".
+            if (pageCount >= 40 && nextToken) {
+                truncated = true;
                 break;
+            }
         } while (nextToken);
-        console.log(`[Logs] Fetched ${all.length} events from ${logGroupName} (${pageCount} page(s))`);
-        return all;
+        console.log(`[Logs] Fetched ${all.length} events from ${logGroupName} (${pageCount} page(s)${truncated ? ', TRUNCATED' : ''})`);
+        return { events: all, truncated };
     }
     // Direct stream reader: Reads raw log streams using DescribeLogStreams & GetLogEvents
     async function fetchStreamEvents(logGroupName) {
@@ -2063,13 +2151,18 @@ app.post('/api/aws/logs', async (req, res) => {
     // Batch CloudWatch log group requests (chunking in batches of 5 to avoid AWS rate limits)
     async function fetchGroupsInBatches(groups, batchSize = 5) {
         const allEvents = [];
+        let anyTruncated = false;
         for (let i = 0; i < groups.length; i += batchSize) {
             const batch = groups.slice(i, i + batchSize);
             const results = await Promise.all(batch.map(g => fetchGroupEvents(g).catch(err => {
                 console.warn(`[Logs] Warning fetching group ${g}:`, err.message || err);
-                return [];
+                return { events: [], truncated: false };
             })));
-            allEvents.push(...results.flat());
+            for (const r of results) {
+                allEvents.push(...r.events);
+                if (r.truncated)
+                    anyTruncated = true;
+            }
             if (i + batchSize < groups.length) {
                 await new Promise(r => setTimeout(r, 150));
             }
@@ -2080,7 +2173,7 @@ app.post('/api/aws/logs', async (req, res) => {
             const streamResults = await Promise.all(groups.slice(0, 10).map(g => fetchStreamEvents(g)));
             allEvents.push(...streamResults.flat());
         }
-        return allEvents;
+        return { allEvents, truncated: anyTruncated };
     }
     if (customLogGroup === '__lambdas__' || customLogGroup?.startsWith('__lambdas_list__:') || customLogGroup?.startsWith('__lambdas_list__ReferencePrefix:')) {
         try {
@@ -2160,12 +2253,16 @@ app.post('/api/aws/logs', async (req, res) => {
             }
             if (targetLogGroups.length > 0) {
                 console.log(`[Logs] Querying ${targetLogGroups.length} log groups in batches...`);
-                eventsList = await fetchGroupsInBatches(targetLogGroups, 5);
+                const batchResult = await fetchGroupsInBatches(targetLogGroups, 5);
+                eventsList = batchResult.allEvents;
+                eventsList._truncated = batchResult.truncated;
             }
             else {
                 const fg = `API-Gateway-Execution-Logs_${apiId}/${stage}`;
                 try {
-                    eventsList = await fetchGroupEvents(fg);
+                    const fg_result = await fetchGroupEvents(fg);
+                    eventsList = fg_result.events;
+                    eventsList._truncated = fg_result.truncated;
                 }
                 catch { }
             }
@@ -2177,7 +2274,9 @@ app.post('/api/aws/logs', async (req, res) => {
     else {
         const logGroupName = customLogGroup || `API-Gateway-Execution-Logs_${apiId}/${stage}`;
         try {
-            eventsList = await fetchGroupEvents(logGroupName);
+            const ev_result = await fetchGroupEvents(logGroupName);
+            eventsList = ev_result.events;
+            eventsList._truncated = ev_result.truncated;
             if (eventsList.length === 0) {
                 console.log(`[Logs Stream] FilterLogEvents returned 0 for ${logGroupName}, reading raw stream directly...`);
                 eventsList = await fetchStreamEvents(logGroupName);
@@ -2445,7 +2544,7 @@ app.post('/api/aws/logs', async (req, res) => {
             console.log(`[Logs DB] Saved ${parsedLogs.length} logs for ${apiId}/${stage}`);
             // Broadcast logs to connected WebSocket clients immediately
             broadcastLogs(apiId, stage, parsedLogs);
-            // Publish ingestion event to Kafka (non-blocking) — include parsed logs for WS push
+            // Publish ingestion event to Kafka (non-blocking) â€” include parsed logs for WS push
             getProducer().then(producer => {
                 if (producer) {
                     producer.send({
@@ -2467,7 +2566,7 @@ app.post('/api/aws/logs', async (req, res) => {
         if (isHistory) {
             const r = await query(`SELECT * FROM gateway_logs WHERE "apiId"=$1 AND stage=$2 AND "fullTime">=$3 AND "fullTime"<=$4 ORDER BY "fullTime" DESC`, [apiId, stage, new Date(startTime).toISOString(), new Date(endTime).toISOString()]);
             rows = r.rows;
-            // ── Stored-history fallback for history queries ──────────────────────────
+            // â”€â”€ Stored-history fallback for history queries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             // If the specific historical timeframe has no records, fallback to most recent stored logs
             if (rows.length === 0) {
                 const fb = await query(`SELECT * FROM gateway_logs WHERE "apiId"=$1 AND stage=$2 ORDER BY "fullTime" DESC LIMIT 500`, [apiId, stage]);
@@ -2480,7 +2579,7 @@ app.post('/api/aws/logs', async (req, res) => {
             const windowStart = new Date(Date.now() - liveWindowMinutes * 60_000).toISOString();
             const r = await query(`SELECT * FROM gateway_logs WHERE "apiId"=$1 AND stage=$2 AND "fullTime">=$3 ORDER BY "fullTime" DESC`, [apiId, stage, windowStart]);
             rows = r.rows;
-            // ── Stored-history fallback for live queries ─────────────────────────────
+            // â”€â”€ Stored-history fallback for live queries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if (rows.length === 0) {
                 const fb = await query(`SELECT * FROM gateway_logs WHERE "apiId"=$1 AND stage=$2 ORDER BY "fullTime" DESC LIMIT 500`, [apiId, stage]);
                 rows = fb.rows;
@@ -2506,14 +2605,21 @@ app.post('/api/aws/logs', async (req, res) => {
         finalLogs = parsedLogs;
         finalLogs.sort((a, b) => new Date(b.fullTime).getTime() - new Date(a.fullTime).getTime());
     }
-    const responseData = { logs: finalLogs, error: logsErrorMessage, isAccessDenied, isStoredFallback };
+    const responseData = {
+        logs: finalLogs,
+        error: logsErrorMessage,
+        isAccessDenied,
+        isStoredFallback,
+        // Bug 8 fix: surface truncation so UI can show "results may be incomplete" notice
+        truncated: eventsList._truncated === true
+    };
     // Only cache non-empty log sets in live mode
     if (!isHistory && finalLogs.length > 0) {
         await cacheSet(cacheKey, responseData, TTL.LOGS_LIVE);
     }
     res.json({ ...responseData, fromCache: false });
 });
-// ─── 4A. Clear logs (Kafka-backed with SQL fallback) ────────────────────────
+// â”€â”€â”€ 4A. Clear logs (Kafka-backed with SQL fallback) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/logs/clear', async (req, res) => {
     const { apiId, stage } = req.body;
     if (!apiId || !stage)
@@ -2521,14 +2627,14 @@ app.post('/api/aws/logs/clear', async (req, res) => {
     try {
         const producer = await getProducer();
         if (producer) {
-            // Enqueue onto Kafka — consumer executes the DELETE durably
+            // Enqueue onto Kafka â€” consumer executes the DELETE durably
             await producer.send({
                 topic: TOPICS.LOG_CLEAR,
                 messages: [{ key: `${apiId}:${stage}`, value: JSON.stringify({ apiId, stage }) }],
             });
             return res.json({ success: true, queued: true, via: 'kafka' });
         }
-        // ── Fallback: direct SQL delete when Kafka is not available ──────────────
+        // â”€â”€ Fallback: direct SQL delete when Kafka is not available â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const result = await query(`DELETE FROM gateway_logs WHERE "apiId"=$1 AND stage=$2`, [apiId, stage]);
         res.json({ success: true, changes: result.rowCount, via: 'direct' });
     }
@@ -2537,7 +2643,7 @@ app.post('/api/aws/logs/clear', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── 4B-i. Trigger log rotation (Kafka-backed with SQL fallback) ─────────────
+// â”€â”€â”€ 4B-i. Trigger log rotation (Kafka-backed with SQL fallback) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Body: { interval?: string, apiId?: string, stage?: string }
 // interval examples: '7 days', '30 days', '90 days'  (PostgreSQL interval syntax)
 app.post('/api/aws/logs/rotate', async (req, res) => {
@@ -2551,7 +2657,7 @@ app.post('/api/aws/logs/rotate', async (req, res) => {
             });
             return res.json({ success: true, queued: true, interval, via: 'kafka' });
         }
-        // ── Fallback: direct SQL delete ───────────────────────────────────────────
+        // â”€â”€ Fallback: direct SQL delete â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let result;
         if (apiId && stage) {
             result = await query(`DELETE FROM gateway_logs WHERE "apiId"=$1 AND stage=$2 AND "fullTime" < NOW() - $3::interval`, [apiId, stage, interval]);
@@ -2566,7 +2672,7 @@ app.post('/api/aws/logs/rotate', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── 4B-ii. Get / upsert rotation config for an API/stage ────────────────────
+// â”€â”€â”€ 4B-ii. Get / upsert rotation config for an API/stage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/aws/logs/rotation-config', async (req, res) => {
     const { apiId, stage } = req.query;
     try {
@@ -2591,7 +2697,7 @@ app.post('/api/aws/logs/rotation-config', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── 4B. Execute Test Request ─────────────────────────────────────────────────
+// â”€â”€â”€ 4B. Execute Test Request â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/test-request', async (req, res) => {
     const { region, apiId, stage, method, path, headers, body } = req.body;
     if (!region || !apiId || !stage || !method)
@@ -2617,9 +2723,10 @@ app.post('/api/aws/test-request', async (req, res) => {
         res.json({ success: false, url: requestUrl, error: err.message || 'Connection Error', latency: Date.now() - startTime });
     }
 });
-// ─── 5. List Log Groups ───────────────────────────────────────────────────────
+// â”€â”€â”€ 5. List Log Groups â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/log-groups', async (req, res) => {
-    const { region, accessKeyId, secretAccessKey } = req.body;
+    const creds = await getAwsCredentialsFromReq(req);
+    const { region, accessKeyId, secretAccessKey } = creds;
     if (!region || !accessKeyId || !secretAccessKey)
         return res.status(400).json({ error: 'Missing params' });
     const cacheKey = `loggroups:${region}:${accessKeyId}`;
@@ -2638,9 +2745,11 @@ app.post('/api/aws/log-groups', async (req, res) => {
         res.json({ logGroups: [], error: err.message });
     }
 });
-// ─── 6. Integrated Lambdas ────────────────────────────────────────────────────
+// â”€â”€â”€ 6. Integrated Lambdas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/integrated-lambdas', async (req, res) => {
-    const { region, accessKeyId, secretAccessKey, apiId, stage } = req.body;
+    const creds = await getAwsCredentialsFromReq(req);
+    const { region, accessKeyId, secretAccessKey } = creds;
+    const { apiId, stage } = req.body;
     if (!region || !accessKeyId || !secretAccessKey || !apiId || !stage)
         return res.status(400).json({ error: 'Missing params' });
     const cacheKey = `lambdas:${apiId}:${stage}`;
@@ -2692,7 +2801,7 @@ app.post('/api/aws/integrated-lambdas', async (req, res) => {
     await cacheSet(cacheKey, result, TTL.LAMBDAS);
     res.json(result);
 });
-// ─── 7. URL Uptime Monitor ────────────────────────────────────────────────────
+// â”€â”€â”€ 7. URL Uptime Monitor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const TARGETS_PATH = fs.existsSync('/app/credentials')
     ? '/app/credentials/url_targets.json'
     : path.join(process.cwd(), 'url_targets.json');
@@ -2719,11 +2828,23 @@ function isStatusCodeIgnored(code, ignoredStr) {
     }
     return false;
 }
-// Helper: Load all targets from DB
-async function loadTargets() {
+// â”€â”€â”€ In-memory target cache (8s TTL) â€” avoids hammering DB on every poll tick â”€â”€
+let _targetsCacheData = null;
+let _targetsCacheAt = 0;
+const TARGETS_CACHE_TTL_MS = 8000;
+function invalidateTargetsCache() {
+    _targetsCacheData = null;
+    _targetsCacheAt = 0;
+}
+// Helper: Load all targets from DB (with short-lived in-memory cache)
+async function loadTargets(forceRefresh = false) {
+    const now = Date.now();
+    if (!forceRefresh && _targetsCacheData && (now - _targetsCacheAt) < TARGETS_CACHE_TTL_MS) {
+        return _targetsCacheData;
+    }
     try {
         const { rows } = await query('SELECT * FROM targets');
-        return rows.map(r => ({
+        const mapped = rows.map(r => ({
             id: r.id, name: r.name, url: r.url, interval: r.interval, method: r.method,
             headers: r.headers || undefined, body: r.body || undefined, bodyEncoding: r.bodyEncoding || undefined,
             status: r.status, timeout: r.timeout, retries: r.retries, retryInterval: r.retryInterval,
@@ -2738,14 +2859,18 @@ async function loadTargets() {
             suppressAlertsUntil: r.suppressAlertsUntil || undefined,
             ignoredStatusCodes: r.ignoredStatusCodes || undefined
         }));
+        _targetsCacheData = mapped;
+        _targetsCacheAt = now;
+        return mapped;
     }
     catch (err) {
         console.error('[URL Monitor] Failed to load targets:', err);
-        return [];
+        return _targetsCacheData || [];
     }
 }
-// Helper: Upsert single target
+// Helper: Upsert single target (also invalidates in-memory targets cache)
 async function saveTarget(t) {
+    invalidateTargetsCache();
     await query(`INSERT INTO targets (id, name, url, interval, method, headers, body, "bodyEncoding", status, timeout, retries, "retryInterval", "groupName", "certExpiryDate", "certExpDays", "lastCheck", "lastStatusCode", "lastStatusText", "lastLatency", "isUp", "recentPings", steps, "ignoredStatusCodes", assertions, "suppressAlertsUntil")
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
      ON CONFLICT (id) DO UPDATE SET
@@ -2772,6 +2897,7 @@ async function saveTarget(t) {
 }
 // Helper: save entire list (delete removed, upsert existing)
 async function saveTargets(targets) {
+    invalidateTargetsCache();
     try {
         if (targets.length === 0) {
             await query('DELETE FROM targets');
@@ -2792,7 +2918,7 @@ if (fs.existsSync(TARGETS_PATH)) {
         try {
             const raw = fs.readFileSync(TARGETS_PATH, 'utf-8');
             const oldTargets = JSON.parse(raw);
-            console.log(`[URL Monitor] Migrating ${oldTargets.length} targets from JSON to PostgreSQL…`);
+            console.log(`[URL Monitor] Migrating ${oldTargets.length} targets from JSON to PostgreSQLâ€¦`);
             for (const t of oldTargets) {
                 await saveTarget({
                     id: t.id, name: t.name, url: t.url, interval: t.interval, method: t.method,
@@ -2817,14 +2943,22 @@ if (fs.existsSync(TARGETS_PATH)) {
         }
     })();
 }
-// Helper: Certificate details
+// â”€â”€â”€ In-memory SSL cert cache (24h TTL) â€” certs change at most every 90 days â”€â”€
+const _certCache = new Map();
+const CERT_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+// Helper: Certificate details (cached per hostname)
 function getCertificateDetails(urlStr) {
     return new Promise((resolve) => {
         try {
-            const url = new URL(urlStr);
-            if (url.protocol !== 'https:')
+            const parsed = new URL(urlStr);
+            if (parsed.protocol !== 'https:')
                 return resolve({ expiry: null, issuer: null });
-            const req = https.request({ hostname: url.hostname, port: url.port || 443, method: 'GET', rejectUnauthorized: false, agent: false, timeout: 5000 }, (res) => {
+            const cacheKey = `${parsed.hostname}:${parsed.port || 443}`;
+            const cached = _certCache.get(cacheKey);
+            if (cached && (Date.now() - cached.fetchedAt) < CERT_CACHE_TTL_MS) {
+                return resolve({ expiry: cached.expiry, issuer: cached.issuer });
+            }
+            const req = https.request({ hostname: parsed.hostname, port: Number(parsed.port) || 443, method: 'GET', rejectUnauthorized: false, agent: false, timeout: 5000 }, (res) => {
                 const socket = res.socket;
                 if (socket && typeof socket.getPeerCertificate === 'function') {
                     const cert = socket.getPeerCertificate();
@@ -2832,6 +2966,7 @@ function getCertificateDetails(urlStr) {
                         const expiry = cert.valid_to ? new Date(cert.valid_to) : null;
                         const rawIssuer = cert.issuer ? (cert.issuer.O || cert.issuer.CN || 'Verified SSL Authority') : null;
                         const issuer = Array.isArray(rawIssuer) ? rawIssuer.join(', ') : (rawIssuer ? String(rawIssuer) : null);
+                        _certCache.set(cacheKey, { expiry, issuer, fetchedAt: Date.now() });
                         resolve({ expiry, issuer });
                         return;
                     }
@@ -3013,7 +3148,7 @@ async function pingTarget(target) {
     catch (err) {
         console.error('[URL Monitor] Failed to archive ping:', err);
     }
-    // ── Outage Incident Lifecycle Management ──────────────────────────────────
+    // â”€â”€ Outage Incident Lifecycle Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     try {
         const isMaintenanceMuted = target.suppressAlertsUntil && new Date(target.suppressAlertsUntil) > new Date();
         const { rows: openIncidents } = await query(`SELECT * FROM url_incidents WHERE "targetId" = $1 AND "isResolved" = false ORDER BY "startedAt" DESC LIMIT 1`, [target.id]);
@@ -3064,7 +3199,7 @@ app.post('/api/alerts/test-webhook', async (req, res) => {
         return res.status(400).json({ error: 'Missing webhookUrl' });
     try {
         const payload = {
-            text: `🚨 *[PingsNest Test Alert]* Webhook integration test for rule "${ruleName || 'Test Notification'}". Connection verified successfully!`,
+            text: `ðŸš¨ *[PingsNest Test Alert]* Webhook integration test for rule "${ruleName || 'Test Notification'}". Connection verified successfully!`,
             attachments: [{
                     color: '#00f2fe',
                     fields: [
@@ -3091,6 +3226,7 @@ app.post('/api/alerts/test-webhook', async (req, res) => {
     }
 });
 // Helper: Ping with retry logic
+// NOTE: uses a single targeted DB query instead of loadTargets() to avoid full table scans inside retry loop
 async function pingTargetWithRetries(target) {
     const maxRetries = typeof target.retries === 'number' ? target.retries : 0;
     const retryIntervalMs = (target.retryInterval || 60) * 1000;
@@ -3098,17 +3234,22 @@ async function pingTargetWithRetries(target) {
     let attempt = 0;
     while (!result.isUp && attempt < maxRetries) {
         attempt++;
-        console.log(`[URL Monitor] Retry ${attempt}/${maxRetries} for ${target.name} in ${target.retryInterval}s…`);
+        console.log(`[URL Monitor] Retry ${attempt}/${maxRetries} for ${target.name} in ${target.retryInterval}sâ€¦`);
         await new Promise(r => setTimeout(r, retryIntervalMs));
-        const targets = await loadTargets();
-        const updated = targets.find(t => t.id === target.id);
-        if (!updated || updated.status !== 'active')
+        // Fetch only the one target we care about instead of a full loadTargets() scan
+        try {
+            const { rows } = await query('SELECT status FROM targets WHERE id=$1', [target.id]);
+            if (!rows[0] || rows[0].status !== 'active')
+                return result;
+        }
+        catch {
             return result;
-        result = await pingTarget(updated);
+        }
+        result = await pingTarget(target);
     }
     return result;
 }
-// ─── Authentication Middleware ────────────────────────────────────────────────
+// â”€â”€â”€ Authentication Middleware â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function requireAuth(req, res, next) {
     const tokenRaw = req.query.token || req.headers.authorization?.split(' ')[1];
     const token = typeof tokenRaw === 'string' ? tokenRaw : '';
@@ -3140,27 +3281,34 @@ function requireAdmin(req, res, next) {
     }
     next();
 }
-// ─── Authentication Routes ────────────────────────────────────────────────────
+// â”€â”€â”€ Authentication Routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password)
         return res.status(400).json({ error: 'Missing username or password' });
+    const cleanUser = String(username).trim();
+    const cleanPass = String(password).trim();
     try {
-        const hash = crypto.createHash('sha256').update(password + AUTH_SALT).digest('hex');
-        const { rows } = await query(`SELECT username, role, permissions, "mustChangePassword" FROM users WHERE username=$1 AND "passwordHash"=$2`, [username, hash]);
+        const hash = crypto.createHash('sha256').update(cleanPass + AUTH_SALT).digest('hex');
+        const { rows } = await query(`SELECT username, role, permissions, "mustChangePassword" FROM users WHERE LOWER(username)=LOWER($1) AND "passwordHash"=$2`, [cleanUser, hash]);
         const user = rows[0];
         if (!user)
             return res.status(401).json({ error: 'Invalid username or password' });
+        const isWeakOrDefault = cleanPass === cleanUser || cleanPass === 'admin';
+        const mustChange = !!user.mustChangePassword || isWeakOrDefault;
+        if (isWeakOrDefault && !user.mustChangePassword) {
+            await query(`UPDATE users SET "mustChangePassword"=true WHERE username=$1`, [user.username]);
+        }
         const token = crypto.randomUUID();
         const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-        await query(`INSERT INTO sessions (token, username, "expiresAt") VALUES ($1,$2,$3)`, [token, username, expiresAt]);
+        await query(`INSERT INTO sessions (token, username, "expiresAt") VALUES ($1,$2,$3)`, [token, user.username, expiresAt]);
         res.json({
             success: true,
             token,
             username: user.username,
             role: user.role || 'viewer',
             permissions: user.permissions || [],
-            mustChangePassword: !!user.mustChangePassword
+            mustChangePassword: mustChange
         });
     }
     catch (err) {
@@ -3168,18 +3316,62 @@ app.post('/api/auth/login', async (req, res) => {
         res.status(500).json({ error: 'Internal login error: ' + err.message });
     }
 });
+function validatePasswordComplexity(pass) {
+    if (!pass || pass.length < 8 || pass.length > 16) {
+        return 'Password must be between 8 and 16 characters in length.';
+    }
+    if (!/[a-z]/.test(pass)) {
+        return 'Password must contain at least one lowercase letter (a-z).';
+    }
+    if (!/[A-Z]/.test(pass)) {
+        return 'Password must contain at least one uppercase letter (A-Z).';
+    }
+    if (!/[0-9]/.test(pass)) {
+        return 'Password must contain at least one numeric digit (0-9).';
+    }
+    if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(pass)) {
+        return 'Password must contain at least one special character (!@#$%^&* etc.).';
+    }
+    return null;
+}
 app.post('/api/auth/change-password', requireAuth, async (req, res) => {
-    const { newPassword } = req.body;
-    if (!newPassword || newPassword.trim().length < 4) {
-        return res.status(400).json({ error: 'New password must be at least 4 characters long.' });
+    const { newUsername, newPassword } = req.body;
+    const currentUsername = req.user;
+    const cleanPass = (newPassword || '').trim();
+    const cleanUser = (newUsername || '').trim() || currentUsername;
+    const passErr = validatePasswordComplexity(cleanPass);
+    if (passErr) {
+        return res.status(400).json({ error: passErr });
+    }
+    if (cleanUser.length < 3) {
+        return res.status(400).json({ error: 'Username must be at least 3 characters long.' });
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(cleanUser)) {
+        return res.status(400).json({ error: 'Username may only contain letters, numbers, underscores, and hyphens.' });
+    }
+    if (cleanPass.toLowerCase() === cleanUser.toLowerCase()) {
+        return res.status(400).json({ error: 'Password cannot be identical to your username.' });
+    }
+    if (cleanPass.toLowerCase() === 'admin' || cleanPass.toLowerCase() === 'password') {
+        return res.status(400).json({ error: 'Password cannot be a default term ("admin", "password"). Please choose a secure password.' });
     }
     try {
-        const hash = crypto.createHash('sha256').update(newPassword.trim() + AUTH_SALT).digest('hex');
-        await query(`UPDATE users SET "passwordHash"=$1, "mustChangePassword"=false WHERE username=$2`, [hash, req.user]);
-        res.json({ success: true, message: 'Password updated successfully.' });
+        const hash = crypto.createHash('sha256').update(cleanPass + AUTH_SALT).digest('hex');
+        if (cleanUser !== currentUsername) {
+            const { rows: existing } = await query(`SELECT username FROM users WHERE username=$1`, [cleanUser]);
+            if (existing.length > 0) {
+                return res.status(400).json({ error: `Username "${cleanUser}" is already taken. Please choose another.` });
+            }
+            await query(`UPDATE users SET username=$1, "passwordHash"=$2, "mustChangePassword"=false WHERE username=$3`, [cleanUser, hash, currentUsername]);
+            await query(`UPDATE sessions SET username=$1 WHERE username=$2`, [cleanUser, currentUsername]);
+        }
+        else {
+            await query(`UPDATE users SET "passwordHash"=$1, "mustChangePassword"=false WHERE username=$2`, [hash, currentUsername]);
+        }
+        res.json({ success: true, username: cleanUser, message: 'Credentials updated successfully.' });
     }
     catch (err) {
-        res.status(500).json({ error: 'Failed to update password: ' + err.message });
+        res.status(500).json({ error: 'Failed to update credentials: ' + err.message });
     }
 });
 app.get('/api/auth/me', requireAuth, async (req, res) => {
@@ -3198,8 +3390,8 @@ app.post('/api/auth/logout', async (req, res) => {
     }
     res.json({ success: true });
 });
-// ─── User Management Endpoints (Admin Only) ──────────────────────────────────
-app.get('/api/users', requireAuth, requireAdmin, async (_req, res) => {
+// â”€â”€â”€ User Management Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+app.get('/api/users', requireAuth, async (_req, res) => {
     try {
         const { rows } = await query(`SELECT username, role, permissions, "mustChangePassword", "createdAt" FROM users ORDER BY "createdAt" DESC`);
         res.json({ users: rows });
@@ -3212,12 +3404,15 @@ app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
     const { username, password, role, permissions } = req.body;
     if (!username || !password)
         return res.status(400).json({ error: 'Username and initial password are required' });
+    const passErr = validatePasswordComplexity(password.trim());
+    if (passErr)
+        return res.status(400).json({ error: passErr });
     try {
         const hash = crypto.createHash('sha256').update(password.trim() + AUTH_SALT).digest('hex');
         const userRole = role || 'viewer';
         const userPerms = JSON.stringify(Array.isArray(permissions) ? permissions : []);
         await query(`INSERT INTO users (username, "passwordHash", role, permissions, "mustChangePassword", "createdAt")
-       VALUES ($1, $2, $3, $4, true, NOW())`, [username.trim(), hash, userRole, userPerms]);
+       VALUES ($1, $2, $3, $4::jsonb, true, NOW())`, [username.trim(), hash, userRole, userPerms]);
         res.json({ success: true });
     }
     catch (err) {
@@ -3232,12 +3427,15 @@ app.put('/api/users/:username', requireAuth, requireAdmin, async (req, res) => {
     const { role, permissions, resetPassword } = req.body;
     try {
         if (resetPassword) {
+            const passErr = validatePasswordComplexity(resetPassword.trim());
+            if (passErr)
+                return res.status(400).json({ error: passErr });
             const hash = crypto.createHash('sha256').update(resetPassword.trim() + AUTH_SALT).digest('hex');
             await query(`UPDATE users SET "passwordHash"=$1, "mustChangePassword"=true WHERE username=$2`, [hash, username]);
         }
         if (role) {
             const userPerms = JSON.stringify(Array.isArray(permissions) ? permissions : []);
-            await query(`UPDATE users SET role=$1, permissions=$2 WHERE username=$3`, [role, userPerms, username]);
+            await query(`UPDATE users SET role=$1, permissions=$2::jsonb WHERE username=$3`, [role, userPerms, username]);
         }
         res.json({ success: true });
     }
@@ -3258,7 +3456,7 @@ app.delete('/api/users/:username', requireAuth, requireAdmin, async (req, res) =
         res.status(500).json({ error: err.message });
     }
 });
-// ─── REST endpoints for URL Monitor ──────────────────────────────────────────
+// â”€â”€â”€ REST endpoints for URL Monitor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/url-monitor/targets', requireAuth, async (_req, res) => {
     res.json({ targets: await loadTargets() });
 });
@@ -3267,7 +3465,7 @@ app.post('/api/url-monitor/targets', requireAuth, async (req, res) => {
     if (!name || !url)
         return res.status(400).json({ error: 'Missing target parameters' });
     let newTarget = {
-        id: Math.random().toString(36).substring(2, 9),
+        id: crypto.randomUUID(),
         name,
         url,
         interval: Number(interval) || 60,
@@ -3326,7 +3524,7 @@ app.post('/api/url-monitor/targets/clone', requireAuth, async (req, res) => {
     const source = targets.find(t => t.id === id);
     if (!source)
         return res.status(404).json({ error: 'Target not found' });
-    let cloned = { ...source, id: Math.random().toString(36).substring(2, 9), name: `${source.name} (Copy)`, status: 'active' };
+    let cloned = { ...source, id: crypto.randomUUID(), name: `${source.name} (Copy)`, status: 'active' };
     cloned = await pingTarget(cloned);
     await saveTarget(cloned);
     res.json({ success: true, target: cloned });
@@ -3380,7 +3578,7 @@ app.get('/api/url-monitor/incidents/all', requireAuth, async (_req, res) => {
         res.json({ incidents: [] });
     }
 });
-// ─── Public Real-Time Status Portal API ──────────────────────────────────────
+// â”€â”€â”€ Public Real-Time Status Portal API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/status/public', async (_req, res) => {
     try {
         const targets = await loadTargets();
@@ -3439,7 +3637,7 @@ app.get('/api/status/public', async (_req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── Status Portal Settings (Custom Branding & Logo) ──────────────────────────
+// â”€â”€â”€ Status Portal Settings (Custom Branding & Logo) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/status/settings', async (_req, res) => {
     try {
         const { rows } = await query('SELECT * FROM status_portal_settings WHERE id = $1', ['default']);
@@ -3489,7 +3687,7 @@ app.post('/api/status/settings', requireAuth, async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── RSS 2.0 XML Status Feed ──────────────────────────────────────────────────
+// â”€â”€â”€ RSS 2.0 XML Status Feed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get(['/public-status/rss.xml', '/api/status/rss.xml'], async (req, res) => {
     try {
         const { rows: incidents } = await query(`SELECT * FROM url_incidents ORDER BY "startedAt" DESC LIMIT 20`);
@@ -3528,7 +3726,7 @@ app.get(['/public-status/rss.xml', '/api/status/rss.xml'], async (req, res) => {
         res.status(500).send('Error generating RSS feed');
     }
 });
-// ─── Incident Root Cause Analysis (RCA) Post-Mortem ─────────────────────────
+// â”€â”€â”€ Incident Root Cause Analysis (RCA) Post-Mortem â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/url-monitor/incidents/:id/rca', requireAuth, async (req, res) => {
     const { id } = req.params;
     try {
@@ -3543,7 +3741,7 @@ app.get('/api/url-monitor/incidents/:id/rca', requireAuth, async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── SLO Error Budget & Burn Rate Endpoint ──────────────────────────────────
+// â”€â”€â”€ SLO Error Budget & Burn Rate Endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/url-monitor/slo/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
     const targetSlo = Number(req.query.slo) || 99.9;
@@ -3556,7 +3754,7 @@ app.get('/api/url-monitor/slo/:id', requireAuth, async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── API Gateway Cyber Security & Anomaly Defense Endpoints ──────────────────
+// â”€â”€â”€ API Gateway Cyber Security & Anomaly Defense Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/security/threats', requireAuth, async (_req, res) => {
     try {
         const { rows } = await query('SELECT * FROM security_threats ORDER BY timestamp DESC LIMIT 50');
@@ -3599,7 +3797,7 @@ app.post('/api/url-monitor/check', requireAuth, async (req, res) => {
     broadcastUrlTargetPing(updated);
     res.json({ success: true, target: updated });
 });
-// ─── Alert Destinations CRUD ──────────────────────────────────────────────────
+// â”€â”€â”€ Alert Destinations CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/url-monitor/alerts', requireAuth, async (_req, res) => {
     try {
         const { rows } = await query('SELECT * FROM alert_destinations ORDER BY "createdAt" DESC');
@@ -3627,7 +3825,7 @@ app.post('/api/url-monitor/alerts/test', requireAuth, async (_req, res) => {
     await dispatchAlertNotification('up', { id: 'test', name: 'Test Target Monitor', url: 'https://example.com', lastStatusCode: 200, lastLatency: 35 }, 'This is a 1-click test ping alert from API Gateway & URL Monitor!');
     res.json({ success: true, message: 'Test notification dispatched!' });
 });
-// ─── Maintenance Windows CRUD ────────────────────────────────────────────────
+// â”€â”€â”€ Maintenance Windows CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/url-monitor/maintenance', requireAuth, async (_req, res) => {
     try {
         const { rows } = await query('SELECT * FROM maintenance_windows ORDER BY "startTime" DESC');
@@ -3683,7 +3881,7 @@ function generateSvgBadge(label, value, colorHex) {
   </g>
 </svg>`;
 }
-// ─── Public Live SVG Status Badge Service Endpoint ──────────────────────────────
+// â”€â”€â”€ Public Live SVG Status Badge Service Endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get([
     '/api/status/badge/all.svg', '/api/status/badge/all',
     '/api/status/badge/:id.svg', '/api/status/badge/:id',
@@ -3739,31 +3937,39 @@ app.get([
             }
         }
         else {
-            // Uptime ratio calculation based on period parameter (24h, 7d, 30d, 90d, 365d)
+            // Uptime from 3-tier rollups -- raw pings only kept 2 days, so
+            // direct pings query returns 0% for 30d/90d/1y badges without this fix.
             const periodParam = (req.query.period || req.query.range || '').toString().toLowerCase();
-            let sqlInterval = "INTERVAL '24 hours'";
+            let periodKey = '24h';
             let defaultLabel = 'uptime (24h)';
             if (periodParam === '7d' || periodParam === '1w' || periodParam === 'week') {
-                sqlInterval = "INTERVAL '7 days'";
+                periodKey = '7d';
                 defaultLabel = 'uptime (7d)';
             }
             else if (periodParam === '30d' || periodParam === '1m' || periodParam === 'month') {
-                sqlInterval = "INTERVAL '30 days'";
+                periodKey = '1m';
                 defaultLabel = 'uptime (30d)';
             }
             else if (periodParam === '90d' || periodParam === '3m' || periodParam === '1q' || periodParam === 'quarter') {
-                sqlInterval = "INTERVAL '90 days'";
+                periodKey = '3m';
                 defaultLabel = 'uptime (90d)';
             }
+            else if (periodParam === '6m' || periodParam === '180d') {
+                periodKey = '6m';
+                defaultLabel = 'uptime (6m)';
+            }
             else if (periodParam === '365d' || periodParam === '1y' || periodParam === 'year') {
-                sqlInterval = "INTERVAL '365 days'";
+                periodKey = '1y';
                 defaultLabel = 'uptime (1y)';
             }
+            else if (periodParam === '2y' || periodParam === '730d') {
+                periodKey = '2y';
+                defaultLabel = 'uptime (2y)';
+            }
             label = label || defaultLabel;
-            const { rows } = await query(`SELECT COUNT(*) AS total, SUM(CASE WHEN "isUp" THEN 1 ELSE 0 END) AS "upCount" FROM pings WHERE "targetId"=$1 AND timestamp >= NOW() - ${sqlInterval}`, [id]);
-            const total = Number(rows[0]?.total || 0);
-            const up = Number(rows[0]?.upCount || 0);
-            const ratio = total > 0 ? (up / total) * 100 : (target.isUp ? 100 : 0);
+            const slaResult = await getSlaFromRollups(id);
+            const period = slaResult[periodKey];
+            const ratio = period.total > 0 ? period.ratio : (target.isUp ? 100 : 0);
             value = `${ratio.toFixed(1)}%`;
             color = ratio >= 99.0 ? '#4c1' : ratio >= 95.0 ? '#dfb317' : '#e05d44';
         }
@@ -3776,26 +3982,26 @@ app.get([
         return res.send(generateSvgBadge('error', '500', '#e05d44'));
     }
 });
-// ─── SLA Statistics ───────────────────────────────────────────────────────────
+// â”€â”€â”€ SLA Statistics (3-tier rollup: raw pings / daily rollups / monthly rollups) â”€â”€
+// Routing: 24h â†’ raw pings | 7d/30d â†’ daily rollups + today raw | 90d/6m/1y/2y â†’ monthly rollups
+// Uptime% = SUM(up_checks) / SUM(total_checks) â€” weighted, never averaged percentages.
 app.get('/api/url-monitor/sla/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
-    const now = new Date();
-    const getSlaForPeriod = async (days) => {
-        const cutOff = new Date(now);
-        cutOff.setDate(now.getDate() - days);
-        try {
-            const { rows } = await query(`SELECT COUNT(*) AS total, SUM(CASE WHEN "isUp" THEN 1 ELSE 0 END) AS "upCount", AVG(latency) AS "avgLatency" FROM pings WHERE "targetId"=$1 AND timestamp>=$2`, [id, cutOff.toISOString()]);
-            const total = Number(rows[0]?.total || 0);
-            const up = Number(rows[0]?.upCount || 0);
-            return { ratio: total > 0 ? Math.round((up / total) * 10000) / 100 : 100, total, up, avgLatency: total > 0 ? Math.round(Number(rows[0].avgLatency) || 0) : 0 };
-        }
-        catch {
-            return { ratio: 100, total: 0, up: 0, avgLatency: 0 };
-        }
-    };
-    res.json({ sla: { '24h': await getSlaForPeriod(1), '1m': await getSlaForPeriod(30), '3m': await getSlaForPeriod(90), '6m': await getSlaForPeriod(180), '1y': await getSlaForPeriod(365), '2y': await getSlaForPeriod(730) } });
+    const cacheKey = `url_sla:${id}`;
+    const cached = await cacheGet(cacheKey);
+    if (cached)
+        return res.json(cached);
+    try {
+        const sla = await getSlaFromRollups(id);
+        const result = { sla };
+        await cacheSet(cacheKey, result, 60); // 60s cache
+        res.json(result);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
-// ─── PDF SLA Report (Single Target - Official Executive Audit Format) ────────
+// â”€â”€â”€ PDF SLA Report (Single Target - Official Executive Audit Format) â”€â”€â”€â”€â”€â”€â”€â”€
 app.all('/api/url-monitor/report/pdf/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
     const companyName = (req.body?.companyName || req.query?.companyName || '').trim();
@@ -3822,7 +4028,7 @@ app.all('/api/url-monitor/report/pdf/:id', requireAuth, async (req, res) => {
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="official-sla-report-${target.name.replace(/[^a-z0-9]/gi, '_')}.pdf"`);
         doc.pipe(res);
-        // ── Official Header Banner ──
+        // â”€â”€ Official Header Banner â”€â”€
         doc.fillColor('#0F172A').rect(0, 0, 595, 90).fill();
         let textLeftMargin = 40;
         if (companyLogo && companyLogo.startsWith('data:')) {
@@ -3839,7 +4045,7 @@ app.all('/api/url-monitor/report/pdf/:id', requireAuth, async (req, res) => {
         doc.fillColor('#38BDF8').fontSize(14).font('Helvetica-Bold').text(orgTitle, textLeftMargin, 22, { lineBreak: false });
         doc.fillColor('#FFFFFF').fontSize(11).font('Helvetica-Bold').text('SERVICE LEVEL AGREEMENT (SLA) AUDIT REPORT', textLeftMargin, 40, { lineBreak: false });
         doc.fillColor('#94A3B8').fontSize(8).font('Helvetica').text(`REF: ${docRef}  |  CLASSIFICATION: OFFICIAL AUDIT RECORD  |  DATE: ${now.toUTCString()}`, textLeftMargin, 58, { lineBreak: false });
-        // ── Document Metadata Box ──
+        // â”€â”€ Document Metadata Box â”€â”€
         const metaY = 100;
         doc.fillColor('#F8FAFC').rect(40, metaY, 515, 58).fill();
         doc.strokeColor('#CBD5E1').lineWidth(0.8).rect(40, metaY, 515, 58).stroke();
@@ -3856,7 +4062,7 @@ app.all('/api/url-monitor/report/pdf/:id', requireAuth, async (req, res) => {
         doc.fillColor(target.isUp ? '#10B981' : '#EF4444').font('Helvetica-Bold').text(target.isUp ? 'OPERATIONAL (UP)' : 'OUTAGE (DOWN)', 380, mLine + 16, { lineBreak: false });
         doc.fillColor('#475569').font('Helvetica-Bold').text('SSL Certificate:', 310, mLine + 32, { lineBreak: false });
         doc.fillColor('#0F172A').font('Helvetica').text(typeof target.certExpDays === 'number' ? `${target.certExpDays} days remaining` : 'N/A', 380, mLine + 32, { lineBreak: false });
-        // ── Executive KPI Cards ──
+        // â”€â”€ Executive KPI Cards â”€â”€
         const cardY = 170;
         const cardWidth = 116;
         const cardHeight = 42;
@@ -3873,7 +4079,7 @@ app.all('/api/url-monitor/report/pdf/:id', requireAuth, async (req, res) => {
             doc.fillColor('#64748B').fontSize(7.5).font('Helvetica-Bold').text(c.title.toUpperCase(), cx + 8, cardY + 7, { lineBreak: false });
             doc.fillColor(c.color).fontSize(12.5).font('Helvetica-Bold').text(c.val, cx + 8, cardY + 21, { lineBreak: false });
         });
-        // ── Official SLA Audit Table ──
+        // â”€â”€ Official SLA Audit Table â”€â”€
         const tableTitleY = 228;
         doc.fillColor('#0F172A').fontSize(11).font('Helvetica-Bold').text('Historical SLA Performance Breakdown', 40, tableTitleY, { lineBreak: false });
         doc.strokeColor('#0284C7').lineWidth(1.2).moveTo(40, tableTitleY + 14).lineTo(555, tableTitleY + 14).stroke();
@@ -3903,7 +4109,7 @@ app.all('/api/url-monitor/report/pdf/:id', requireAuth, async (req, res) => {
             doc.fillColor('#475569').font('Helvetica').text(`${tf.data.avgLatency} ms`, 450, currentY + 6, { lineBreak: false });
             currentY += 20;
         });
-        // ── Official Audit Attestation & Stamp ──
+        // â”€â”€ Official Audit Attestation & Stamp â”€â”€
         const certBoxY = currentY + 20;
         doc.fillColor('#F8FAFC').rect(40, certBoxY, 515, 60).fill();
         doc.strokeColor('#CBD5E1').lineWidth(0.8).rect(40, certBoxY, 515, 60).stroke();
@@ -3912,7 +4118,7 @@ app.all('/api/url-monitor/report/pdf/:id', requireAuth, async (req, res) => {
         doc.fillColor('#64748B').fontSize(7.5).font('Helvetica').text('This document certifies that the service level agreement metrics, response latencies, and availability checks presented herein have been immutably logged in TimescaleDB database storage and verified by Nova Automated Uptime Engine.', 50, certY + 14, { width: 495, align: 'justify' });
         doc.fillColor('#0284C7').fontSize(7.5).font('Helvetica-Bold').text(`VERIFIED BY: NOVA ENTERPRISE ENGINE  |  DIGITAL HASH: ${crypto.createHash('md5').update(docRef + target.id).digest('hex').toUpperCase()}`, 50, certY + 42, { lineBreak: false });
         // Footer page number
-        doc.fillColor('#94A3B8').fontSize(7.5).font('Helvetica').text('Page 1 of 1  •  Nova API Gateway & URL Uptime Monitoring System', 40, 785, { align: 'center', width: 515, lineBreak: false });
+        doc.fillColor('#94A3B8').fontSize(7.5).font('Helvetica').text('Page 1 of 1  â€¢  Nova API Gateway & URL Uptime Monitoring System', 40, 785, { align: 'center', width: 515, lineBreak: false });
         doc.end();
     }
     catch (err) {
@@ -3920,7 +4126,7 @@ app.all('/api/url-monitor/report/pdf/:id', requireAuth, async (req, res) => {
         res.status(500).send(`Failed to generate SLA PDF report: ${err.message}`);
     }
 });
-// ─── Consolidated All-URLs PDF SLA Report (Official Executive Audit Format) ─
+// â”€â”€â”€ Consolidated All-URLs PDF SLA Report (Official Executive Audit Format) â”€
 app.all('/api/url-monitor/report/pdf-all', requireAuth, async (req, res) => {
     const companyName = (req.body?.companyName || req.query?.companyName || '').trim();
     const companyLogo = req.body?.companyLogo || req.query?.companyLogo || '';
@@ -3952,7 +4158,7 @@ app.all('/api/url-monitor/report/pdf-all', requireAuth, async (req, res) => {
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="official-consolidated-sla-report-${now.toISOString().slice(0, 10)}.pdf"`);
         doc.pipe(res);
-        // ── Official Header Banner ──
+        // â”€â”€ Official Header Banner â”€â”€
         doc.fillColor('#0F172A').rect(0, 0, 595, 90).fill();
         let textLeftMargin = 40;
         if (companyLogo && companyLogo.startsWith('data:')) {
@@ -3969,7 +4175,7 @@ app.all('/api/url-monitor/report/pdf-all', requireAuth, async (req, res) => {
         doc.fillColor('#38BDF8').fontSize(14).font('Helvetica-Bold').text(orgTitle, textLeftMargin, 22, { lineBreak: false });
         doc.fillColor('#FFFFFF').fontSize(11).font('Helvetica-Bold').text('CONSOLIDATED ENTERPRISE SLA AUDIT REPORT', textLeftMargin, 40, { lineBreak: false });
         doc.fillColor('#94A3B8').fontSize(8).font('Helvetica').text(`REF: ${docRef}  |  CLASSIFICATION: OFFICIAL AUDIT RECORD  |  DATE: ${now.toUTCString()}`, textLeftMargin, 58, { lineBreak: false });
-        // ── Executive Summary KPI Tiles ──
+        // â”€â”€ Executive Summary KPI Tiles â”€â”€
         const cardY = 100;
         const cardWidth = 116;
         const cardHeight = 42;
@@ -3986,7 +4192,7 @@ app.all('/api/url-monitor/report/pdf-all', requireAuth, async (req, res) => {
             doc.fillColor('#64748B').fontSize(7.5).font('Helvetica-Bold').text(c.title.toUpperCase(), cx + 8, cardY + 7, { lineBreak: false });
             doc.fillColor(c.color).fontSize(12.5).font('Helvetica-Bold').text(c.val, cx + 8, cardY + 21, { lineBreak: false });
         });
-        // ── Executive Portfolio Summary Table ──
+        // â”€â”€ Executive Portfolio Summary Table â”€â”€
         const tableTitleY = 158;
         doc.fillColor('#0F172A').fontSize(11).font('Helvetica-Bold').text('Monitored Endpoint SLA Compliance Table', 40, tableTitleY, { lineBreak: false });
         doc.strokeColor('#0284C7').lineWidth(1.2).moveTo(40, tableTitleY + 14).lineTo(555, tableTitleY + 14).stroke();
@@ -4023,7 +4229,7 @@ app.all('/api/url-monitor/report/pdf-all', requireAuth, async (req, res) => {
             doc.fillColor(typeof target.certExpDays === 'number' && target.certExpDays < 14 ? '#EF4444' : '#475569').font('Helvetica').fontSize(8).text(typeof target.certExpDays === 'number' ? `${target.certExpDays}d` : 'N/A', 495, currentY + 8, { lineBreak: false });
             currentY += 24;
         });
-        // ── Official Audit Attestation Footer ──
+        // â”€â”€ Official Audit Attestation Footer â”€â”€
         const certBoxY = currentY + 18;
         if (certBoxY > 720)
             doc.addPage();
@@ -4034,7 +4240,7 @@ app.all('/api/url-monitor/report/pdf-all', requireAuth, async (req, res) => {
         doc.fillColor('#64748B').fontSize(7.5).font('Helvetica').text('This document serves as an official enterprise portfolio SLA record dynamically compiled from Nova TimescaleDB logs. Availability ratios represent successful uptime pings divided by total check attempts.', 50, certY + 14, { width: 495, align: 'justify' });
         doc.fillColor('#0284C7').fontSize(7.5).font('Helvetica-Bold').text(`VERIFIED BY: NOVA ENTERPRISE ENGINE  |  DIGITAL HASH: ${crypto.createHash('md5').update(docRef).digest('hex').toUpperCase()}`, 50, certY + 38, { lineBreak: false });
         // Footer page number
-        doc.fillColor('#94A3B8').fontSize(7.5).font('Helvetica').text('Page 1 of 1  •  Nova API Gateway & URL Uptime Monitoring System  •  Official Executive Audit Report', 40, 785, { align: 'center', width: 515, lineBreak: false });
+        doc.fillColor('#94A3B8').fontSize(7.5).font('Helvetica').text('Page 1 of 1  â€¢  Nova API Gateway & URL Uptime Monitoring System  â€¢  Official Executive Audit Report', 40, 785, { align: 'center', width: 515, lineBreak: false });
         doc.end();
     }
     catch (err) {
@@ -4042,39 +4248,66 @@ app.all('/api/url-monitor/report/pdf-all', requireAuth, async (req, res) => {
         res.status(500).send(`Failed to generate portfolio SLA PDF report: ${err.message}`);
     }
 });
-// ─── Periodic check loop ──────────────────────────────────────────────────────
+// â”€â”€â”€ Concurrency limiter for polling loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Limits simultaneous outbound pings to avoid event-loop/fd exhaustion
+const MAX_CONCURRENT_PINGS = 10;
+async function withConcurrencyLimit(tasks, limit) {
+    const results = [];
+    let idx = 0;
+    async function worker() {
+        while (idx < tasks.length) {
+            const i = idx++;
+            results[i] = await tasks[i]();
+        }
+    }
+    const workers = Array.from({ length: Math.min(limit, tasks.length) }, worker);
+    await Promise.all(workers);
+    return results;
+}
+// â”€â”€â”€ Periodic check loop (every 10s, max 10 concurrent pings) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 setInterval(async () => {
-    const targets = await loadTargets();
-    const results = await Promise.all(targets.map(async (target) => {
-        if (target.status !== 'active')
-            return null;
-        const lastTime = target.lastCheck ? new Date(target.lastCheck).getTime() : 0;
-        if ((Date.now() - lastTime) / 1000 < target.interval)
-            return null;
+    const targets = await loadTargets(true); // force-refresh the cache each tick
+    const due = targets.filter(t => {
+        if (t.status !== 'active')
+            return false;
+        const lastTime = t.lastCheck ? new Date(t.lastCheck).getTime() : 0;
+        return (Date.now() - lastTime) / 1000 >= t.interval;
+    });
+    if (due.length === 0)
+        return;
+    const tasks = due.map(target => async () => {
         try {
             return await pingTargetWithRetries(target);
         }
         catch {
             return null;
         }
-    }));
+    });
+    const results = await withConcurrencyLimit(tasks, MAX_CONCURRENT_PINGS);
     for (const result of results) {
         if (result) {
             await saveTarget(result);
             broadcastUrlTargetPing(result);
         }
     }
-    // Housekeeping: delete pings older than 2 years
+}, 10000);
+// â”€â”€â”€ Housekeeping interval (every 5 minutes) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// NOTE: Raw ping deletion is now owned by slaRollup.ts (rollupYesterdayPings).
+// It aggregates yesterday's pings into sla_daily_rollups BEFORE deleting them,
+// guaranteeing SLA continuity even after log retention deletes older raw pings.
+// This interval only cleans up 2-year-old pings that slipped past the nightly job.
+setInterval(async () => {
     try {
-        const cutOff = new Date();
-        cutOff.setFullYear(cutOff.getFullYear() - 2);
-        await query('DELETE FROM pings WHERE timestamp < $1', [cutOff.toISOString()]);
+        // Emergency backstop: remove any raw pings older than 2 years that weren't caught by nightly job
+        await query(`DELETE FROM pings WHERE timestamp < NOW() - INTERVAL '2 years'`);
+        // Also trim daily rollups older than 2 years (monthly rollups are kept forever)
+        await query(`DELETE FROM sla_daily_rollups WHERE date < CURRENT_DATE - INTERVAL '2 years'`);
     }
     catch (err) {
         console.error('[URL Monitor] Housekeeping failed:', err);
     }
-}, 10000);
-// ─── Periodic log rotation via Kafka (every 6 hours) ─────────────────────────
+}, 5 * 60 * 1000);
+// â”€â”€â”€ Periodic log rotation via Kafka (every 6 hours) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Publishes a log.rotation event instead of running DELETE directly,
 // so the consumer handles it durably with offset tracking.
 const LOG_ROTATION_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
@@ -4087,19 +4320,19 @@ setInterval(async () => {
                 topic: TOPICS.LOG_ROTATION,
                 messages: [{ value: JSON.stringify({ interval, source: 'periodic-housekeeping' }) }],
             });
-            console.log(`[Kafka] Periodic rotation event published — interval: ${interval}`);
+            console.log(`[Kafka] Periodic rotation event published â€” interval: ${interval}`);
         }
         else {
             // Fallback when Kafka unavailable
             await query(`DELETE FROM gateway_logs WHERE "fullTime" < NOW() - $1::interval`, [interval]);
-            console.log(`[Logs] Periodic rotation completed (direct) — interval: ${interval}`);
+            console.log(`[Logs] Periodic rotation completed (direct) â€” interval: ${interval}`);
         }
     }
     catch (err) {
         console.error('[Logs] Periodic rotation failed:', err.message);
     }
 }, LOG_ROTATION_INTERVAL_MS);
-// ─── Alerts: CRUD endpoints ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Alerts: CRUD endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/alerts/rules', async (req, res) => {
     try {
         const { apiId, stage } = req.query;
@@ -4162,7 +4395,7 @@ app.delete('/api/alerts/rules/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── Background Monitored API Gateways & Alert Scopes API ────────────────────
+// â”€â”€â”€ Background Monitored API Gateways & Alert Scopes API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/alerts/monitored-gateways', async (_req, res) => {
     try {
         const { rows } = await query('SELECT * FROM monitored_gateways ORDER BY "createdAt" DESC');
@@ -4176,6 +4409,8 @@ app.post('/api/alerts/monitored-gateways', async (req, res) => {
     const { gatewayId, gatewayName, region, stage, connectionId, awsAccountName, pollIntervalSec = 60, isEnabled = true } = req.body;
     if (!gatewayId)
         return res.status(400).json({ error: 'Gateway ID is required' });
+    // Bug 11 fix: clamp pollIntervalSec to a sane range (15s minimum, 1hr maximum)
+    const clampedPollInterval = Math.min(3600, Math.max(15, Number(pollIntervalSec) || 60));
     const id = `mgw-${crypto.randomUUID().substring(0, 8)}`;
     const name = gatewayName || `API Gateway (${gatewayId})`;
     const reg = region || 'us-east-1';
@@ -4192,7 +4427,7 @@ app.post('/api/alerts/monitored-gateways', async (req, res) => {
          "connectionId" = EXCLUDED."connectionId",
          "awsAccountName" = EXCLUDED."awsAccountName",
          "pollIntervalSec" = EXCLUDED."pollIntervalSec",
-         "isEnabled" = EXCLUDED."isEnabled"`, [id, gatewayId, name, reg, stg, connId, acctName, Number(pollIntervalSec) || 60, !!isEnabled]);
+         "isEnabled" = EXCLUDED."isEnabled"`, [id, gatewayId, name, reg, stg, connId, acctName, clampedPollInterval, !!isEnabled]);
         res.json({ success: true, id });
     }
     catch (err) {
@@ -4218,28 +4453,40 @@ app.delete('/api/alerts/monitored-gateways/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+// Bug 3 fix: background monitor now evaluates real anomaly result to set health status.
+// Bug 7 fix: respects per-gateway pollIntervalSec stored in DB using lastPolledAt.
 async function runBackgroundGatewayMonitoring() {
     try {
         const { rows: scopes } = await query(`SELECT * FROM monitored_gateways WHERE "isEnabled" = true`);
         if (scopes.length === 0)
             return;
-        for (const scope of scopes) {
+        await Promise.all(scopes.map(async (scope) => {
             try {
                 const gwId = scope.gatewayId;
                 const stage = scope.stage || 'prod';
-                const region = scope.region || 'us-east-1';
-                // Evaluate ML latency anomaly engine on route latencies
+                const pollIntervalMs = (Number(scope.pollIntervalSec) || 60) * 1000;
+                // Bug 7 fix: respect per-gateway poll interval using lastPolledAt timestamp
+                const lastPolledMs = scope.lastPolledAt ? new Date(scope.lastPolledAt).getTime() : 0;
+                if (Date.now() - lastPolledMs < pollIntervalMs)
+                    return; // not due yet
+                // Bug 3 fix: use anomaly result to derive real health status
+                let healthStatus = 'HEALTHY';
                 if (gwId !== '*') {
-                    await detectLatencyAnomalies(gwId, stage).catch(() => { });
+                    try {
+                        const anomalies = await detectLatencyAnomalies(gwId, stage);
+                        const hasAnomaly = Array.isArray(anomalies) && anomalies.some((a) => a.isAnomaly);
+                        if (hasAnomaly)
+                            healthStatus = 'WARNING';
+                    }
+                    catch { }
                 }
-                // Update last polled status
-                await query(`UPDATE monitored_gateways SET "lastPolledAt" = NOW(), "lastStatus" = $1 WHERE id = $2`, ['HEALTHY', scope.id]);
+                await query(`UPDATE monitored_gateways SET "lastPolledAt" = NOW(), "lastStatus" = $1 WHERE id = $2`, [healthStatus, scope.id]);
             }
             catch (scopeErr) {
                 console.warn(`[Background Gateway Monitor Scope Error ${scope.gatewayId} (${scope.awsAccountName || 'Default'})]:`, scopeErr.message);
                 await query(`UPDATE monitored_gateways SET "lastPolledAt" = NOW(), "lastStatus" = $1 WHERE id = $2`, ['WARNING', scope.id]).catch(() => { });
             }
-        }
+        }));
     }
     catch (err) {
         console.error('[Background Gateway Monitoring Error]:', err.message);
@@ -4293,7 +4540,7 @@ app.post('/api/alerts/test/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── SLO Targets CRUD & Real-Time Burn Rate Calculation ─────────────────────────
+// â”€â”€â”€ SLO Targets CRUD & Real-Time Burn Rate Calculation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/slo/targets', async (req, res) => {
     try {
         const { apiId, stage } = req.query;
@@ -4439,7 +4686,7 @@ app.delete('/api/slo/targets/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── Status Portal & Dynamic SVG Badges ─────────────────────────────────────
+// â”€â”€â”€ Status Portal & Dynamic SVG Badges â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/status/badge/:id.svg', async (req, res) => {
     const { id } = req.params;
     let isUp = true;
@@ -4478,7 +4725,7 @@ app.get('/api/status/badge/:id.svg', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache, max-age=0');
     res.send(svg);
 });
-// ─── Playbooks Additional Actions ──────────────────────────────────────────
+// â”€â”€â”€ Playbooks Additional Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.patch('/api/playbooks/:id/toggle', async (req, res) => {
     const { enabled } = req.body;
     try {
@@ -4505,7 +4752,7 @@ app.post('/api/playbooks/:id/execute', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ─── System Health endpoint ───────────────────────────────────────────────────────
+// â”€â”€â”€ System Health endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/api/system/health', async (req, res) => {
     const startMs = Date.now();
     // DB health
@@ -4539,11 +4786,11 @@ app.get('/api/system/health', async (req, res) => {
         latencyMs: Date.now() - startMs,
     });
 });
-// ─── Catch-all: serve React SPA ───────────────────────────────────────────────
+// â”€â”€â”€ Catch-all: serve React SPA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 if (fs.existsSync(distPath)) {
     app.get('*', (_req, res) => { res.sendFile(path.join(distPath, 'index.html')); });
 }
-// ─── Bootstrap: init DB then start server ─────────────────────────────────────
+// â”€â”€â”€ Bootstrap: init DB then start server â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const startServer = () => {
     const httpServer = app.listen(PORT, () => {
         console.log(`[Server] Running on http://localhost:${PORT}`);
@@ -4558,20 +4805,21 @@ initDb()
     // Start Kafka consumer (non-fatal if Kafka is unavailable)
     await startConsumer().catch(() => { });
     if (kafkaEnabled) {
-        console.log('[Kafka] Pipeline active — broker(s):', process.env.KAFKA_BROKERS);
+        console.log('[Kafka] Pipeline active â€” broker(s):', process.env.KAFKA_BROKERS);
     }
     else {
-        console.log('[Kafka] Not configured — running in direct-SQL mode (set KAFKA_BROKERS to enable).');
+        console.log('[Kafka] Not configured â€” running in direct-SQL mode (set KAFKA_BROKERS to enable).');
     }
     startServer();
+    startSlaRollupJobs(); // start nightly + monthly SLA aggregation jobs
 })
     .catch((err) => {
     console.warn('[Server] Database connection issue (starting in resilient fallback mode):', err.message);
     startServer();
 });
-// ─── Graceful shutdown ────────────────────────────────────────────────────────
+// â”€â”€â”€ Graceful shutdown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 process.on('SIGTERM', async () => {
-    console.log('[Server] SIGTERM received — closing connections and shutting down…');
+    console.log('[Server] SIGTERM received â€” closing connections and shutting downâ€¦');
     try {
         await disconnectKafka();
         const { pool } = await import('./db.js');
@@ -4583,7 +4831,7 @@ process.on('SIGTERM', async () => {
     process.exit(0);
 });
 process.on('SIGINT', async () => {
-    console.log('[Server] SIGINT received — closing connections and shutting down…');
+    console.log('[Server] SIGINT received â€” closing connections and shutting downâ€¦');
     try {
         await disconnectKafka();
         const { pool } = await import('./db.js');

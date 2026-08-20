@@ -97,14 +97,33 @@ export const StatusPortal: React.FC = () => {
     setTimeout(() => setCopiedPublicUrl(false), 2000);
   };
 
-  const handleSavePublicSettings = () => {
+  const handleSavePublicSettings = async () => {
     localStorage.setItem('pingsnest_public_title', publicTitle);
     localStorage.setItem('pingsnest_public_notice', publicNotice);
+    if (logoUrl) localStorage.setItem('pingsnest_public_logo', logoUrl);
+    if (supportEmail) localStorage.setItem('pingsnest_public_email', supportEmail);
     if (publicBaseUrl.trim()) {
       localStorage.setItem('nova_public_base_url', publicBaseUrl.trim().replace(/\/+$/, ''));
     } else {
       localStorage.removeItem('nova_public_base_url');
     }
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      await fetch('/api/status/settings', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          title: publicTitle,
+          notice: publicNotice,
+          logoUrl,
+          supportEmail,
+          customDomain: publicBaseUrl.trim()
+        })
+      });
+    } catch {}
+
     setSavedSettingsMsg(true);
     setTimeout(() => setSavedSettingsMsg(false), 2500);
   };

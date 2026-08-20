@@ -59,7 +59,7 @@
   --color-primary-dark: #7c3aed;
   --text-primary: #faf5ff;
   --text-secondary: #c084fc;
-  --text-muted: #8b5cf6;
+  --text-muted: #a78bfa;
 }
 
 /* 3. Emerald Matrix / Dark Forest Theme */
@@ -150,7 +150,7 @@
   --color-primary-dark: #3d59a1;
   --text-primary: #c0caf5;
   --text-secondary: #9aa5ce;
-  --text-muted: #565f89;
+  --text-muted: #899ac4;
 }
 
 /* 8. Solarized Dark Teal Theme */
@@ -168,7 +168,7 @@
   --color-primary-dark: #268bd2;
   --text-primary: #fdf6e3;
   --text-secondary: #93a1a1;
-  --text-muted: #586e75;
+  --text-muted: #839496;
 }
 
 /* 9. Monokai Gold Theme */

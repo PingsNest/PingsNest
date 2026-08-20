@@ -42,8 +42,8 @@ export const Playbooks: React.FC = () => {
   // Form State
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [targetType] = useState<'gateway' | 'url'>('gateway');
-  const [targetId] = useState('*');
+  const [targetType, setTargetType] = useState<'gateway' | 'url'>('gateway');
+  const [targetId, setTargetId] = useState('*');
   const [condition, setCondition] = useState('5xx_rate_gt');
   const [threshold, setThreshold] = useState('10');
   const [action, setAction] = useState<'throttle' | 'webhook' | 'pause_target' | 'cache_flush' | 'lambda_refresh'>('cache_flush');
@@ -51,6 +51,12 @@ export const Playbooks: React.FC = () => {
   const [cooldownMinutes, setCooldownMinutes] = useState('15');
   const [requiresApproval, setRequiresApproval] = useState(false);
   const [maxExecutionsPerHour, setMaxExecutionsPerHour] = useState('3');
+  const [toastMsg, setToastMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  const showToast = (text: string, ok = true) => {
+    setToastMsg({ text, ok });
+    setTimeout(() => setToastMsg(null), 3500);
+  };
 
   useEffect(() => {
     fetchPlaybooks();
@@ -127,9 +133,10 @@ export const Playbooks: React.FC = () => {
         })
       });
       setIsFormVisible(false);
+      showToast('Playbook saved successfully.');
       fetchPlaybooks();
     } catch (err: any) {
-      alert(err.message || 'Failed to save playbook');
+      showToast(err.message || 'Failed to save playbook', false);
     }
   };
 
@@ -140,10 +147,10 @@ export const Playbooks: React.FC = () => {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
-      alert(data.message || 'Remediation approved & executed!');
+      showToast(data.message || 'Remediation approved & executed!');
       fetchPlaybooks();
     } catch (err: any) {
-      alert(err.message || 'Failed approving playbook remediation.');
+      showToast(err.message || 'Failed approving playbook remediation.', false);
     }
   };
 
@@ -377,10 +384,27 @@ export const Playbooks: React.FC = () => {
                 type="text" 
                 className="input-field" 
                 placeholder="Briefly describe what self-healing action occurs" 
-                value={description} 
-                onChange={e => setDescription(e.target.value)} 
+                value={description}
+                onChange={e => setDescription(e.target.value)}
                 style={{ marginTop: '4px' }}
               />
+            </div>
+
+            <div>
+              <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>Target Scope</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '4px' }}>
+                <select className="input-field" value={targetType} onChange={e => setTargetType(e.target.value as any)}>
+                  <option value="gateway">API Gateway Fleet</option>
+                  <option value="url">URL Synthetic Endpoint</option>
+                </select>
+                <input 
+                  type="text" 
+                  className="input-field" 
+                  placeholder="Target ID (* for all)" 
+                  value={targetId} 
+                  onChange={e => setTargetId(e.target.value)} 
+                />
+              </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
@@ -447,6 +471,22 @@ export const Playbooks: React.FC = () => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Floating in-app toast */}
+      {toastMsg && (
+        <div style={{
+          position: 'fixed', bottom: '24px', right: '24px', zIndex: 1000,
+          padding: '12px 18px', borderRadius: '10px',
+          background: toastMsg.ok ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+          border: `1px solid ${toastMsg.ok ? 'rgba(16, 185, 129, 0.35)' : 'rgba(239, 68, 68, 0.35)'}`,
+          color: toastMsg.ok ? 'var(--color-success)' : 'var(--color-error)',
+          fontSize: '13px', fontWeight: 700,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+          backdropFilter: 'blur(8px)'
+        }}>
+          {toastMsg.text}
         </div>
       )}
     </div>

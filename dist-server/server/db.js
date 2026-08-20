@@ -212,9 +212,13 @@ export async function initDb() {
       destination  TEXT NOT NULL,
       title        TEXT NOT NULL,
       message      TEXT NOT NULL,
-      status       TEXT NOT NULL
+      status       TEXT NOT NULL,
+      "rawPayload" TEXT,
+      "httpStatus" INTEGER
     );
   `).catch(() => { });
+    await query(`ALTER TABLE alert_dispatch_history ADD COLUMN IF NOT EXISTS "rawPayload" TEXT;`).catch(() => { });
+    await query(`ALTER TABLE alert_dispatch_history ADD COLUMN IF NOT EXISTS "httpStatus" INTEGER;`).catch(() => { });
     // ── Security Threats & Anomaly Log Table ───────────────────────────────────
     await query(`
     CREATE TABLE IF NOT EXISTS security_threats (
@@ -258,10 +262,18 @@ export async function initDb() {
     await query(`
     CREATE TABLE IF NOT EXISTS sessions (
       token       TEXT PRIMARY KEY,
-      username    TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+      username    TEXT NOT NULL REFERENCES users(username) ON UPDATE CASCADE ON DELETE CASCADE,
       "expiresAt" TIMESTAMPTZ NOT NULL
     );
   `);
+    await query(`
+    DO $$
+    BEGIN
+      ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_username_fkey;
+      ALTER TABLE sessions ADD CONSTRAINT sessions_username_fkey FOREIGN KEY (username) REFERENCES users(username) ON UPDATE CASCADE ON DELETE CASCADE;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END $$;
+  `).catch(() => { });
     // ── TimescaleDB hypertable for gateway logs ───────────────────────────────
     await query(`
     CREATE TABLE IF NOT EXISTS gateway_logs (
@@ -510,12 +522,12 @@ export async function initDb() {
     await query(`ALTER TABLE targets ADD COLUMN IF NOT EXISTS steps JSONB DEFAULT '[]';`).catch(() => { });
     // ── Seed default admin user ───────────────────────────────────────────────
     const AUTH_SALT = 'nova_uptime_auth_salt_2026';
-    const { rows } = await query(`SELECT COUNT(*) AS count FROM users`);
-    if (Number(rows[0].count) === 0) {
+    const { rows: adminRows } = await query(`SELECT username FROM users WHERE LOWER(username)='admin'`);
+    if (adminRows.length === 0) {
         const hash = crypto.createHash('sha256').update('admin' + AUTH_SALT).digest('hex');
         const adminPermissions = JSON.stringify(['manage_users', 'manage_credentials', 'manage_alerts', 'manage_urls', 'view_logs', 'view_metrics']);
         await query(`INSERT INTO users (username, "passwordHash", role, permissions, "mustChangePassword", "createdAt")
-       VALUES ($1, $2, 'admin', $3, true, NOW()) ON CONFLICT DO NOTHING`, ['admin', hash, adminPermissions]);
+       VALUES ($1, $2, 'admin', $3::jsonb, true, NOW()) ON CONFLICT (username) DO NOTHING`, ['admin', hash, adminPermissions]);
         console.log('[DB] Seeded default admin user: admin / admin (mustChangePassword=true)');
     }
     // ── Seed default alert rules ──────────────────────────────────────────────
@@ -722,6 +734,48 @@ export async function initDb() {
       "ratioPct"        NUMERIC NOT NULL DEFAULT 0
     );
   `);
+    // ── SLA Daily Rollups ─────────────────────────────────────────────────────
+    // One row per (targetId, date). Aggregated nightly from raw pings before deletion.
+    // Stores raw counts so multi-period SLAs can be correctly computed:
+    //   uptime% = SUM(up_checks) / SUM(total_checks) × 100  (NOT average of percentages)
+    await query(`
+    CREATE TABLE IF NOT EXISTS sla_daily_rollups (
+      id                SERIAL PRIMARY KEY,
+      "targetId"        TEXT NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
+      date              DATE NOT NULL,
+      total_checks      INTEGER NOT NULL DEFAULT 0,
+      up_checks         INTEGER NOT NULL DEFAULT 0,
+      total_latency_ms  BIGINT NOT NULL DEFAULT 0,
+      downtime_sec      INTEGER NOT NULL DEFAULT 0,
+      "createdAt"       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE ("targetId", date)
+    );
+  `).catch(() => { });
+    await query(`
+    CREATE INDEX IF NOT EXISTS idx_sla_daily_target_date
+      ON sla_daily_rollups("targetId", date DESC);
+  `).catch(() => { });
+    // ── SLA Monthly Rollups ───────────────────────────────────────────────────
+    // One row per (targetId, year, month). Aggregated on 1st of each month from daily rollups.
+    // Never deleted by log retention — this is the permanent long-term SLA ledger.
+    await query(`
+    CREATE TABLE IF NOT EXISTS sla_monthly_rollups (
+      id                SERIAL PRIMARY KEY,
+      "targetId"        TEXT NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
+      year              INTEGER NOT NULL,
+      month             INTEGER NOT NULL,
+      total_checks      INTEGER NOT NULL DEFAULT 0,
+      up_checks         INTEGER NOT NULL DEFAULT 0,
+      total_latency_ms  BIGINT NOT NULL DEFAULT 0,
+      downtime_sec      INTEGER NOT NULL DEFAULT 0,
+      "createdAt"       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE ("targetId", year, month)
+    );
+  `).catch(() => { });
+    await query(`
+    CREATE INDEX IF NOT EXISTS idx_sla_monthly_target_period
+      ON sla_monthly_rollups("targetId", year DESC, month DESC);
+  `).catch(() => { });
     console.log('[DB] Schema ready with Lambda Monitoring tables.');
 }
 // ─── Audit Logging Helper ───────────────────────────────────────────────────

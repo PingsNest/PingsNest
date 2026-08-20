@@ -933,7 +933,7 @@ export const CustomDashboard: React.FC = () => {
           onDragEnd={handleDragEnd}
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(3, 1fr)',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
             gap: '18px',
             alignItems: 'start',
           }}

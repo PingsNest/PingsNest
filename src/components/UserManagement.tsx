@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, UserPlus, Trash2, Key, CheckCircle, AlertTriangle, RefreshCw, Sliders, Lock, Eye, Wrench, X } from 'lucide-react';
+import { Shield, UserPlus, Trash2, Key, CheckCircle, AlertTriangle, RefreshCw, Sliders, Lock, Eye, EyeOff, Wrench, X } from 'lucide-react';
 
 export interface UserAccount {
   username: string;
@@ -35,6 +35,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({ userRole }) => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [showNewUserPass, setShowNewUserPass] = useState(false);
   const [newRole, setNewRole] = useState<'admin' | 'operator' | 'viewer'>('operator');
   const [selectedPerms, setSelectedPerms] = useState<string[]>(['view_metrics', 'view_logs', 'manage_urls', 'manage_alerts']);
   const [submitting, setSubmitting] = useState(false);
@@ -42,6 +43,10 @@ export const UserManagement: React.FC<UserManagementProps> = ({ userRole }) => {
   // Password Reset Modal State
   const [resetTargetUser, setResetTargetUser] = useState<string | null>(null);
   const [resetNewPassword, setResetNewPassword] = useState('');
+  const [showResetPass, setShowResetPass] = useState(false);
+
+  // Delete User Confirmation Modal State
+  const [deletingUser, setDeletingUser] = useState<string | null>(null);
 
   const getToken = () => {
     return localStorage.getItem('nova_auth_token') || localStorage.getItem('api_gateway_monitor_token') || localStorage.getItem('token') || '';
@@ -173,10 +178,16 @@ export const UserManagement: React.FC<UserManagementProps> = ({ userRole }) => {
   const handleDeleteUser = async (username: string) => {
     if (!isAdmin) return;
     if (username === 'admin') {
-      alert('Cannot delete default system admin account.');
+      showFlash('Cannot delete default system admin account.', false);
       return;
     }
-    if (!confirm(`Are you sure you want to revoke access for user "${username}"?`)) return;
+    setDeletingUser(username);
+  };
+
+  const confirmDeleteUser = async () => {
+    if (!deletingUser) return;
+    const username = deletingUser;
+    setDeletingUser(null);
 
     try {
       const token = getToken();
@@ -415,14 +426,25 @@ export const UserManagement: React.FC<UserManagementProps> = ({ userRole }) => {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>INITIAL PASSWORD (MUST CHANGE ON FIRST LOGIN)</label>
-              <input
-                type="password"
-                className="input-field"
-                placeholder="Temporary Password (8-16 chars, 1 uppercase, 1 lowercase, 1 number, 1 special)"
-                value={newPassword}
-                onChange={e => setNewPassword(e.target.value)}
-                required
-              />
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showNewUserPass ? 'text' : 'password'}
+                  className="input-field"
+                  placeholder="Temporary Password (8-16 chars)"
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  required
+                  style={{ paddingRight: '36px', width: '100%' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewUserPass(v => !v)}
+                  style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                  tabIndex={-1}
+                >
+                  {showNewUserPass ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
               <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Must be 8–16 chars with uppercase, lowercase, digit, and special char.</span>
             </div>
 
@@ -483,14 +505,25 @@ export const UserManagement: React.FC<UserManagementProps> = ({ userRole }) => {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>NEW TEMPORARY PASSWORD</label>
-              <input
-                type="password"
-                className="input-field"
-                placeholder="Temporary Password (8-16 chars, 1 upper, 1 lower, 1 digit, 1 special)"
-                value={resetNewPassword}
-                onChange={e => setResetNewPassword(e.target.value)}
-                required
-              />
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showResetPass ? 'text' : 'password'}
+                  className="input-field"
+                  placeholder="Temporary Password (8-16 chars)"
+                  value={resetNewPassword}
+                  onChange={e => setResetNewPassword(e.target.value)}
+                  required
+                  style={{ paddingRight: '36px', width: '100%' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowResetPass(v => !v)}
+                  style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                  tabIndex={-1}
+                >
+                  {showResetPass ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
               <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Must be 8–16 chars with uppercase, lowercase, digit, and special char.</span>
             </div>
 
@@ -499,6 +532,44 @@ export const UserManagement: React.FC<UserManagementProps> = ({ userRole }) => {
               <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Reset Password</button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Delete User Confirmation Modal */}
+      {deletingUser && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div className="glass-panel animate-slide-up" style={{ padding: '24px', width: '100%', maxWidth: '420px', display: 'flex', flexDirection: 'column', gap: '16px', borderRadius: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--color-error)' }}>
+                <AlertTriangle size={20} />
+              </div>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 800 }}>Confirm User Access Revocation</h3>
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
+              Are you sure you want to revoke access and delete account <strong style={{ color: 'var(--text-primary)' }}>"{deletingUser}"</strong>?
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+              <button
+                type="button"
+                onClick={() => setDeletingUser(null)}
+                className="btn btn-secondary"
+                style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '12px' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteUser}
+                className="btn"
+                style={{
+                  padding: '8px 18px', borderRadius: '8px', fontSize: '12px', fontWeight: 700,
+                  backgroundColor: 'var(--color-error)', color: '#fff', border: 'none'
+                }}
+              >
+                Revoke Access
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

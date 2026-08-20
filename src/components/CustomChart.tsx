@@ -95,13 +95,14 @@ export const AreaChart: React.FC<AreaChartProps> = ({
     
     setHoveredIndex(closestIdx);
     
-    // Position tooltip
-    const tooltipX = getX(closestIdx);
-    // Find average or highest point height for tooltip Y alignment
+    // Position tooltip safely within bounds
+    const rawTooltipX = getX(closestIdx);
+    const tooltipX = Math.max(85, Math.min(width - 85, rawTooltipX));
     const maxValIdx = data[closestIdx].values.reduce((maxIdx, current, currIdx, arr) => 
       current > arr[maxIdx] ? currIdx : maxIdx, 0
     );
-    const tooltipY = getY(data[closestIdx].values[maxValIdx]) - 20;
+    const rawTooltipY = getY(data[closestIdx].values[maxValIdx]);
+    const tooltipY = Math.max(25, rawTooltipY - 10);
     
     setTooltipPos({ x: tooltipX, y: tooltipY });
   };
