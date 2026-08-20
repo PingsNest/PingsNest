@@ -40,6 +40,11 @@ export function useWebSocket(apiId?: string, stage?: string) {
         wsUrl = `${protocol}//${window.location.hostname}:${targetPort}/ws`;
       }
 
+      const token = localStorage.getItem('nova_auth_token') || localStorage.getItem('token') || '';
+      if (token) {
+        wsUrl += `?token=${encodeURIComponent(token)}`;
+      }
+
       try {
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
@@ -47,7 +52,10 @@ export function useWebSocket(apiId?: string, stage?: string) {
         ws.onopen = () => {
           if (!isMounted) return;
           setIsConnected(true);
-          console.log('[WS Hook] Connected to WebSocket server at:', wsUrl);
+          console.log('[WS Hook] Connected to WebSocket server');
+          if (token) {
+            ws.send(JSON.stringify({ type: 'auth', token }));
+          }
           const { apiId: curApiId, stage: curStage } = subRef.current;
           if (curApiId && curStage) {
             ws.send(JSON.stringify({ type: 'subscribe', apiId: curApiId, stage: curStage }));
