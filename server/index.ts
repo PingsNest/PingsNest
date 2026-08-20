@@ -355,6 +355,10 @@ async function getAwsCredentialsFromReq(req: any) {
   if (!accessKeyId) accessKeyId = process.env.AWS_ACCESS_KEY_ID;
   if (!secretAccessKey) secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
 
+  if (typeof accessKeyId === 'string') accessKeyId = accessKeyId.trim().replace(/^['"]|['"]$/g, '');
+  if (typeof secretAccessKey === 'string') secretAccessKey = secretAccessKey.trim().replace(/^['"]|['"]$/g, '');
+  if (typeof region === 'string') region = region.trim().replace(/^['"]|['"]$/g, '');
+
   return { accessKeyId, secretAccessKey, region };
 }
 

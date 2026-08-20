@@ -886,13 +886,19 @@ if (process.env.NODE_ENV === 'production' && !process.env.ENCRYPTION_SECRET) {
   console.warn('[SECURITY WARNING]: ENCRYPTION_SECRET environment variable is not set in production. Please set ENCRYPTION_SECRET to a strong 32+ byte string.');
 }
 
-const ENCRYPTION_KEY = crypto.scryptSync(rawSecret, encryptionSalt, 32);
+const PRIMARY_KEY = crypto.scryptSync(rawSecret, encryptionSalt, 32);
+const KEYS_TO_TRY = [
+  PRIMARY_KEY,
+  crypto.scryptSync(process.env.ENCRYPTION_SECRET || 'nova_api_gateway_monitor_secret_key_2026', 'salt_2026', 32),
+  crypto.scryptSync('nova_api_gateway_monitor_secret_key_2026', 'salt_2026', 32)
+];
 
 export function encryptSecret(text: string): string {
   if (!text) return '';
+  const clean = text.trim();
   const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
-  let encrypted = cipher.update(text, 'utf8', 'hex');
+  const cipher = crypto.createCipheriv('aes-256-gcm', PRIMARY_KEY, iv);
+  let encrypted = cipher.update(clean, 'utf8', 'hex');
   encrypted += cipher.final('hex');
   const authTag = cipher.getAuthTag().toString('hex');
   return `${iv.toString('hex')}:${authTag}:${encrypted}`;
@@ -900,20 +906,27 @@ export function encryptSecret(text: string): string {
 
 export function decryptSecret(cipherText: string): string {
   if (!cipherText) return '';
+  const cleanText = cipherText.trim();
+  const parts = cleanText.split(':');
+  if (parts.length !== 3) return cleanText.trim().replace(/^['"]|['"]$/g, ''); // Fallback if plain text
+
   try {
-    const parts = cipherText.split(':');
-    if (parts.length !== 3) return cipherText; // Fallback if plain
     const iv = Buffer.from(parts[0], 'hex');
     const authTag = Buffer.from(parts[1], 'hex');
     const encryptedText = parts[2];
-    const decipher = crypto.createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
-    decipher.setAuthTag(authTag);
-    let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
-    return decrypted;
-  } catch {
-    return cipherText;
-  }
+
+    for (const key of KEYS_TO_TRY) {
+      try {
+        const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+        decipher.setAuthTag(authTag);
+        let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        if (decrypted) return decrypted.trim().replace(/^['"]|['"]$/g, '');
+      } catch {}
+    }
+  } catch {}
+
+  return cleanText.trim().replace(/^['"]|['"]$/g, '');
 }
 
 
