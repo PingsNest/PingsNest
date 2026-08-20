@@ -59,6 +59,49 @@ app.get('/metrics', (_req, res) => {
   res.send(metricsRegistry.toPrometheusFormat());
 });
 
+// ─── SSRF Protection Helper ──────────────────────────────────────────────────
+export function isSafePublicUrl(urlStr: string): { safe: boolean; reason?: string } {
+  try {
+    const parsed = new URL(urlStr);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return { safe: false, reason: 'Invalid protocol. Only http: and https: are allowed.' };
+    }
+    const host = parsed.hostname.toLowerCase();
+    if (
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '0.0.0.0' ||
+      host === '::1' ||
+      host === '169.254.169.254' ||
+      host === 'instance-data' ||
+      host.endsWith('.internal') ||
+      host.endsWith('.local') ||
+      host === 'redis' ||
+      host === 'pingsnest-redis' ||
+      host === 'db' ||
+      host === 'pingsnest-db' ||
+      host === 'kafka' ||
+      host === 'pingsnest-kafka'
+    ) {
+      return { safe: false, reason: 'Access to private hostnames or cloud metadata is blocked (SSRF Protection).' };
+    }
+    const ipMatch = host.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+    if (ipMatch) {
+      const b0 = parseInt(ipMatch[1], 10);
+      const b1 = parseInt(ipMatch[2], 10);
+      if (b0 === 10) return { safe: false, reason: 'Private IP range 10.0.0.0/8 is blocked.' };
+      if (b0 === 172 && b1 >= 16 && b1 <= 31) return { safe: false, reason: 'Private IP range 172.16.0.0/12 is blocked.' };
+      if (b0 === 192 && b1 === 168) return { safe: false, reason: 'Private IP range 192.168.0.0/16 is blocked.' };
+      if (b0 === 127) return { safe: false, reason: 'Loopback range 127.0.0.0/8 is blocked.' };
+      if (b0 === 169 && b1 === 254) return { safe: false, reason: 'Cloud metadata range 169.254.0.0/16 is blocked.' };
+      if (b0 === 0) return { safe: false, reason: 'Null IP range 0.0.0.0/8 is blocked.' };
+    }
+    return { safe: true };
+  } catch (err: any) {
+    return { safe: false, reason: 'Invalid URL: ' + (err.message || 'Malformed') };
+  }
+}
+
 // Deep Readiness & Health Check
 app.get('/health', async (_req, res) => {
   let dbStatus = 'ok';
@@ -205,7 +248,7 @@ app.get('/api/playbooks', async (req, res) => {
   }
 });
 
-app.post('/api/playbooks', async (req, res) => {
+app.post('/api/playbooks', requireAuth, async (req, res) => {
   try {
     const { id, name, description, enabled, targetType, targetId, condition, threshold, action, actionPayload, cooldownMinutes, requiresApproval, maxExecutionsPerHour } = req.body;
     const playbookId = id || `pb-${crypto.randomUUID()}`;
@@ -228,7 +271,7 @@ app.post('/api/playbooks', async (req, res) => {
   }
 });
 
-app.post('/api/playbooks/:id/approve', async (req, res) => {
+app.post('/api/playbooks/:id/approve', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { rows } = await query(`SELECT * FROM playbook_history WHERE id = $1 AND status = 'PENDING_APPROVAL'`, [id]);
@@ -619,7 +662,7 @@ app.get('/api/lambda/apigw-trace', async (req, res) => {
 });
 
 // ─── Auto-Remediation One-Click Endpoints ────────────────────────────────────
-app.post('/api/lambda/remediate/memory', async (req, res) => {
+app.post('/api/lambda/remediate/memory', requireAuth, requireAdmin, async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const { functionName, memorySizeMb } = req.body;
@@ -635,7 +678,7 @@ app.post('/api/lambda/remediate/memory', async (req, res) => {
   }
 });
 
-app.post('/api/lambda/remediate/concurrency', async (req, res) => {
+app.post('/api/lambda/remediate/concurrency', requireAuth, requireAdmin, async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const { functionName, concurrencyCount } = req.body;
@@ -647,7 +690,7 @@ app.post('/api/lambda/remediate/concurrency', async (req, res) => {
   }
 });
 
-app.post('/api/lambda/remediate/rollback', async (req, res) => {
+app.post('/api/lambda/remediate/rollback', requireAuth, requireAdmin, async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const { functionName, targetVersion } = req.body;
@@ -675,7 +718,7 @@ app.get('/api/lambda/fleet/telemetry', async (req, res) => {
   }
 });
 
-app.post('/api/lambda/fleet/bulk-remediate', async (req, res) => {
+app.post('/api/lambda/fleet/bulk-remediate', requireAuth, requireAdmin, async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const { action, functionNames, payload } = req.body;
@@ -704,7 +747,7 @@ app.get('/api/lambda/fleet/security', async (req, res) => {
   }
 });
 
-app.post('/api/lambda/remediate/security-bulk', async (req, res) => {
+app.post('/api/lambda/remediate/security-bulk', requireAuth, requireAdmin, async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
     const { action, functionNames } = req.body;
@@ -1123,7 +1166,7 @@ app.post('/api/diagnostics/analyze-spike', async (req, res) => {
 });
 
 // â”€â”€â”€ Active Remediation: API Gateway Stage Throttling Endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-app.post('/api/aws/throttle-stage', async (req, res) => {
+app.post('/api/aws/throttle-stage', requireAuth, requireAdmin, async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
   const { region, accessKeyId, secretAccessKey } = creds;
   const { apiId, stage, throttlingBurstLimit, throttlingRateLimit } = req.body;
@@ -1569,7 +1612,7 @@ app.get('/api/webhooks/config', async (_req, res) => {
   }
 });
 
-app.post('/api/webhooks/config', async (req, res) => {
+app.post('/api/webhooks/config', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { slackUrl, teamsUrl, pagerdutyUrl, discordUrl, customUrl } = req.body;
     await saveWebhookChannelsConfig({
@@ -1743,7 +1786,7 @@ app.get('/api/smtp/config', async (_req, res) => {
   }
 });
 
-app.post('/api/smtp/config', async (req, res) => {
+app.post('/api/smtp/config', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { isEnabled, host, port, username, password, security, fromEmail, recipientEmails } = req.body;
     await saveSMTPConfig({
@@ -1818,7 +1861,7 @@ app.get('/api/ses/config', async (_req, res) => {
   }
 });
 
-app.post('/api/ses/config', async (req, res) => {
+app.post('/api/ses/config', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { isEnabled, senderEmail, recipientEmails, region, accessKeyId, secretAccessKey } = req.body;
     await saveSESConfig({
@@ -2752,13 +2795,18 @@ app.post('/api/aws/logs/rotation-config', async (req, res) => {
 });
 
 // â”€â”€â”€ 4B. Execute Test Request â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-app.post('/api/aws/test-request', async (req, res) => {
+app.post('/api/aws/test-request', requireAuth, async (req, res) => {
   const { region, apiId, stage, method, path, headers, body } = req.body;
   if (!region || !apiId || !stage || !method) return res.status(400).json({ error: 'Missing required parameters (region, apiId, stage, method)' });
 
   const invokeBaseUrl = `https://${apiId}.execute-api.${region}.amazonaws.com/${stage}`;
   const cleanPath = (path || '/').startsWith('/') ? (path || '/') : '/' + path;
   const requestUrl = `${invokeBaseUrl}${cleanPath}`;
+
+  const urlCheck = isSafePublicUrl(requestUrl);
+  if (!urlCheck.safe) {
+    return res.status(400).json({ error: urlCheck.reason || 'Invalid destination URL' });
+  }
   const requestHeaders = new Headers(headers || {});
   if (!requestHeaders.has('User-Agent')) requestHeaders.set('User-Agent', 'API-Gateway-Monitor-Tester/1.0');
 
@@ -2949,7 +2997,7 @@ if (fs.existsSync(TARGETS_PATH)) {
     try {
       const raw = fs.readFileSync(TARGETS_PATH, 'utf-8');
       const oldTargets = JSON.parse(raw);
-      console.log(`[URL Monitor] Migrating ${oldTargets.length} targets from JSON to PostgreSQLâ€¦`);
+      console.log(`[URL Monitor] Migrating ${oldTargets.length} targets from JSON to PostgreSQL…`);
       for (const t of oldTargets) {
         await saveTarget({
           id: t.id, name: t.name, url: t.url, interval: t.interval, method: t.method,
@@ -3060,6 +3108,24 @@ async function pingTarget(target: UrlTarget): Promise<UrlTarget> {
       let stepLatency = 0;
       let stepIsUp = false;
 
+      const stepUrlCheck = isSafePublicUrl(stepUrl);
+      if (!stepUrlCheck.safe) {
+        stepLatency = 0;
+        stepStatusText = stepUrlCheck.reason || 'Blocked step URL (SSRF)';
+        stepIsUp = false;
+        stepResults.push({
+          stepName: step.name || `Step ${i + 1}`,
+          method: step.method || 'GET',
+          url: stepUrl,
+          statusCode: 400,
+          latency: 0,
+          isUp: false,
+          statusText: stepStatusText
+        });
+        scenarioUp = false;
+        break;
+      }
+
       try {
         const stepController = new AbortController();
         const stepTimeoutId = setTimeout(() => stepController.abort(), (step.timeout || 15) * 1000);
@@ -3129,6 +3195,11 @@ async function pingTarget(target: UrlTarget): Promise<UrlTarget> {
     statusText = stepResults.map(s => `${s.stepName}: ${s.statusText || 'OK'}`).join(' | ');
   } else {
     try {
+      const urlCheck = isSafePublicUrl(target.url);
+      if (!urlCheck.safe) {
+        throw new Error(urlCheck.reason || 'Blocked URL (SSRF Protection)');
+      }
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), (target.timeout || 48) * 1000);
       let parsedHeaders: Record<string, string> = {};
@@ -3400,6 +3471,12 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
       await query(`UPDATE users SET "passwordHash"=$1, "mustChangePassword"=false WHERE username=$2`, [hash, currentUsername]);
     }
 
+    // Security Hardening: Invalidate all other active sessions for this account across other devices
+    const currentToken = req.query.token || req.headers.authorization?.split(' ')[1];
+    if (currentToken) {
+      await query(`DELETE FROM sessions WHERE username=$1 AND token != $2`, [cleanUser, currentToken]);
+    }
+
     res.json({ success: true, username: cleanUser, message: 'Credentials updated successfully.' });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to update credentials: ' + err.message });
@@ -3488,6 +3565,12 @@ app.get('/api/url-monitor/targets', requireAuth, async (_req, res) => {
 app.post('/api/url-monitor/targets', requireAuth, async (req, res) => {
   const { name, url, interval, method, headers, body, timeout, retries, retryInterval, group, bodyEncoding, ignoredStatusCodes, steps, assertions, suppressAlertsUntil } = req.body;
   if (!name || !url) return res.status(400).json({ error: 'Missing target parameters' });
+
+  const urlCheck = isSafePublicUrl(url);
+  if (!urlCheck.safe) {
+    return res.status(400).json({ error: urlCheck.reason || 'Invalid target URL' });
+  }
+
   let newTarget: UrlTarget = {
     id: crypto.randomUUID(),
     name,
@@ -3515,6 +3598,14 @@ app.post('/api/url-monitor/targets', requireAuth, async (req, res) => {
 app.put('/api/url-monitor/targets/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
   const { name, url, interval, method, headers, body, timeout, retries, retryInterval, group, bodyEncoding, ignoredStatusCodes, steps, assertions, suppressAlertsUntil } = req.body;
+
+  if (url) {
+    const urlCheck = isSafePublicUrl(url);
+    if (!urlCheck.safe) {
+      return res.status(400).json({ error: urlCheck.reason || 'Invalid target URL' });
+    }
+  }
+
   const targets = await loadTargets();
   const idx = targets.findIndex(t => t.id === id);
   if (idx === -1) return res.status(404).json({ error: 'Target not found' });

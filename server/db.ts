@@ -879,7 +879,14 @@ export async function recordAuditLog(
 }
 
 // ─── AES-256-GCM Secret Encryption Helpers ────────────────────────────────────
-const ENCRYPTION_KEY = crypto.scryptSync(process.env.ENCRYPTION_SECRET || 'nova_api_gateway_monitor_secret_key_2026', 'salt_2026', 32);
+const rawSecret = process.env.ENCRYPTION_SECRET || (process.env.JWT_SECRET ? `enc_${process.env.JWT_SECRET}` : 'nova_api_gateway_monitor_secret_key_2026');
+const encryptionSalt = process.env.ENCRYPTION_SALT || 'pingsnest_scrypt_salt_v1';
+
+if (process.env.NODE_ENV === 'production' && !process.env.ENCRYPTION_SECRET) {
+  console.warn('[SECURITY WARNING]: ENCRYPTION_SECRET environment variable is not set in production. Please set ENCRYPTION_SECRET to a strong 32+ byte string.');
+}
+
+const ENCRYPTION_KEY = crypto.scryptSync(rawSecret, encryptionSalt, 32);
 
 export function encryptSecret(text: string): string {
   if (!text) return '';

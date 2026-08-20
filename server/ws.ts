@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import type { Server } from 'http';
 import crypto from 'crypto';
 import { Redis } from 'ioredis';
+import { query } from './db.js';
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
@@ -44,18 +45,61 @@ const clients = new Map<string, WSClient>();
 export function initWebSocketServer(httpServer: Server): WebSocketServer {
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', async (ws, req) => {
     const id = crypto.randomUUID();
+    let isAuthenticated = false;
+
+    try {
+      const parsedUrl = new URL(req.url || '', 'http://localhost');
+      const token = parsedUrl.searchParams.get('token') || (req.headers['sec-websocket-protocol'] as string);
+
+      if (token) {
+        const { rows } = await query(
+          `SELECT * FROM sessions WHERE token = $1 AND "expiresAt" > NOW()`,
+          [token]
+        );
+        if (rows.length > 0) {
+          isAuthenticated = true;
+        }
+      }
+    } catch {}
+
     const client: WSClient = { id, ws };
     clients.set(id, client);
-    console.log(`[WS] Client connected: ${id} (total: ${clients.size})`);
+    console.log(`[WS] Client connected: ${id} (auth: ${isAuthenticated}, total: ${clients.size})`);
 
-    // Send a welcome handshake
-    safeSend(ws, { type: 'connected', clientId: id });
+    // Send a welcome handshake with auth status
+    safeSend(ws, { type: 'connected', clientId: id, authenticated: isAuthenticated });
 
-    ws.on('message', (raw) => {
+    // Enforce authentication timeout if not authenticated on connection
+    const authTimeout = setTimeout(() => {
+      if (!isAuthenticated && process.env.NODE_ENV === 'production') {
+        safeSend(ws, { type: 'error', message: 'WebSocket authentication timeout.' });
+        ws.close(4401, 'Unauthorized');
+      }
+    }, 5000);
+
+    ws.on('message', async (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
+
+        // Dynamic in-band auth handshake
+        if (msg.type === 'auth' && msg.token) {
+          const { rows } = await query(
+            `SELECT * FROM sessions WHERE token = $1 AND "expiresAt" > NOW()`,
+            [msg.token]
+          );
+          if (rows.length > 0) {
+            isAuthenticated = true;
+            clearTimeout(authTimeout);
+            safeSend(ws, { type: 'authenticated', success: true });
+          } else {
+            safeSend(ws, { type: 'error', message: 'Invalid session token' });
+            ws.close(4401, 'Unauthorized');
+          }
+          return;
+        }
+
         // Allow clients to subscribe to a specific gateway/stage
         if (msg.type === 'subscribe') {
           client.apiId = msg.apiId;
@@ -66,11 +110,13 @@ export function initWebSocketServer(httpServer: Server): WebSocketServer {
     });
 
     ws.on('close', () => {
+      clearTimeout(authTimeout);
       clients.delete(id);
       console.log(`[WS] Client disconnected: ${id} (total: ${clients.size})`);
     });
 
     ws.on('error', (err) => {
+      clearTimeout(authTimeout);
       console.error(`[WS] Client error (${id}):`, err.message);
       clients.delete(id);
     });
