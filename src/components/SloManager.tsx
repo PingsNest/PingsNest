@@ -30,6 +30,7 @@ export const SloManager: React.FC<SloManagerProps> = ({ apiId }) => {
   const [slos, setSlos] = useState<SloTarget[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [showModal, setShowModal] = useState<boolean>(false);
+  const [deletingSlo, setDeletingSlo] = useState<SloTarget | null>(null);
 
   // Form State
   const [name, setName] = useState<string>('');
@@ -220,8 +221,10 @@ export const SloManager: React.FC<SloManagerProps> = ({ apiId }) => {
                   </div>
 
                   <button
-                    onClick={() => handleDeleteSlo(slo.id)}
-                    style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}
+                    onClick={() => setDeletingSlo(slo)}
+                    style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px', borderRadius: '4px', transition: 'all 0.15s ease' }}
+                    onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-error)'; e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.backgroundColor = 'transparent'; }}
                     title="Delete SLO Target"
                   >
                     <Trash2 size={16} />
@@ -433,6 +436,66 @@ export const SloManager: React.FC<SloManagerProps> = ({ apiId }) => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deletingSlo && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.7)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: 'var(--bg-panel, #12161f)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: '16px',
+            padding: '24px',
+            width: '100%',
+            maxWidth: '440px',
+            color: '#fff',
+            boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--color-error)' }}>
+                <AlertCircle size={20} />
+              </div>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 800 }}>Confirm SLO Target Deletion</h3>
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
+              Are you sure you want to delete <strong style={{ color: 'var(--text-primary)' }}>"{deletingSlo.name}"</strong>? This will permanently remove its error budget and burn-rate tracking.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+              <button
+                type="button"
+                onClick={() => setDeletingSlo(null)}
+                className="btn btn-secondary"
+                style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '12px' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const id = deletingSlo.id;
+                  setDeletingSlo(null);
+                  await handleDeleteSlo(id);
+                }}
+                className="btn"
+                style={{
+                  padding: '8px 18px', borderRadius: '8px', fontSize: '12px', fontWeight: 700,
+                  backgroundColor: 'var(--color-error)', color: '#fff', border: 'none'
+                }}
+              >
+                Delete Target
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

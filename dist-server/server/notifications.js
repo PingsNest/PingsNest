@@ -339,6 +339,8 @@ export async function logAlertDispatch(item) {
         "httpStatus" INT
       );
     `);
+        await query(`ALTER TABLE alert_dispatch_history ADD COLUMN IF NOT EXISTS "rawPayload" TEXT;`).catch(() => { });
+        await query(`ALTER TABLE alert_dispatch_history ADD COLUMN IF NOT EXISTS "httpStatus" INTEGER;`).catch(() => { });
         await query(`
       INSERT INTO alert_dispatch_history (id, timestamp, module, severity, destination, title, message, status, "rawPayload", "httpStatus")
       VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9)

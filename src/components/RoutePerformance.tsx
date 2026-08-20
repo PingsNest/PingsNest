@@ -26,14 +26,13 @@ export const RoutePerformance: React.FC = () => {
   const getRoutePercentiles = (method: string, path: string) => {
     const matching = (logs || []).filter((l: any) => l.method === method && (l.route === path || l.path === path));
     if (matching.length === 0) {
-      const base = 12 + (method === 'POST' ? 18 : 8);
-      return { p50: base, p90: Math.round(base * 1.6), p99: Math.round(base * 2.8) };
+      return { p50: null, p90: null, p99: null, hasData: false };
     }
     const latencies = matching.map((l: any) => l.latency || 10).sort((a: number, b: number) => a - b);
     const p50 = latencies[Math.floor(latencies.length * 0.5)] || 15;
     const p90 = latencies[Math.floor(latencies.length * 0.9)] || Math.round(p50 * 1.5);
     const p99 = latencies[Math.floor(latencies.length * 0.99)] || Math.round(p50 * 2.5);
-    return { p50, p90, p99 };
+    return { p50, p90, p99, hasData: true };
   };
 
   const availableMethods = useMemo<string[]>(() => {
@@ -220,16 +219,16 @@ export const RoutePerformance: React.FC = () => {
 
                       {/* Latency Percentiles */}
                       <td style={{ padding: '14px 12px', textAlign: 'right', fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
-                        {perc.p50}ms
+                        {perc.hasData ? `${perc.p50}ms` : '—'}
                       </td>
                       <td style={{ padding: '14px 12px', textAlign: 'right', fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
-                        {perc.p90}ms
+                        {perc.hasData ? `${perc.p90}ms` : '—'}
                       </td>
                       <td style={{
                         padding: '14px 12px', textAlign: 'right', fontSize: '11px', fontFamily: 'var(--font-mono)', fontWeight: 700,
-                        color: perc.p99 > perc.p50 * 2.5 ? '#f87171' : 'var(--color-primary)'
+                        color: perc.hasData ? ((perc.p99 || 0) > (perc.p50 || 0) * 2.5 ? '#f87171' : 'var(--color-primary)') : 'var(--text-muted)'
                       }}>
-                        {perc.p99}ms
+                        {perc.hasData ? `${perc.p99}ms` : '—'}
                       </td>
 
                       {/* Health / Metrics check */}

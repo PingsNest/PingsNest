@@ -81,14 +81,16 @@ export const MetricCard: React.FC<MetricCardProps> = ({
       })
       .join(' ');
 
+    const cleanId = title.replace(/[^a-zA-Z0-9]/g, '_');
+
     return (
       <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} style={{ overflow: 'visible' }}>
         <defs>
-          <linearGradient id={`grad-${title.replace(/\s+/g, '')}`} x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={`grad-${cleanId}`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={selectedColor.accent} stopOpacity="0.4" />
             <stop offset="100%" stopColor={selectedColor.accent} stopOpacity="0" />
           </linearGradient>
-          <filter id={`glow-${title.replace(/\s+/g, '')}`}>
+          <filter id={`glow-${cleanId}`}>
             <feGaussianBlur stdDeviation="1.5" result="coloredBlur"/>
             <feMerge>
               <feMergeNode in="coloredBlur"/>
@@ -98,14 +100,14 @@ export const MetricCard: React.FC<MetricCardProps> = ({
         </defs>
         <path
           d={`M ${padding},${height} L ${points} L ${width - padding},${height} Z`}
-          fill={`url(#grad-${title.replace(/\s+/g, '')})`}
+          fill={`url(#grad-${cleanId})`}
         />
         <polyline
           fill="none"
           stroke={selectedColor.accent}
           strokeWidth="1.5"
           points={points}
-          filter={`url(#glow-${title.replace(/\s+/g, '')})`}
+          filter={`url(#glow-${cleanId})`}
         />
       </svg>
     );

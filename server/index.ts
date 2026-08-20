@@ -3356,7 +3356,7 @@ function validatePasswordComplexity(pass: string): string | null {
   if (!/[0-9]/.test(pass)) {
     return 'Password must contain at least one numeric digit (0-9).';
   }
-  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pass)) {
+  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(pass)) {
     return 'Password must contain at least one special character (!@#$%^&* etc.).';
   }
   return null;

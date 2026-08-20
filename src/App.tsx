@@ -16,7 +16,7 @@ import { TopologyMesh } from './components/TopologyMesh';
 import { CustomDashboard } from './components/CustomDashboard';
 import { WelcomePage } from './components/WelcomePage';
 
-import { LayoutDashboard, Route, Terminal, Settings as SettingsIcon, ShieldAlert, Cpu, Key, Globe, Activity, AlertTriangle, Bell, Server, Target, Palette, Network, ShieldCheck, Zap, Building2, Shield, Layers, Menu, X, ChevronDown, ChevronRight, ChevronLeft, Users, GitFork } from 'lucide-react';
+import { LayoutDashboard, Route, Terminal, Settings as SettingsIcon, ShieldAlert, Cpu, Key, Globe, Activity, AlertTriangle, Bell, Server, Target, Palette, Network, ShieldCheck, Zap, Building2, Shield, Layers, Menu, X, ChevronDown, ChevronRight, ChevronLeft, Users, GitFork, Eye, EyeOff } from 'lucide-react';
 
 import './App.css';
 
@@ -81,13 +81,16 @@ function MainAppShell() {
 
   const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
+  const [showLoginPass, setShowLoginPass] = useState(false);
   const [loginError, setLoginError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   // Change Password State (First-Login)
   const [newUsernameInput, setNewUsernameInput] = useState<string>(authUsername || '');
   const [newPass, setNewPass] = useState('');
+  const [showNewPass, setShowNewPass] = useState(false);
   const [confirmPass, setConfirmPass] = useState('');
+  const [showConfirmPass, setShowConfirmPass] = useState(false);
   const [changePassError, setChangePassError] = useState('');
   const [isChangingPass, setIsChangingPass] = useState(false);
 
@@ -413,15 +416,26 @@ function MainAppShell() {
               <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.5px' }}>
                 PASSWORD
               </label>
-              <input
-                type="password"
-                className="input-field"
-                placeholder="Enter password (admin)"
-                required
-                value={loginPass}
-                onChange={e => setLoginPass(e.target.value)}
-                style={{ padding: '12px 14px', borderRadius: '8px' }}
-              />
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showLoginPass ? 'text' : 'password'}
+                  className="input-field"
+                  placeholder="Enter password"
+                  required
+                  value={loginPass}
+                  onChange={e => setLoginPass(e.target.value)}
+                  style={{ padding: '12px 38px 12px 14px', borderRadius: '8px', width: '100%' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPass(v => !v)}
+                  style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                  tabIndex={-1}
+                  aria-label="Toggle password visibility"
+                >
+                  {showLoginPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -445,10 +459,6 @@ function MainAppShell() {
           >
             {isLoggingIn ? 'Verifying...' : 'Sign In'}
           </button>
-          
-          <div style={{ textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)' }}>
-            Tip: Default credentials are <strong>admin / admin</strong>
-          </div>
         </form>
       </div>
     );
@@ -537,15 +547,25 @@ function MainAppShell() {
               <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>
                 NEW SECURE PASSWORD
               </label>
-              <input
-                type="password"
-                className="input-field"
-                placeholder="Enter new password (8-16 chars)"
-                value={newPass}
-                onChange={e => setNewPass(e.target.value)}
-                required
-                style={{ padding: '12px 14px', borderRadius: '8px' }}
-              />
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showNewPass ? 'text' : 'password'}
+                  className="input-field"
+                  placeholder="Enter new password (8-16 chars)"
+                  value={newPass}
+                  onChange={e => setNewPass(e.target.value)}
+                  required
+                  style={{ padding: '12px 38px 12px 14px', borderRadius: '8px', width: '100%' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPass(v => !v)}
+                  style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                  tabIndex={-1}
+                >
+                  {showNewPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
               <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: '1.4', marginTop: '2px' }}>
                 Requirements: 8–16 characters, 1 uppercase (A-Z), 1 lowercase (a-z), 1 digit (0-9), 1 special symbol (!@#$%^&* etc.).
               </div>
@@ -555,15 +575,25 @@ function MainAppShell() {
               <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>
                 CONFIRM NEW PASSWORD
               </label>
-              <input
-                type="password"
-                className="input-field"
-                placeholder="Confirm new password"
-                value={confirmPass}
-                onChange={e => setConfirmPass(e.target.value)}
-                required
-                style={{ padding: '12px 14px', borderRadius: '8px' }}
-              />
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showConfirmPass ? 'text' : 'password'}
+                  className="input-field"
+                  placeholder="Confirm new password"
+                  value={confirmPass}
+                  onChange={e => setConfirmPass(e.target.value)}
+                  required
+                  style={{ padding: '12px 38px 12px 14px', borderRadius: '8px', width: '100%' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPass(v => !v)}
+                  style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                  tabIndex={-1}
+                >
+                  {showConfirmPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
             </div>
           </div>
 

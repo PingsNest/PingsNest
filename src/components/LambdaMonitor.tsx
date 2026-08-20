@@ -22,7 +22,8 @@ import {
   X,
   Lock,
   Key,
-  Download
+  Download,
+  CheckCircle
 } from 'lucide-react';
 import { useMonitor } from '../context/MonitorContext';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -252,28 +253,36 @@ const LambdaDetailDrawer: React.FC<LambdaDetailDrawerProps> = ({ fn, initialTab 
 
               {/* AI Diagnostic Failure Reason Banner */}
               {(() => {
-                const isPython = (fn.runtime || '').toLowerCase().includes('python') || fn.functionName.includes('regx') || fn.functionName.includes('recover');
-                const isJava = (fn.runtime || '').toLowerCase().includes('java');
-
                 const actualErrorLine = logsData?.lines?.find((l: any) => l.level === 'ERROR' || l.message?.toLowerCase().includes('error') || l.message?.toLowerCase().includes('exception'));
+                const hasErrors = (fn.errors || 0) > 0 || (fn.errorRatePct || 0) > 0 || !!actualErrorLine;
 
-                const errorMsgText = actualErrorLine?.message || (
-                  fn.functionName.includes('recover') ? '[ERROR] TimeoutException: Task timed out after 30.00 seconds in File "recover_files.py", line 142, in handle_s3_recovery' :
-                  fn.functionName.includes('billing') ? '[ERROR] KMS.AccessDeniedException: The ciphertext reference key cannot be decrypted at kms_service.ts:88:12' :
-                  fn.functionName.includes('check-file') ? '[ERROR] NullPointerException: Cannot read property \'content-type\' of undefined at file-type-checker.js:42:18' :
-                  fn.functionName.includes('autofile') ? '[ERROR] ConnectionPoolExhaustedException: Timeout waiting for idle connection from pool at db_pool.ts:210:9' :
-                  isPython ? '[ERROR] RuntimeError: Uncaught exception in File "lambda_function.py", line 142, in lambda_handler' :
-                  isJava ? '[ERROR] java.lang.RuntimeException: Task failed at com.aws.lambda.Handler.handleRequest(Handler.java:142)' :
-                  '[ERROR] RuntimeError: Uncaught exception in handler at index.js:88:14'
-                );
+                if (!hasErrors) {
+                  return (
+                    <div style={{ padding: '14px 16px', borderRadius: '12px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <div style={{ padding: '6px', borderRadius: '8px', background: 'rgba(16,185,129,0.15)', color: 'var(--color-success)', display: 'flex', alignItems: 'center' }}>
+                        <CheckCircle size={16} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '12px', fontWeight: 800, color: 'var(--color-success)' }}>
+                          Healthy Function Runtime — 0 Errors Detected
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                          No uncaught exceptions, handler timeouts, or error logs recorded in the active stream window.
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                const errorMsgText = actualErrorLine?.message || `[ERROR] Error rate elevated (${fn.errorRatePct || 0}%) across recent invocations`;
 
                 const pyMatch = errorMsgText.match(/File\s+"([^"]+\.py)",\s*line\s*(\d+)(?:,\s*in\s*([A-Za-z0-9_]+))?/i);
                 const jsMatch = errorMsgText.match(/(?:at\s+)?([A-Za-z0-9_.-]+\.(?:js|ts|mjs|cjs)):(\d+)(?::(\d+))?/i);
                 const javaMatch = errorMsgText.match(/at\s+[\w.]+\(([A-Za-z0-9_]+\.java):(\d+)\)/i);
 
-                let locFile = 'lambda_function.py';
-                let locLine = '142';
-                let locExtra = ' (in lambda_handler)';
+                let locFile = 'index.js';
+                let locLine = '1';
+                let locExtra = '';
 
                 if (pyMatch) {
                   locFile = pyMatch[1].split('/').pop() || pyMatch[1];
@@ -287,34 +296,24 @@ const LambdaDetailDrawer: React.FC<LambdaDetailDrawerProps> = ({ fn, initialTab 
                   locFile = javaMatch[1];
                   locLine = javaMatch[2];
                   locExtra = '';
-                } else if (isPython) {
-                  locFile = `${fn.functionName.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase() || 'lambda_function'}.py`;
-                  locLine = '142';
-                  locExtra = ' (in lambda_handler)';
-                } else if (isJava) {
-                  locFile = 'Handler.java';
-                  locLine = '142';
-                  locExtra = '';
-                } else {
-                  locFile = 'index.js';
-                  locLine = '88';
-                  locExtra = ' (Col 14)';
                 }
 
                 return (
                   <div style={{ padding: '14px 16px', borderRadius: '12px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>
-                    <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--color-danger)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <AlertTriangle size={14} color="var(--color-danger)" /> Error Flag Reason: {(fn.errorRatePct || 5.8)}% Failure Rate ({fn.errors || 185} Errors Recorded)
+                    <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--color-error)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <AlertTriangle size={14} color="var(--color-error)" /> Error Flag Reason: {(fn.errorRatePct || 0)}% Failure Rate ({fn.errors || 0} Errors Recorded)
                     </div>
-                    <div style={{ fontSize: '12.5px', color: '#fca5a5', fontWeight: 700, fontFamily: 'var(--font-mono)', margin: '6px 0', wordBreak: 'break-word', background: 'rgba(0,0,0,0.3)', padding: '10px 12px', borderRadius: '8px', borderLeft: '3px solid var(--color-danger)' }}>
+                    <div style={{ fontSize: '12.5px', color: '#fca5a5', fontWeight: 700, fontFamily: 'var(--font-mono)', margin: '6px 0', wordBreak: 'break-word', background: 'rgba(0,0,0,0.3)', padding: '10px 12px', borderRadius: '8px', borderLeft: '3px solid var(--color-error)' }}>
                       {errorMsgText}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', padding: '6px 12px', background: 'rgba(239,68,68,0.15)', borderRadius: '8px', border: '1px solid rgba(239,68,68,0.3)', width: 'fit-content' }}>
-                      <span style={{ fontSize: '11px', fontWeight: 800, color: '#fca5a5' }}>📍 Error Trace Location:</span>
-                      <span style={{ fontSize: '11.5px', fontFamily: 'var(--font-mono)', fontWeight: 800, color: '#fff', background: '#0f172a', padding: '3px 8px', borderRadius: '5px', border: '1px solid rgba(239,68,68,0.4)' }}>
-                        {locFile} : Line {locLine}{locExtra}
-                      </span>
-                    </div>
+                    {locLine !== '1' && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', padding: '6px 12px', background: 'rgba(239,68,68,0.15)', borderRadius: '8px', border: '1px solid rgba(239,68,68,0.3)', width: 'fit-content' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 800, color: '#fca5a5' }}>📍 Error Trace Location:</span>
+                        <span style={{ fontSize: '11.5px', fontFamily: 'var(--font-mono)', fontWeight: 800, color: '#fff', background: '#0f172a', padding: '3px 8px', borderRadius: '5px', border: '1px solid rgba(239,68,68,0.4)' }}>
+                          {locFile} : Line {locLine}{locExtra}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -465,34 +464,34 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
     if (existing) {
       setSelectedLambdaDetail(existing);
     } else {
-      const errPct = typeof item === 'object' ? (item.errorPct ?? item.errorRatePct ?? 5.8) : 5.8;
-      const errCount = typeof item === 'object' ? (item.errors ?? Math.round(errPct * 32)) : 185;
+      const errPct = typeof item === 'object' ? (item.errorPct ?? item.errorRatePct ?? 0) : 0;
+      const errCount = typeof item === 'object' ? (item.errors ?? 0) : 0;
 
       const constructed: LambdaFunctionItem = {
-        functionArn: `arn:aws:lambda:${awsConfig?.region || 'us-east-1'}:123456789012:function:${fnName}`,
+        functionArn: `arn:aws:lambda:${awsConfig?.region || 'us-east-1'}:${awsConfig?.accountId || activeProfileId || 'current'}:function:${fnName}`,
         functionName: fnName,
         runtime: (typeof item === 'object' && item.runtime) ? item.runtime : 'nodejs20.x',
         memorySize: (typeof item === 'object' && item.memorySize) ? item.memorySize : 512,
         timeout: (typeof item === 'object' && item.timeout) ? item.timeout : 15,
         handler: 'index.handler',
         region: awsConfig?.region || 'us-east-1',
-        accountId: '123456789012',
+        accountId: awsConfig?.accountId || activeProfileId || 'current',
         lastModified: new Date().toISOString(),
         status: 'Active',
-        healthScore: errPct > 5 ? 58 : 88,
-        healthStatus: errPct > 5 ? 'Critical' : errPct > 1 ? 'Warning' : 'Healthy',
-        monthlyCost: 45.00,
+        healthScore: errPct > 5 ? 58 : (errPct > 1 ? 75 : 95),
+        healthStatus: errPct > 5 ? 'Critical' : (errPct > 1 ? 'Warning' : 'Healthy'),
+        monthlyCost: 0.00,
         securityScore: 90,
         team: (typeof item === 'object' && item.team) ? item.team : 'Core Infra',
-        environment: (typeof item === 'object' && item.environment) ? item.environment : 'dev',
-        invocations: String((typeof item === 'object' && item.invocations) ? item.invocations : '14.2k'),
+        environment: (typeof item === 'object' && item.environment) ? item.environment : 'prod',
+        invocations: String((typeof item === 'object' && item.invocations) ? item.invocations : '0'),
         errors: errCount,
         errorRatePct: errPct,
-        avgDurationMs: (typeof item === 'object' && item.avgDurationMs) ? item.avgDurationMs : 340,
-        p95DurationMs: (typeof item === 'object' && item.p95DurationMs) ? item.p95DurationMs : 520,
-        coldStartMs: (typeof item === 'object' && item.coldStartMs) ? item.coldStartMs : 410,
-        lastDeployment: '1d ago',
-        lastInvocation: '3s ago'
+        avgDurationMs: (typeof item === 'object' && item.avgDurationMs) ? item.avgDurationMs : 0,
+        p95DurationMs: (typeof item === 'object' && item.p95DurationMs) ? item.p95DurationMs : 0,
+        coldStartMs: (typeof item === 'object' && item.coldStartMs) ? item.coldStartMs : 0,
+        lastDeployment: 'Active',
+        lastInvocation: 'Recent'
       };
       setSelectedLambdaDetail(constructed);
     }
@@ -4617,7 +4616,7 @@ echo "Bulk remediation commands executed successfully."`}
                 <button
                   onClick={() => {
                     navigator.clipboard.writeText(`aws lambda update-function-url-config --function-name demo-lmd-legacy-service --auth-type AWS_IAM --region ${awsConfig?.region || 'eu-west-2'}`);
-                    alert('AWS CLI script copied to clipboard!');
+                    setShowSecCliModal(false);
                   }}
                   className="btn btn-primary"
                   style={{ padding: '8px 18px', borderRadius: '8px', fontSize: '12px', fontWeight: 800 }}
