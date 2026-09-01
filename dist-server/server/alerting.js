@@ -3,6 +3,14 @@ import { query } from './db.js';
 const lastFiredAt = new Map(); // ruleId → ms timestamp
 // ─── Evaluate a snapshot of metrics against all enabled rules ─────────────────
 export async function evaluateAlerts(apiId, stage, metrics) {
+    // Check active maintenance windows
+    try {
+        const { rows: activeMaint } = await query(`SELECT id FROM maintenance_windows WHERE ("targetId" = $1 OR "targetId" = 'all' OR "targetId" IS NULL) AND "isActive" = true AND NOW() BETWEEN "startTime" AND "endTime" LIMIT 1`, [apiId]);
+        if (activeMaint.length > 0) {
+            return; // Suppress alerts during scheduled maintenance
+        }
+    }
+    catch { }
     let rules = [];
     try {
         const { rows } = await query(`SELECT * FROM alert_rules WHERE ("apiId"=$1 OR "apiId"='*') AND (stage=$2 OR stage='*') AND enabled=true`, [apiId, stage]);
@@ -18,7 +26,23 @@ export async function evaluateAlerts(apiId, stage, metrics) {
             continue;
         // Alert Fingerprinting & Deduplication Hashing
         const fingerprint = `${rule.id}:${apiId}:${stage}:${rule.metric}`;
-        const last = lastFiredAt.get(fingerprint) ?? 0;
+        let last = lastFiredAt.get(fingerprint);
+        // If not in in-memory map (e.g. after restart), retrieve latest firing from alert_history
+        if (last === undefined) {
+            try {
+                const { rows: historyRows } = await query(`SELECT MAX("firedAt") as "lastFired" FROM alert_history WHERE "ruleId"=$1 AND "apiId"=$2 AND stage=$3 AND metric=$4`, [rule.id, apiId, stage, rule.metric]);
+                if (historyRows[0]?.lastFired) {
+                    last = new Date(historyRows[0].lastFired).getTime();
+                }
+                else {
+                    last = 0;
+                }
+            }
+            catch {
+                last = 0;
+            }
+            lastFiredAt.set(fingerprint, last);
+        }
         const minutesSinceLast = (Date.now() - last) / 60_000;
         if (minutesSinceLast < rule.intervalMinutes)
             continue;
@@ -64,7 +88,7 @@ function buildWebhookBody(rule, value) {
     const timestamp = new Date().toISOString();
     // Auto-detect WebhookBot URLs (e.g. webhookbot.c-toss.com requires type: 'message', text, attachments: [])
     if (rule.channel === 'webhookbot' || rule.webhookUrl.includes('webhookbot')) {
-        const alertText = `${statusEmoji} Nova Monitor Alert — ${rule.name}: ${rule.metric} ${rule.condition} ${rule.threshold} (Current: ${value}) on ${rule.apiId}/${rule.stage}`;
+        const alertText = `${statusEmoji} PingsNest Monitor Alert — ${rule.name}: ${rule.metric} ${rule.condition} ${rule.threshold} (Current: ${value}) on ${rule.apiId}/${rule.stage}`;
         return {
             type: 'message',
             text: alertText,
@@ -73,7 +97,7 @@ function buildWebhookBody(rule, value) {
     }
     if (rule.channel === 'slack') {
         return {
-            text: `${statusEmoji} *Nova Monitor Alert*: ${rule.name}`,
+            text: `${statusEmoji} *PingsNest Monitor Alert*: ${rule.name}`,
             attachments: [
                 {
                     color: colorHex,
@@ -87,7 +111,7 @@ function buildWebhookBody(rule, value) {
                         { title: 'Current Value', value: `${value}`, short: true },
                         { title: 'Triggered At', value: timestamp, short: true }
                     ],
-                    footer: 'Nova API Gateway Monitor',
+                    footer: 'PingsNest API Gateway Monitor',
                     ts: Math.floor(Date.now() / 1000)
                 }
             ]
@@ -111,7 +135,7 @@ function buildWebhookBody(rule, value) {
                                     type: 'TextBlock',
                                     size: 'Medium',
                                     weight: 'Bolder',
-                                    text: `${statusEmoji} Nova Monitor Alert — ${rule.name}`,
+                                    text: `${statusEmoji} PingsNest Monitor Alert — ${rule.name}`,
                                     color: isHighSeverity ? 'Attention' : 'Warning'
                                 },
                                 {
@@ -134,9 +158,9 @@ function buildWebhookBody(rule, value) {
         return {
             '@type': 'MessageCard',
             '@context': 'https://schema.org/extensions',
-            summary: `Nova Alert: ${rule.name}`,
+            summary: `PingsNest Alert: ${rule.name}`,
             themeColor: isHighSeverity ? 'EF4444' : 'F59E0B',
-            title: `${statusEmoji} Nova Monitor Alert — ${rule.name}`,
+            title: `${statusEmoji} PingsNest Monitor Alert — ${rule.name}`,
             sections: [
                 {
                     activityTitle: `Metric ${rule.metric} breached threshold!`,
@@ -155,7 +179,7 @@ function buildWebhookBody(rule, value) {
     }
     if (rule.channel === 'discord') {
         return {
-            username: 'Nova Monitor Alert',
+            username: 'PingsNest Monitor Alert',
             embeds: [
                 {
                     title: `${statusEmoji} Alert Fired: ${rule.name}`,
@@ -168,7 +192,7 @@ function buildWebhookBody(rule, value) {
                         { name: 'API ID', value: rule.apiId, inline: true },
                         { name: 'Stage', value: rule.stage, inline: true }
                     ],
-                    footer: { text: 'Nova API Gateway Monitor' },
+                    footer: { text: 'PingsNest API Gateway Monitor' },
                     timestamp
                 }
             ]
@@ -177,7 +201,7 @@ function buildWebhookBody(rule, value) {
     if (rule.channel === 'pagerduty') {
         return {
             payload: {
-                summary: `[Nova Alert] ${rule.name}: ${rule.metric}=${value} ${rule.condition} ${rule.threshold} on ${rule.apiId}/${rule.stage}`,
+                summary: `[PingsNest Alert] ${rule.name}: ${rule.metric}=${value} ${rule.condition} ${rule.threshold} on ${rule.apiId}/${rule.stage}`,
                 timestamp,
                 severity: isHighSeverity ? 'critical' : 'warning',
                 source: `API-Gateway:${rule.apiId}`,
@@ -200,7 +224,7 @@ function buildWebhookBody(rule, value) {
         };
     }
     // Generic Webhook & WebhookBot
-    const alertText = `${statusEmoji} Nova Monitor Alert — ${rule.name}: ${rule.metric} ${rule.condition} ${rule.threshold} (Current: ${value}) on ${rule.apiId}/${rule.stage}`;
+    const alertText = `${statusEmoji} PingsNest Monitor Alert — ${rule.name}: ${rule.metric} ${rule.condition} ${rule.threshold} (Current: ${value}) on ${rule.apiId}/${rule.stage}`;
     return {
         type: 'message',
         text: alertText,
@@ -215,7 +239,7 @@ function buildWebhookBody(rule, value) {
         stage: rule.stage,
         severity: isHighSeverity ? 'critical' : 'warning',
         firedAt: timestamp,
-        system: 'Nova API Gateway Monitor'
+        system: 'PingsNest API Gateway Monitor'
     };
 }
 // ─── Test fire (for /api/alerts/test/:id) ────────────────────────────────────
@@ -265,7 +289,7 @@ export async function fireUrlTargetWebhook(webhookUrl, channel, target, eventTyp
                         { title: 'Event Type', value: eventType.toUpperCase(), short: true },
                         { title: 'Timestamp', value: timestamp, short: true }
                     ],
-                    footer: 'Nova URL Uptime Monitor',
+                    footer: 'PingsNest URL Uptime Monitor',
                     ts: Math.floor(Date.now() / 1000)
                 }
             ]

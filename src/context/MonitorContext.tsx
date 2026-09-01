@@ -180,15 +180,9 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const fetchAccountProfiles = async () => {
     try {
-      const token = localStorage.getItem('nova_auth_token');
-      if (!token) return;
       const res = await fetch('/api/aws/connections', {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { ...getAuthHeader() }
       });
-      if (res.status === 401) {
-        localStorage.removeItem('nova_auth_token');
-        return;
-      }
       if (res.ok) {
         const data = await res.json();
         if (data.connections) {
@@ -721,15 +715,10 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // ── Core session restore logic (shared between on-mount and post-login) ──────
   const initSessionForToken = async (token: string) => {
     try {
-      if (!token) return;
       // Priority 1: Load default AWS connection from database (shared across all users)
       const connRes = await fetch('/api/aws/connections', {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (connRes.status === 401) {
-        localStorage.removeItem('nova_auth_token');
-        return;
-      }
       if (connRes.ok) {
         const connData = await connRes.json();
         const connections: any[] = connData.connections || [];
@@ -878,14 +867,9 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const fetchUrlTargets = async () => {
     try {
       const token = localStorage.getItem('nova_auth_token');
-      if (!token) return;
       const res = await fetch('/api/url-monitor/targets', {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
-      if (res.status === 401) {
-        localStorage.removeItem('nova_auth_token');
-        return;
-      }
       if (res.ok) {
         const data = await res.json();
         const list: UrlTargetSummary[] = (data.targets || []).map((t: any) => ({

@@ -483,15 +483,17 @@ export async function dispatchAlertNotification(
 ) {
   const destinations = await loadAlertDestinations();
   const matching = destinations.filter(d => !d.events || d.events.includes(event));
+  const isUp = event === 'up';
+  const statusEmoji = isUp ? '🟢' : '🔴';
+  const statusTitle = isUp ? 'RECOVERED (UP)' : 'OUTAGE DETECTED (DOWN)';
 
-  for (const dest of matching) {
+  const tasks = matching.map(async dest => {
     try {
-      const isUp = event === 'up';
-      const statusEmoji = isUp ? '🟢' : '🔴';
-      const statusTitle = isUp ? 'RECOVERED (UP)' : 'OUTAGE DETECTED (DOWN)';
+      let payload: any;
+      let url = dest.url;
 
       if (dest.type === 'slack') {
-        const payload = {
+        payload = {
           text: `${statusEmoji} *[${target.name}] ${statusTitle}*`,
           blocks: [
             {
@@ -503,14 +505,12 @@ export async function dispatchAlertNotification(
             }
           ]
         };
-        await fetch(dest.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => {});
       } else if (dest.type === 'discord') {
-        const payload = {
+        payload = {
           content: `${statusEmoji} **[${target.name}] ${statusTitle}**\nTarget: ${target.url}\nStatus Code: ${target.lastStatusCode || 'N/A'} | Latency: ${target.lastLatency || 0}ms\n${extraDetails ? `Note: ${extraDetails}` : ''}`
         };
-        await fetch(dest.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => {});
       } else if (dest.type === 'msteams') {
-        const payload = {
+        payload = {
           '@type': 'MessageCard',
           '@context': 'http://schema.org/extensions',
           themeColor: isUp ? '00FF00' : 'FF0000',
@@ -525,9 +525,8 @@ export async function dispatchAlertNotification(
             text: extraDetails || 'Automated URL Monitor alert.'
           }]
         };
-        await fetch(dest.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => {});
       } else if (dest.type === 'pagerduty') {
-        const payload = {
+        payload = {
           payload: {
             summary: `[${target.name}] ${statusTitle} — ${target.url}`,
             timestamp: new Date().toISOString(),
@@ -545,11 +544,10 @@ export async function dispatchAlertNotification(
           event_action: isUp ? 'resolve' : 'trigger',
           dedup_key: `target-${target.id}`
         };
-        const pdEndpoint = dest.url.startsWith('http') ? dest.url : 'https://events.pagerduty.com/v2/enqueue';
-        await fetch(pdEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => {});
+        url = dest.url.startsWith('http') ? dest.url : 'https://events.pagerduty.com/v2/enqueue';
       } else {
         // Custom HTTP Webhook
-        const payload = {
+        payload = {
           event,
           timestamp: new Date().toISOString(),
           target: {
@@ -561,12 +559,40 @@ export async function dispatchAlertNotification(
           },
           extraDetails
         };
-        await fetch(dest.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => {});
       }
-    } catch (err) {
-      console.error(`[Notifications] Failed to dispatch ${dest.type} alert:`, err);
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(5000)
+      });
+
+      await logAlertDispatch({
+        module: `URL Monitor (${target.name})`,
+        severity: isUp ? 'INFO' : 'CRITICAL',
+        destination: dest.url,
+        title: `${statusEmoji} [${target.name}] ${statusTitle}`,
+        message: extraDetails || `HTTP ${target.lastStatusCode || 'N/A'}`,
+        status: res.ok ? 'DELIVERED' : 'FAILED',
+        httpStatus: res.status,
+        rawPayload: payload
+      });
+    } catch (err: any) {
+      console.error(`[Notifications] Failed to dispatch ${dest.type} alert:`, err.message || err);
+      await logAlertDispatch({
+        module: `URL Monitor (${target.name})`,
+        severity: isUp ? 'INFO' : 'CRITICAL',
+        destination: dest.url,
+        title: `${statusEmoji} [${target.name}] ${statusTitle}`,
+        message: err.message || 'Dispatch error',
+        status: 'FAILED',
+        httpStatus: 0
+      });
     }
-  }
+  });
+
+  await Promise.allSettled(tasks);
 }
 
 export interface GatewayFleetAlertPayload {
@@ -1052,9 +1078,11 @@ export async function dispatchUrlMonitorAlert(payload: UrlMonitorAlertPayload) {
     { type: 'custom', url: whConfig.customUrl }
   ].filter(d => d.url && d.url.trim().length > 0);
 
-  for (const dest of destinations) {
+  const tasks: Promise<void>[] = destinations.map(async dest => {
     try {
       let body: any = {};
+      let url = dest.url;
+
       if (dest.type === 'slack') {
         body = {
           type: 'message',
@@ -1109,6 +1137,7 @@ export async function dispatchUrlMonitorAlert(payload: UrlMonitorAlertPayload) {
       } else if (dest.type === 'pagerduty') {
         const pdEndpoint = dest.url.startsWith('http') ? dest.url : 'https://events.pagerduty.com/v2/enqueue';
         const routingKey = dest.url.startsWith('http') ? (dest.url.split('/').pop() || 'pd-key') : dest.url;
+        url = pdEndpoint;
         body = {
           routing_key: routingKey,
           event_action: isUp ? 'resolve' : 'trigger',
@@ -1120,8 +1149,6 @@ export async function dispatchUrlMonitorAlert(payload: UrlMonitorAlertPayload) {
             custom_details: payload
           }
         };
-        await fetch(pdEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
-        continue;
       } else {
         body = {
           type: 'message',
@@ -1135,7 +1162,12 @@ export async function dispatchUrlMonitorAlert(payload: UrlMonitorAlertPayload) {
         };
       }
 
-      await fetch(dest.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(5000)
+      });
 
       await logAlertDispatch({
         module: `URL Monitor (${payload.targetName})`,
@@ -1143,20 +1175,32 @@ export async function dispatchUrlMonitorAlert(payload: UrlMonitorAlertPayload) {
         destination: dest.url,
         title,
         message: detailsText,
-        status: 'DELIVERED'
+        status: res.ok ? 'DELIVERED' : 'FAILED',
+        httpStatus: res.status,
+        rawPayload: body
       });
     } catch (err: any) {
-      console.error(`[URL Monitor Alert] Failed dispatching to ${dest.type}:`, err);
+      console.error(`[URL Monitor Alert] Failed dispatching to ${dest.type}:`, err.message || err);
+      await logAlertDispatch({
+        module: `URL Monitor (${payload.targetName})`,
+        severity: severity.toUpperCase(),
+        destination: dest.url,
+        title,
+        message: err.message || 'Dispatch error',
+        status: 'FAILED',
+        httpStatus: 0
+      });
     }
-  }
+  });
 
-  // Also dispatch Email via SES or SMTP if configured
-  try {
-    const sesCfg = await loadSESConfig();
-    if (sesCfg.isEnabled && sesCfg.senderEmail && sesCfg.recipientEmails) {
-      await sendEmailViaSES(`[URL MONITOR] ${title}`, `<div style="font-family:sans-serif;padding:20px;"><h2>${title}</h2><p>${detailsText}</p></div>`, sesCfg)
-        .then(() => {
-          logAlertDispatch({
+  // Also dispatch Email via SES or SMTP concurrently if configured
+  tasks.push((async () => {
+    try {
+      const sesCfg = await loadSESConfig();
+      if (sesCfg.isEnabled && sesCfg.senderEmail && sesCfg.recipientEmails) {
+        try {
+          await sendEmailViaSES(`[URL MONITOR] ${title}`, `<div style="font-family:sans-serif;padding:20px;"><h2>${title}</h2><p>${detailsText}</p></div>`, sesCfg);
+          await logAlertDispatch({
             module: `URL Monitor (${payload.targetName})`,
             severity: severity.toUpperCase(),
             destination: sesCfg.recipientEmails,
@@ -1164,9 +1208,8 @@ export async function dispatchUrlMonitorAlert(payload: UrlMonitorAlertPayload) {
             message: detailsText,
             status: 'DELIVERED'
           });
-        })
-        .catch(e => {
-          logAlertDispatch({
+        } catch (e: any) {
+          await logAlertDispatch({
             module: `URL Monitor (${payload.targetName})`,
             severity: severity.toUpperCase(),
             destination: sesCfg.recipientEmails,
@@ -1174,13 +1217,14 @@ export async function dispatchUrlMonitorAlert(payload: UrlMonitorAlertPayload) {
             message: e.message,
             status: 'FAILED'
           });
-        });
-    }
-    const smtpCfg = await loadSMTPConfig();
-    if (smtpCfg.isEnabled && smtpCfg.host && smtpCfg.fromEmail && smtpCfg.recipientEmails) {
-      await sendEmailViaSMTP(`[URL MONITOR] ${title}`, `<div style="font-family:sans-serif;padding:20px;"><h2>${title}</h2><p>${detailsText}</p></div>`, smtpCfg)
-        .then(() => {
-          logAlertDispatch({
+        }
+      }
+
+      const smtpCfg = await loadSMTPConfig();
+      if (smtpCfg.isEnabled && smtpCfg.host && smtpCfg.fromEmail && smtpCfg.recipientEmails) {
+        try {
+          await sendEmailViaSMTP(`[URL MONITOR] ${title}`, `<div style="font-family:sans-serif;padding:20px;"><h2>${title}</h2><p>${detailsText}</p></div>`, smtpCfg);
+          await logAlertDispatch({
             module: `URL Monitor (${payload.targetName})`,
             severity: severity.toUpperCase(),
             destination: smtpCfg.recipientEmails,
@@ -1188,9 +1232,8 @@ export async function dispatchUrlMonitorAlert(payload: UrlMonitorAlertPayload) {
             message: detailsText,
             status: 'DELIVERED'
           });
-        })
-        .catch(e => {
-          logAlertDispatch({
+        } catch (e: any) {
+          await logAlertDispatch({
             module: `URL Monitor (${payload.targetName})`,
             severity: severity.toUpperCase(),
             destination: smtpCfg.recipientEmails,
@@ -1198,9 +1241,12 @@ export async function dispatchUrlMonitorAlert(payload: UrlMonitorAlertPayload) {
             message: e.message,
             status: 'FAILED'
           });
-        });
-    }
-  } catch (e) {}
+        }
+      }
+    } catch {}
+  })());
+
+  await Promise.allSettled(tasks);
 }
 
 // ─── Phase 2: Flapping Detection & Anti-Fatigue Suppressor ──────────────────

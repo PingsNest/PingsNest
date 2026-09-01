@@ -1,3 +1,39 @@
+import vm from 'node:vm';
+/**
+ * Checks for known catastrophic backtracking patterns (nested quantifiers).
+ */
+export function isSafeRegexPattern(pattern) {
+    // Disallow nested quantifiers such as (a+)+, (a|b+)+, (.*a)*, ([a-z]+)+
+    if (/(\+|\*|\{\d+,\d*?\})\s*(\+|\*|\{\d+,\d*?\})/.test(pattern))
+        return false;
+    if (/\([^)]*(\+|\*|\{\d+,\d*?\})[^)]*\)\s*(\+|\*|\{\d+,\d*?\})/.test(pattern))
+        return false;
+    return true;
+}
+/**
+ * Runs regex test with strict execution timeout using node:vm sandbox.
+ */
+export function evaluateRegexSafely(pattern, text, timeoutMs = 100) {
+    if (!isSafeRegexPattern(pattern)) {
+        return { passed: false, error: 'Rejected potentially vulnerable regular expression pattern (nested quantifiers)' };
+    }
+    // Cap scan buffer at 64KB
+    const truncatedText = text.length > 65536 ? text.substring(0, 65536) : text;
+    try {
+        const sandbox = {
+            regex: new RegExp(pattern, 'i'),
+            text: truncatedText,
+            result: false,
+        };
+        const context = vm.createContext(sandbox);
+        const script = new vm.Script('result = regex.test(text)');
+        script.runInContext(context, { timeout: timeoutMs });
+        return { passed: sandbox.result };
+    }
+    catch (err) {
+        return { passed: false, error: err.message || 'Regex evaluation failed or timed out' };
+    }
+}
 /**
  * Evaluates synthetic assertion rules against response body, headers, and HTTP status codes.
  */
@@ -8,7 +44,7 @@ export function evaluateSyntheticAssertions(statusCode, headers, bodyText, asser
         return { allPassed: true, results: [] };
     }
     let parsedJsonBody = null;
-    if (bodyText && bodyText.trim().startsWith('{') || bodyText.trim().startsWith('[')) {
+    if (bodyText && (bodyText.trim().startsWith('{') || bodyText.trim().startsWith('['))) {
         try {
             parsedJsonBody = JSON.parse(bodyText);
         }
@@ -17,6 +53,7 @@ export function evaluateSyntheticAssertions(statusCode, headers, bodyText, asser
     for (const rule of assertions) {
         let passed = false;
         let actualValue = '';
+        let evalError;
         const summary = `${rule.type.toUpperCase()}: ${rule.target} ${rule.operator} "${rule.expectedValue}"`;
         try {
             if (rule.type === 'status_code') {
@@ -31,8 +68,11 @@ export function evaluateSyntheticAssertions(statusCode, headers, bodyText, asser
             }
             else if (rule.type === 'body_regex') {
                 actualValue = bodyText.length > 100 ? bodyText.substring(0, 100) + '...' : bodyText;
-                const regex = new RegExp(rule.expectedValue, 'i');
-                passed = regex.test(bodyText);
+                const evalResult = evaluateRegexSafely(rule.expectedValue, bodyText, 100);
+                passed = evalResult.passed;
+                if (evalResult.error) {
+                    evalError = evalResult.error;
+                }
             }
             else if (rule.type === 'header_contains') {
                 const headerVal = Object.entries(headers).find(([k]) => k.toLowerCase() === rule.target.toLowerCase())?.[1] || '';
@@ -62,12 +102,13 @@ export function evaluateSyntheticAssertions(statusCode, headers, bodyText, asser
                     passed = Number(val) < Number(rule.expectedValue);
             }
         }
-        catch {
+        catch (err) {
             passed = false;
+            evalError = err.message;
         }
         if (!passed)
             allPassed = false;
-        results.push({ passed, ruleSummary: summary, actualValue });
+        results.push({ passed, ruleSummary: summary, actualValue, error: evalError });
     }
     return { allPassed, results };
 }
