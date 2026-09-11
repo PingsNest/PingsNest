@@ -334,7 +334,9 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
 
   useEffect(() => {
     if (token) {
-      fetchTargets();
+      // Use silent only when targets are already loaded (token refresh); show
+      // the spinner on very first mount when the list is genuinely empty.
+      fetchTargets({ silent: targets.length > 0 });
       fetchAlerts();
       fetchMaintenance();
     }
@@ -506,8 +508,8 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
         setEditingTargetId(null);
         setIsFormVisible(false);
 
-        
-        await fetchTargets();
+        // Refresh list silently — sidebar is already visible after save
+        await fetchTargets({ silent: true });
         if (data.target) setSelectedTarget(data.target);
       } else {
         setFormError(data.error || 'Failed to save target.');
@@ -576,7 +578,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
       });
       const data = await res.json();
       if (data.success) {
-        await fetchTargets();
+        await fetchTargets({ silent: true }); // silent: sidebar already rendered
         if (data.target) setSelectedTarget(data.target);
       } else {
         showError(data.error || 'Failed to clone target.');
@@ -1079,19 +1081,20 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
                             onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent'; }}
                           >
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
                                 <span style={{ 
                                   width: '8px', 
                                   height: '8px', 
+                                  flexShrink: 0,
                                   borderRadius: '50%', 
                                   backgroundColor: !isActive ? 'var(--text-muted)' : t.isUp ? 'var(--color-success)' : 'var(--color-error)',
                                   boxShadow: isActive ? (t.isUp ? '0 0 6px var(--color-success)' : '0 0 6px var(--color-error)') : 'none'
                                 }} />
-                                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', flex: 1, minWidth: 0, wordBreak: 'break-word', lineHeight: '1.3' }}>
                                   {t.name}
                                 </span>
                               </div>
-                              <span style={{ fontSize: '10px', color: !isActive ? 'var(--text-muted)' : t.isUp ? 'var(--color-success)' : 'var(--color-error)' }}>
+                              <span style={{ fontSize: '10px', flexShrink: 0, color: !isActive ? 'var(--text-muted)' : t.isUp ? 'var(--color-success)' : 'var(--color-error)' }}>
                                 {!isActive ? 'Pause' : t.isUp ? 'Up' : 'Down'}
                               </span>
                             </div>
