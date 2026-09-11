@@ -186,21 +186,23 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
     return res;
   }, [token, onLogout]);
 
-  // Fetch targets
-  const fetchTargets = useCallback(async () => {
-    setLoading(true);
+  // Fetch targets.
+  // Pass `silent: true` for background/polling calls so the sidebar never
+  // blanks out with "Loading monitors..." mid-session (fixes flicker).
+  const fetchTargets = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const res = await authFetch('/api/url-monitor/targets');
       const data = await res.json();
       setTargets(data.targets || []);
-      
+
       if (data.targets && data.targets.length > 0 && !selectedTarget) {
         setSelectedTarget(data.targets[0]);
       }
     } catch (e) {
       console.error('Failed to fetch targets:', e);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [authFetch, selectedTarget]);
 
@@ -370,9 +372,11 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
         fetchSloData(selectedTarget.id);
       }, 30000);
 
-      // Poll targets list every 15s (for sidebar status dots)
+      // Poll targets list every 15s (for sidebar status dots).
+      // Use silent:true so the sidebar is updated in-place without
+      // replacing it with the loading placeholder (prevents flicker).
       const targetsHandle = window.setInterval(() => {
-        fetchTargets();
+        fetchTargets({ silent: true });
       }, 15000);
 
       return () => {
