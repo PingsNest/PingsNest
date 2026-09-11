@@ -42,3 +42,4 @@ pnpm-debug.log*
 
 # Agent Brain / Temporary IDE State
 .gemini/
+.kilo/
