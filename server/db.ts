@@ -121,16 +121,28 @@ export async function initDb(): Promise<void> {
   // ── Maintenance Windows Table ──────────────────────────────────────────────
   await query(`
     CREATE TABLE IF NOT EXISTS maintenance_windows (
-      id            TEXT PRIMARY KEY,
-      "targetId"    TEXT,
-      title         TEXT NOT NULL,
-      description   TEXT,
-      "startTime"   TIMESTAMPTZ NOT NULL,
-      "endTime"     TIMESTAMPTZ NOT NULL,
-      "isActive"    BOOLEAN NOT NULL DEFAULT true,
-      "createdAt"   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      id                    TEXT PRIMARY KEY,
+      "targetId"            TEXT,
+      title                 TEXT NOT NULL,
+      description           TEXT,
+      "startTime"           TIMESTAMPTZ NOT NULL,
+      "endTime"             TIMESTAMPTZ NOT NULL,
+      "isActive"            BOOLEAN NOT NULL DEFAULT true,
+      "createdAt"           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      -- Recurring schedule fields (added via migration below for existing DBs)
+      "isRecurring"         BOOLEAN NOT NULL DEFAULT false,
+      "recurringDays"       JSONB DEFAULT '[]',
+      "recurringStartHHMM"  TEXT,
+      "recurringEndHHMM"    TEXT
     );
   `).catch(() => {});
+
+  // Safe migrations for existing maintenance_windows tables
+  await query(`ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS "isRecurring" BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
+  await query(`ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS "recurringDays" JSONB DEFAULT '[]'`).catch(() => {});
+  await query(`ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS "recurringStartHHMM" TEXT`).catch(() => {});
+  await query(`ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS "recurringEndHHMM" TEXT`).catch(() => {});
+
 
   // ── Alert Destinations / Webhooks Table ─────────────────────────────────────
   await query(`

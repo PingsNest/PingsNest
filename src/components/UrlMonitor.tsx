@@ -116,6 +116,11 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
   const [maintDesc, setMaintDesc] = useState('');
   const [maintStartTime, setMaintStartTime] = useState('');
   const [maintEndTime, setMaintEndTime] = useState('');
+  // Recurring maintenance state
+  const [maintIsRecurring, setMaintIsRecurring] = useState(false);
+  const [maintRecurringDays, setMaintRecurringDays] = useState<number[]>([0,1,2,3,4,5,6]);
+  const [maintRecurringStart, setMaintRecurringStart] = useState('02:00');
+  const [maintRecurringEnd, setMaintRecurringEnd] = useState('04:00');
 
   // Search and Layout
   const [searchQuery, setSearchQuery] = useState('');
@@ -302,7 +307,8 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
   }, [authFetch]);
 
   const handleAddMaintenance = useCallback(async () => {
-    if (!maintTitle || !maintStartTime || !maintEndTime) return;
+    if (!maintTitle) return;
+    if (!maintIsRecurring && (!maintStartTime || !maintEndTime)) return;
     try {
       const res = await authFetch('/api/url-monitor/maintenance', {
         method: 'POST',
@@ -311,8 +317,12 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
           targetId: selectedTarget?.id || null,
           title: maintTitle,
           description: maintDesc,
-          startTime: maintStartTime,
-          endTime: maintEndTime
+          startTime: maintIsRecurring ? undefined : maintStartTime,
+          endTime:   maintIsRecurring ? undefined : maintEndTime,
+          isRecurring:        maintIsRecurring,
+          recurringDays:      maintIsRecurring ? maintRecurringDays : [],
+          recurringStartHHMM: maintIsRecurring ? maintRecurringStart : undefined,
+          recurringEndHHMM:   maintIsRecurring ? maintRecurringEnd   : undefined,
         })
       });
       if (res.ok) {
@@ -320,10 +330,16 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
         setMaintDesc('');
         setMaintStartTime('');
         setMaintEndTime('');
+        setMaintIsRecurring(false);
+        setMaintRecurringDays([0,1,2,3,4,5,6]);
+        setMaintRecurringStart('02:00');
+        setMaintRecurringEnd('04:00');
         await fetchMaintenance();
       }
     } catch { showError('Failed to schedule maintenance window.'); }
-  }, [authFetch, fetchMaintenance, maintDesc, maintEndTime, maintStartTime, maintTitle, selectedTarget, showError]);
+  }, [authFetch, fetchMaintenance, maintDesc, maintEndTime, maintStartTime, maintTitle,
+      maintIsRecurring, maintRecurringDays, maintRecurringStart, maintRecurringEnd,
+      selectedTarget, showError]);
 
   const handleDeleteMaintenance = useCallback(async (id: string) => {
     try {
@@ -2675,80 +2691,190 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
       )}
 
       {/* ─── MAINTENANCE SCHEDULE MANAGER MODAL ─── */}
-      {isMaintenanceModalOpen && (
-        <div style={{
-          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)',
-          zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
-        }}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '640px', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)' }}>
-                  <Calendar size={18} color="var(--color-success)" />
+      {isMaintenanceModalOpen && (() => {
+        const DAY_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        const toggleDay = (d: number) =>
+          setMaintRecurringDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
+        return (
+          <div style={{
+            position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)',
+            zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
+          }}>
+            <div className="glass-panel" style={{ width: '100%', maxWidth: '640px', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', maxHeight: '90vh', overflowY: 'auto' }}>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)' }}>
+                    <Calendar size={18} color="var(--color-success)" />
+                  </div>
+                  <h3 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                    Scheduled Maintenance Windows
+                  </h3>
                 </div>
-                <h3 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
-                  Scheduled Maintenance Windows
-                </h3>
+                <button onClick={() => setIsMaintenanceModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '18px' }}>✕</button>
               </div>
-              <button onClick={() => setIsMaintenanceModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '18px' }}>✕</button>
-            </div>
 
-            {/* Schedule Maintenance Form */}
-            <div style={{ backgroundColor: 'var(--bg-input)', padding: '14px', borderRadius: '10px', border: '1px solid var(--border-main)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)' }}>Schedule Planned System Maintenance</div>
-              <input
-                type="text"
-                placeholder="Maintenance Title (e.g. Database Index Optimization)"
-                value={maintTitle}
-                onChange={e => setMaintTitle(e.target.value)}
-                className="input-field"
-                style={{ fontSize: '12px' }}
-              />
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                <div>
-                  <label style={{ fontSize: '10px', color: 'var(--text-muted)', display: 'block', marginBottom: '2px' }}>Start Time:</label>
-                  <input type="datetime-local" value={maintStartTime} onChange={e => setMaintStartTime(e.target.value)} className="input-field" style={{ fontSize: '11px' }} />
-                </div>
-                <div>
-                  <label style={{ fontSize: '10px', color: 'var(--text-muted)', display: 'block', marginBottom: '2px' }}>End Time:</label>
-                  <input type="datetime-local" value={maintEndTime} onChange={e => setMaintEndTime(e.target.value)} className="input-field" style={{ fontSize: '11px' }} />
-                </div>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
-                <button type="button" onClick={handleAddMaintenance} className="btn btn-primary" style={{ padding: '6px 16px', fontSize: '12px' }}>
-                  <Plus size={13} /> Schedule Maintenance
-                </button>
-              </div>
-            </div>
+              {/* Form */}
+              <div style={{ backgroundColor: 'var(--bg-input)', padding: '16px', borderRadius: '10px', border: '1px solid var(--border-main)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)' }}>Schedule Planned System Maintenance</div>
 
-            {/* Maintenance List */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Active & Upcoming Schedules ({maintenanceWindows.length})</span>
-              {maintenanceWindows.length === 0 ? (
-                <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>No maintenance windows scheduled. Alerts will fire normally for all targets.</div>
-              ) : (
-                maintenanceWindows.map(m => (
-                  <div key={m.id} style={{ padding: '12px 14px', borderRadius: '8px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                {/* Title */}
+                <input
+                  type="text"
+                  placeholder="Maintenance Title (e.g. Database Index Optimization)"
+                  value={maintTitle}
+                  onChange={e => setMaintTitle(e.target.value)}
+                  className="input-field"
+                  style={{ fontSize: '12px' }}
+                />
+
+                {/* One-time / Recurring toggle */}
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  {(['One-time', 'Recurring'] as const).map((label, i) => {
+                    const active = maintIsRecurring === (i === 1);
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => setMaintIsRecurring(i === 1)}
+                        style={{
+                          padding: '5px 14px', fontSize: '11px', fontWeight: 700, borderRadius: '6px', cursor: 'pointer', border: 'none',
+                          backgroundColor: active ? 'var(--color-primary)' : 'rgba(255,255,255,0.06)',
+                          color: active ? '#000' : 'var(--text-secondary)',
+                          transition: 'all 0.15s'
+                        }}
+                      >{label === 'Recurring' ? '🔁 ' + label : '📅 ' + label}</button>
+                    );
+                  })}
+                </div>
+
+                {/* One-time inputs */}
+                {!maintIsRecurring && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                     <div>
-                      <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>{m.title}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                        {new Date(m.startTime).toLocaleString()} — {new Date(m.endTime).toLocaleString()}
+                      <label style={{ fontSize: '10px', color: 'var(--text-muted)', display: 'block', marginBottom: '2px' }}>Start Time:</label>
+                      <input type="datetime-local" value={maintStartTime} onChange={e => setMaintStartTime(e.target.value)} className="input-field" style={{ fontSize: '11px' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '10px', color: 'var(--text-muted)', display: 'block', marginBottom: '2px' }}>End Time:</label>
+                      <input type="datetime-local" value={maintEndTime} onChange={e => setMaintEndTime(e.target.value)} className="input-field" style={{ fontSize: '11px' }} />
+                    </div>
+                  </div>
+                )}
+
+                {/* Recurring inputs */}
+                {maintIsRecurring && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {/* Day-of-week selector */}
+                    <div>
+                      <label style={{ fontSize: '10px', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Repeat on days (UTC):</label>
+                      {/* Presets */}
+                      <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                        {[
+                          { label: 'Every Day',  days: [0,1,2,3,4,5,6] },
+                          { label: 'Weekdays',   days: [1,2,3,4,5] },
+                          { label: 'Weekends',   days: [0,6] },
+                        ].map(preset => (
+                          <button
+                            key={preset.label}
+                            type="button"
+                            onClick={() => setMaintRecurringDays(preset.days)}
+                            style={{
+                              padding: '3px 10px', fontSize: '10px', fontWeight: 700, borderRadius: '4px', cursor: 'pointer', border: '1px solid var(--border-main)',
+                              backgroundColor: JSON.stringify(maintRecurringDays.slice().sort()) === JSON.stringify(preset.days.slice().sort())
+                                ? 'rgba(0,242,254,0.15)' : 'rgba(255,255,255,0.04)',
+                              color: 'var(--text-secondary)'
+                            }}
+                          >{preset.label}</button>
+                        ))}
+                      </div>
+                      {/* Individual day toggles */}
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        {DAY_LABELS.map((day, idx) => (
+                          <button
+                            key={day}
+                            type="button"
+                            onClick={() => toggleDay(idx)}
+                            style={{
+                              width: '36px', height: '36px', borderRadius: '6px', fontSize: '11px', fontWeight: 700,
+                              cursor: 'pointer', border: '1px solid var(--border-main)',
+                              backgroundColor: maintRecurringDays.includes(idx) ? 'rgba(0,242,254,0.15)' : 'rgba(255,255,255,0.04)',
+                              color: maintRecurringDays.includes(idx) ? 'var(--color-primary)' : 'var(--text-muted)',
+                              transition: 'all 0.15s'
+                            }}
+                          >{day}</button>
+                        ))}
                       </div>
                     </div>
-                    <button type="button" onClick={() => handleDeleteMaintenance(m.id)} style={{ background: 'none', border: 'none', color: 'var(--color-error)', cursor: 'pointer', padding: '4px' }}>
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
-              <button type="button" onClick={() => setIsMaintenanceModalOpen(false)} className="btn btn-secondary" style={{ padding: '8px 16px' }}>Close</button>
+                    {/* Time range */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <div>
+                        <label style={{ fontSize: '10px', color: 'var(--text-muted)', display: 'block', marginBottom: '2px' }}>Daily start (UTC HH:MM):</label>
+                        <input type="time" value={maintRecurringStart} onChange={e => setMaintRecurringStart(e.target.value)} className="input-field" style={{ fontSize: '12px' }} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '10px', color: 'var(--text-muted)', display: 'block', marginBottom: '2px' }}>Daily end (UTC HH:MM):</label>
+                        <input type="time" value={maintRecurringEnd} onChange={e => setMaintRecurringEnd(e.target.value)} className="input-field" style={{ fontSize: '12px' }} />
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', padding: '6px 10px', borderRadius: '6px', backgroundColor: 'rgba(0,242,254,0.04)', border: '1px solid rgba(0,242,254,0.1)' }}>
+                      ⏰ Times are in <strong>UTC</strong>. Window silences alerts every selected day between {maintRecurringStart} – {maintRecurringEnd} UTC.
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+                  <button type="button" onClick={handleAddMaintenance} className="btn btn-primary" style={{ padding: '6px 16px', fontSize: '12px' }}>
+                    <Plus size={13} /> {maintIsRecurring ? 'Add Recurring Schedule' : 'Schedule Maintenance'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Maintenance Window List */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Active &amp; Upcoming Schedules ({maintenanceWindows.length})</span>
+                {maintenanceWindows.length === 0 ? (
+                  <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>No maintenance windows scheduled. Alerts will fire normally for all targets.</div>
+                ) : (
+                  maintenanceWindows.map(m => {
+                    const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+                    const days: number[] = Array.isArray(m.recurringDays) ? m.recurringDays : [];
+                    const dayLabel = days.length === 7 ? 'Every Day'
+                      : days.length === 0 ? ''
+                      : days.map((d: number) => DAY_NAMES[d]).join(', ');
+                    return (
+                      <div key={m.id} style={{ padding: '12px 14px', borderRadius: '8px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>{m.title}</span>
+                            {m.isRecurring && (
+                              <span style={{ fontSize: '9px', padding: '1px 6px', borderRadius: '4px', backgroundColor: 'rgba(0,242,254,0.1)', color: 'var(--color-primary)', fontWeight: 700, border: '1px solid rgba(0,242,254,0.2)', flexShrink: 0 }}>🔁 RECURRING</span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>
+                            {m.isRecurring
+                              ? <>{dayLabel && <span style={{ marginRight: '6px' }}>{dayLabel}</span>}<span style={{ fontFamily: 'var(--font-mono)' }}>{m.recurringStartHHMM} – {m.recurringEndHHMM} UTC</span></>
+                              : <>{new Date(m.startTime).toLocaleString()} — {new Date(m.endTime).toLocaleString()}</>
+                            }
+                          </div>
+                        </div>
+                        <button type="button" onClick={() => handleDeleteMaintenance(m.id)} style={{ background: 'none', border: 'none', color: 'var(--color-error)', cursor: 'pointer', padding: '4px', flexShrink: 0 }}>
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+                <button type="button" onClick={() => setIsMaintenanceModalOpen(false)} className="btn btn-secondary" style={{ padding: '8px 16px' }}>Close</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
     </div>
   );
