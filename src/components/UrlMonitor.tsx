@@ -1031,8 +1031,8 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
             />
           </div>
 
-          {/* Grouped monitor listing — grows with content, scrolls when tall */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: 'calc(100vh - 340px)', overflowY: 'auto', minHeight: 0 }}>
+          {/* Grouped monitor listing — no height cap, sidebar grows to show all monitors */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {loading ? (
               <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
                 Loading monitors...
