@@ -877,9 +877,14 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
           name: t.name,
           url: t.url,
           method: t.method || 'GET',
+          group: t.group,
           isUp: t.isUp !== false,
           lastStatusCode: t.lastStatusCode || 200,
-          lastLatency: t.lastLatency || 0
+          lastLatency: t.lastLatency || 0,
+          lastCheck: t.lastCheck,
+          certExpDays: t.certExpDays,
+          // recentPings is required for the heartbeat bars on StatusPortal
+          recentPings: Array.isArray(t.recentPings) ? t.recentPings : []
         }));
         setUrlTargets(list);
         if (list.length > 0 && !selectedUrlTarget) {
