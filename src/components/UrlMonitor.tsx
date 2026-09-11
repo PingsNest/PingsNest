@@ -1996,7 +1996,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
                           <td colSpan={4} style={{ textAlign: 'center', padding: '16px', color: 'var(--text-muted)' }}>No logs compiled.</td>
                         </tr>
                       ) : (
-                        history.slice(0, logsVisible).map((h, i) => (
+                        [...history].reverse().slice(0, logsVisible).map((h, i) => (
                           <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.01)' }}>
                             <td style={{ padding: '8px 12px' }}>
                               <span style={{ 
