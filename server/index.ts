@@ -3174,11 +3174,45 @@ async function pingTarget(target: UrlTarget): Promise<UrlTarget> {
     let isMaintenanceMuted = target.suppressAlertsUntil && new Date(target.suppressAlertsUntil) > new Date();
     if (!isMaintenanceMuted) {
       try {
+        // Check one-time windows: target is currently inside startTime–endTime
         const { rows: activeWindows } = await query(
-          `SELECT id FROM maintenance_windows WHERE ("targetId" = $1 OR "targetId" = 'all' OR "targetId" IS NULL) AND "isActive" = true AND NOW() BETWEEN "startTime" AND "endTime" LIMIT 1`,
+          `SELECT id FROM maintenance_windows
+           WHERE ("targetId" = $1 OR "targetId" = 'all' OR "targetId" IS NULL)
+             AND "isActive" = true
+             AND "isRecurring" = false
+             AND NOW() BETWEEN "startTime" AND "endTime"
+           LIMIT 1`,
           [target.id]
         );
         if (activeWindows.length > 0) isMaintenanceMuted = true;
+
+        // Check recurring windows: match day-of-week and current HH:MM (UTC)
+        if (!isMaintenanceMuted) {
+          const { rows: recurringWindows } = await query(
+            `SELECT id, "recurringDays", "recurringStartHHMM", "recurringEndHHMM"
+             FROM maintenance_windows
+             WHERE ("targetId" = $1 OR "targetId" = 'all' OR "targetId" IS NULL)
+               AND "isActive" = true
+               AND "isRecurring" = true`,
+            [target.id]
+          );
+          if (recurringWindows.length > 0) {
+            const now = new Date();
+            const currentDow = now.getUTCDay(); // 0=Sun … 6=Sat
+            const currentHHMM = now.getUTCHours().toString().padStart(2, '0') + ':' + now.getUTCMinutes().toString().padStart(2, '0');
+            for (const rw of recurringWindows) {
+              const days: number[] = Array.isArray(rw.recurringDays) ? rw.recurringDays : [];
+              const start: string = rw.recurringStartHHMM || '00:00';
+              const end: string   = rw.recurringEndHHMM   || '00:00';
+              const dayMatch = days.length === 0 || days.includes(currentDow);
+              // Handle windows that cross midnight (e.g. 23:00–01:00)
+              const inWindow = start <= end
+                ? currentHHMM >= start && currentHHMM < end
+                : currentHHMM >= start || currentHHMM < end;
+              if (dayMatch && inWindow) { isMaintenanceMuted = true; break; }
+            }
+          }
+        }
       } catch {}
     }
     const { rows: openIncidents } = await query(
@@ -3875,20 +3909,57 @@ app.post('/api/url-monitor/alerts/test', requireAuth, async (_req, res) => {
 // ——— Maintenance Windows CRUD ————————————————————————————————————————————
 app.get('/api/url-monitor/maintenance', requireAuth, async (_req, res) => {
   try {
-    const { rows } = await query('SELECT * FROM maintenance_windows ORDER BY "startTime" DESC');
+    const { rows } = await query('SELECT * FROM maintenance_windows ORDER BY "createdAt" DESC');
     res.json({ windows: rows });
   } catch { res.json({ windows: [] }); }
 });
 
 app.post('/api/url-monitor/maintenance', requireAuth, async (req, res) => {
-  const { targetId, title, description, startTime, endTime } = req.body;
-  if (!title || !startTime || !endTime) return res.status(400).json({ error: 'Missing maintenance parameters' });
+  const {
+    targetId, title, description,
+    startTime, endTime,
+    isRecurring, recurringDays, recurringStartHHMM, recurringEndHHMM
+  } = req.body;
+
+  if (!title) return res.status(400).json({ error: 'Title is required' });
+
+  const recurring = !!isRecurring;
+
+  // For one-time windows both timestamps are required; for recurring they are optional
+  if (!recurring && (!startTime || !endTime)) {
+    return res.status(400).json({ error: 'startTime and endTime are required for one-time windows' });
+  }
+
+  // Provide dummy timestamps for recurring windows (DB columns are NOT NULL)
+  const effectiveStart = startTime || new Date().toISOString();
+  const effectiveEnd   = endTime   || new Date().toISOString();
+
   const id = 'maint-' + Math.random().toString(36).substring(2, 9);
   await query(
-    `INSERT INTO maintenance_windows (id, "targetId", title, description, "startTime", "endTime", "isActive") VALUES ($1, $2, $3, $4, $5, $6, true)`,
-    [id, targetId || null, title, description || '', startTime, endTime]
+    `INSERT INTO maintenance_windows
+       (id, "targetId", title, description, "startTime", "endTime", "isActive",
+        "isRecurring", "recurringDays", "recurringStartHHMM", "recurringEndHHMM")
+     VALUES ($1,$2,$3,$4,$5,$6,true,$7,$8,$9,$10)`,
+    [
+      id, targetId || null, title, description || '',
+      effectiveStart, effectiveEnd,
+      recurring,
+      JSON.stringify(recurringDays || []),
+      recurringStartHHMM || null,
+      recurringEndHHMM   || null
+    ]
   );
-  res.json({ success: true, window: { id, targetId, title, description, startTime, endTime, isActive: true } });
+  res.json({
+    success: true,
+    window: {
+      id, targetId, title, description,
+      startTime: effectiveStart, endTime: effectiveEnd, isActive: true,
+      isRecurring: recurring,
+      recurringDays: recurringDays || [],
+      recurringStartHHMM: recurringStartHHMM || null,
+      recurringEndHHMM:   recurringEndHHMM   || null
+    }
+  });
 });
 
 app.delete('/api/url-monitor/maintenance/:id', requireAuth, async (req, res) => {
