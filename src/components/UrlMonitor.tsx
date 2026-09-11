@@ -946,7 +946,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
       <div style={{ display: 'grid', gridTemplateColumns: '350px 1fr', gap: '24px', minHeight: '580px' }}>
         
         {/* Left sidebar panel */}
-        <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', height: 'fit-content' }}>
+        <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', alignSelf: 'stretch', overflowY: 'hidden' }}>
           
           {/* Header Row */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1015,8 +1015,8 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
             />
           </div>
 
-          {/* Grouped monitor listing */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '520px', overflowY: 'auto' }}>
+          {/* Grouped monitor listing — flex:1 fills remaining sidebar space, scroll within */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, overflowY: 'auto', minHeight: 0 }}>
             {loading ? (
               <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
                 Loading monitors...
