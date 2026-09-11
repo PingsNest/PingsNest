@@ -732,3 +732,17 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--text-primary);
 }
 
+/* ── URL Monitor responsive layout ──────────────────────────────────────────
+   Stack sidebar above detail panel on narrow screens                        */
+@media (max-width: 900px) {
+  .url-monitor-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Long monitor names: wrap gracefully instead of overflowing */
+.monitor-name {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}

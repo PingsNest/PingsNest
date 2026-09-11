@@ -958,11 +958,11 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
         </div>
       </div>
 
-      {/* 2. Layout Splits */}
-      <div style={{ display: 'grid', gridTemplateColumns: '350px 1fr', gap: '24px', minHeight: '580px' }}>
+      {/* 2. Layout Splits — responsive: stacks on narrow viewports */}
+      <div className="url-monitor-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 320px) 1fr', gap: '24px', alignItems: 'start' }}>
         
-        {/* Left sidebar panel */}
-        <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', alignSelf: 'stretch', overflowY: 'hidden' }}>
+        {/* Left sidebar panel — alignSelf:start so it shrinks to content, no empty gap */}
+        <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', alignSelf: 'start' }}>
           
           {/* Header Row */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1031,8 +1031,8 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
             />
           </div>
 
-          {/* Grouped monitor listing — flex:1 fills remaining sidebar space, scroll within */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, overflowY: 'auto', minHeight: 0 }}>
+          {/* Grouped monitor listing — grows with content, scrolls when tall */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: 'calc(100vh - 340px)', overflowY: 'auto', minHeight: 0 }}>
             {loading ? (
               <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
                 Loading monitors...
