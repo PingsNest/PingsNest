@@ -13,6 +13,7 @@ import { ApiGatewayV2Client, GetApisCommand, GetRoutesCommand, GetIntegrationsCo
 import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import { CloudWatchLogsClient, FilterLogEventsCommand, DescribeLogGroupsCommand, DescribeLogStreamsCommand, GetLogEventsCommand } from '@aws-sdk/client-cloudwatch-logs';
 import { STSClient, AssumeRoleCommand } from '@aws-sdk/client-sts';
+import { fromNodeProviderChain, fromInstanceMetadata } from '@aws-sdk/credential-providers';
 import { XRayClient, GetTraceSummariesCommand, BatchGetTracesCommand } from '@aws-sdk/client-xray';
 import { cacheGet, cacheSet, cacheDel, cacheDelPattern, cacheGetOrSet, getRedisStats } from './cache.js';
 import { query, initDb, encryptSecret, decryptSecret } from './db.js';
@@ -286,33 +287,48 @@ async function getAwsCredentialsFromReq(req: any) {
   let secretAccessKey = (req.headers['x-aws-secret-access-key'] as string) || (req.query.secretAccessKey as string) || req.body?.secretAccessKey;
   let region = (req.headers['x-aws-region'] as string) || (req.query.region as string) || req.body?.region || process.env.AWS_REGION || 'us-east-1';
   let profileId = (req.headers['x-aws-profile-id'] as string) || (req.query.profileId as string) || req.body?.profileId;
+  let authType: string = 'keys';
+  let credentialProvider: (() => Promise<any>) | undefined;
 
+  const applyRow = (row: any) => {
+    authType = row.authType || 'keys';
+    region = row.region || region;
+    if (authType === 'instance_profile') {
+      // EC2 instance profile — IMDSv2 supplies temporary credentials automatically
+      credentialProvider = fromInstanceMetadata({ timeout: 1000, maxRetries: 3 });
+    } else if (authType === 'environment') {
+      // SDK default provider chain: env vars → ~/.aws → ECS task role → IMDS
+      credentialProvider = fromNodeProviderChain();
+    } else {
+      // Static keys or STS role — read from DB
+      accessKeyId = row.accessKeyId;
+      secretAccessKey = decryptSecret(row.secretAccessKeyEncrypted);
+    }
+  };
+
+  // 1. Specific profile requested
   if ((!accessKeyId || !secretAccessKey) && profileId) {
     try {
       const { rows } = await query(`SELECT * FROM aws_connections WHERE id = $1`, [profileId]);
-      if (rows.length > 0) {
-        accessKeyId = rows[0].accessKeyId;
-        secretAccessKey = decryptSecret(rows[0].secretAccessKeyEncrypted);
-        region = rows[0].region || region;
-      }
+      if (rows.length > 0) applyRow(rows[0]);
     } catch { }
   }
 
-  if (!accessKeyId || !secretAccessKey) {
+  // 2. Fall back to default connection
+  if (!credentialProvider && !accessKeyId) {
     try {
       const { rows } = await query(`SELECT * FROM aws_connections WHERE "isDefault" = true LIMIT 1`);
-      if (rows.length > 0) {
-        accessKeyId = rows[0].accessKeyId;
-        secretAccessKey = decryptSecret(rows[0].secretAccessKeyEncrypted);
-        region = rows[0].region || region;
-      }
+      if (rows.length > 0) applyRow(rows[0]);
     } catch { }
   }
 
-  if (!accessKeyId) accessKeyId = process.env.AWS_ACCESS_KEY_ID;
-  if (!secretAccessKey) secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+  // 3. Last resort: process environment variables
+  if (!credentialProvider) {
+    if (!accessKeyId) accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+    if (!secretAccessKey) secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+  }
 
-  return { accessKeyId, secretAccessKey, region };
+  return { accessKeyId, secretAccessKey, region, authType, credentialProvider };
 }
 
 // ─── Module 3: Lambda Monitoring REST Endpoints (Cached to avoid AWS 429s) ───
@@ -935,15 +951,27 @@ app.post('/api/aws/clear-credentials', requireAuth, requireAdmin, (_req, res) =>
 // â”€â”€â”€ Dynamic AWS STS & Credentials Resolver â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function resolveAwsCredentials(opts: {
   region: string;
-  authType?: 'keys' | 'role' | 'environment';
+  authType?: 'keys' | 'role' | 'environment' | 'instance_profile';
   accessKeyId?: string;
   secretAccessKey?: string;
   roleArn?: string;
   externalId?: string;
+  credentialProvider?: () => Promise<any>;
 }) {
   const region = opts.region || 'us-east-1';
 
-  // 1. STS AssumeRole
+  // 1. EC2 Instance Profile (IMDSv2) — fetch from metadata service
+  if (opts.authType === 'instance_profile' || opts.credentialProvider) {
+    const provider = opts.credentialProvider || fromInstanceMetadata({ timeout: 1000, maxRetries: 3 });
+    return { region, credentials: provider };
+  }
+
+  // 2. Environment / SDK default provider chain
+  if (opts.authType === 'environment') {
+    return { region, credentials: fromNodeProviderChain() };
+  }
+
+  // 3. STS AssumeRole
   if (opts.authType === 'role' && opts.roleArn) {
     try {
       const stsClient = new STSClient({ region });
@@ -969,7 +997,7 @@ export async function resolveAwsCredentials(opts: {
     }
   }
 
-  // 2. Static Keys
+  // 4. Static Access Keys
   if (opts.accessKeyId && opts.secretAccessKey) {
     return {
       region,
@@ -980,8 +1008,8 @@ export async function resolveAwsCredentials(opts: {
     };
   }
 
-  // 3. Default Environment SDK Chain
-  return { region };
+  // 5. SDK default provider chain as last resort
+  return { region, credentials: fromNodeProviderChain() };
 }
 
 // â”€â”€â”€ Multi-Account Connection Management Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1152,16 +1180,23 @@ app.post('/api/aws/throttle-stage', async (req, res) => {
 // â”€â”€â”€ 1. List API Gateways â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/apis', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
-  const { region, accessKeyId, secretAccessKey } = creds;
-  if (!region || !accessKeyId || !secretAccessKey) return res.status(400).json({ error: 'Missing credentials' });
+  const { region, accessKeyId, secretAccessKey, credentialProvider } = creds;
+
+  // Only hard-reject if region is missing. Instance-profile / environment
+  // connections have no static keys but are still valid.
+  if (!region) return res.status(400).json({ error: 'AWS region is required' });
+  if (!credentialProvider && !accessKeyId) return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
 
   // Bug 5 fix: hash the accessKeyId so raw key material is never stored in Redis key names.
-  const keyHash = crypto.createHash('sha256').update(accessKeyId).digest('hex').slice(0, 16);
+  const keyHash = crypto.createHash('sha256').update(accessKeyId || 'imds').digest('hex').slice(0, 16);
   const cacheKey = `apis:${region}:${keyHash}`;
   const cached = await cacheGet(cacheKey);
   if (cached) return res.json(cached);
 
-  const credentials = { accessKeyId, secretAccessKey };
+  // Build credential object — works for static keys AND provider functions (IMDS/env chain)
+  const credentials = credentialProvider
+    ? credentialProvider            // lazy provider: AWS SDK calls it when needed
+    : { accessKeyId: accessKeyId!, secretAccessKey: secretAccessKey! };
   const apisList: { id: string; name: string; protocol: 'REST' | 'HTTP' | 'WEBSOCKET' }[] = [];
 
   try {

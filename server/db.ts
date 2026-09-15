@@ -511,7 +511,7 @@ export async function initDb(): Promise<void> {
       id                          TEXT PRIMARY KEY,
       name                        TEXT NOT NULL,
       region                      TEXT NOT NULL,
-      "authType"                  TEXT NOT NULL DEFAULT 'keys', -- 'keys' | 'role' | 'environment'
+      "authType"                  TEXT NOT NULL DEFAULT 'keys', -- 'keys' | 'role' | 'environment' | 'instance_profile'
       "accessKeyId"               TEXT,
       "secretAccessKeyEncrypted"  TEXT,
       "roleArn"                   TEXT,
