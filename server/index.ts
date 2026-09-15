@@ -1232,8 +1232,9 @@ app.post('/api/aws/apis', async (req, res) => {
 // â”€â”€â”€ 1b. List API Gateway Stages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/stages', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
+  const { region } = creds;
   const { apiId, protocol, bypassCache } = req.body;
-  if (!creds.region || !apiId || !protocol) {
+  if (!region || !apiId || !protocol) {
     return res.status(400).json({ error: 'Missing params' });
   }
   if (!hasAwsCreds(creds)) return res.status(400).json({ error: 'Missing credentials' });
@@ -1282,8 +1283,9 @@ app.post('/api/aws/stages', async (req, res) => {
 // â”€â”€â”€ 2. List Routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/routes', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
+  const { region } = creds;
   const { apiId, protocol, bypassCache } = req.body;
-  if (!creds.region || !apiId || !protocol) return res.status(400).json({ error: 'Missing params' });
+  if (!region || !apiId || !protocol) return res.status(400).json({ error: 'Missing params' });
   if (!hasAwsCreds(creds)) return res.status(400).json({ error: 'Missing credentials' });
 
   const cacheKey = `routes:${apiId}:${protocol}`;
@@ -1390,7 +1392,8 @@ app.post('/api/aws/routes', async (req, res) => {
 // â”€â”€â”€ 2b. Multi-API Gateway Fleet Summary ($N$ Gateways Aggregation) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/gateways/fleet-summary', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
-  if (!creds.region || !hasAwsCreds(creds)) {
+  const { region } = creds;
+  if (!region || !hasAwsCreds(creds)) {
     return res.status(400).json({ error: 'Missing region or credentials' });
   }
 
@@ -2108,8 +2111,9 @@ app.post('/api/notifications/test-template', async (req, res) => {
 // â”€â”€â”€ 3. CloudWatch Metrics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/metrics', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
+  const { region } = creds;
   const { apiId, apiName, protocol, stage, bypassCache } = req.body;
-  if (!creds.region || !apiId || !apiName || !protocol || !stage)
+  if (!region || !apiId || !apiName || !protocol || !stage)
     return res.status(400).json({ error: 'Missing params' });
   if (!hasAwsCreds(creds)) return res.status(400).json({ error: 'Missing credentials' });
 
@@ -2229,8 +2233,9 @@ app.post('/api/aws/metrics', async (req, res) => {
 // â”€â”€â”€ 4. CloudWatch Logs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/logs', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
+  const { region } = creds;
   const { apiId, stage, customLogGroup, startTime: customStart, endTime: customEnd, liveWindow, bypassCache } = req.body;
-  if (!creds.region || !apiId || !stage) return res.status(400).json({ error: 'Missing params' });
+  if (!region || !apiId || !stage) return res.status(400).json({ error: 'Missing params' });
   if (!hasAwsCreds(creds)) return res.status(400).json({ error: 'Missing credentials' });
 
   const liveWindowMinutes = Number(liveWindow) || 30;
