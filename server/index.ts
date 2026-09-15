@@ -331,7 +331,21 @@ async function getAwsCredentialsFromReq(req: any) {
   return { accessKeyId, secretAccessKey, region, authType, credentialProvider };
 }
 
-// ─── Module 3: Lambda Monitoring REST Endpoints (Cached to avoid AWS 429s) ───
+/** Returns the value to pass as `credentials:` to any AWS SDK client.
+ *  Works for static keys, IMDS provider functions, and the env provider chain. */
+function buildAwsCredentials(creds: Awaited<ReturnType<typeof getAwsCredentialsFromReq>>) {
+  if (creds.credentialProvider) return creds.credentialProvider;
+  if (creds.accessKeyId && creds.secretAccessKey)
+    return { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey };
+  return undefined; // let SDK use its own default chain (env vars / ~/.aws)
+}
+
+/** True when we have enough to make an AWS call (provider OR static keys). */
+function hasAwsCreds(creds: Awaited<ReturnType<typeof getAwsCredentialsFromReq>>) {
+  return !!(creds.credentialProvider || creds.accessKeyId);
+}
+
+
 app.get('/api/lambda/functions', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
@@ -1153,13 +1167,12 @@ app.post('/api/diagnostics/analyze-spike', async (req, res) => {
 // â”€â”€â”€ Active Remediation: API Gateway Stage Throttling Endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/throttle-stage', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
-  const { region, accessKeyId, secretAccessKey } = creds;
   const { apiId, stage, throttlingBurstLimit, throttlingRateLimit } = req.body;
-  if (!region || !apiId || !stage) return res.status(400).json({ error: 'Missing required parameters' });
-  if (!accessKeyId || !secretAccessKey) return res.status(400).json({ error: 'AWS credentials required to update throttling' });
+  if (!creds.region || !apiId || !stage) return res.status(400).json({ error: 'Missing required parameters' });
+  if (!hasAwsCreds(creds)) return res.status(400).json({ error: 'AWS credentials required to update throttling' });
 
   try {
-    const c = new APIGatewayClient({ region, credentials: { accessKeyId, secretAccessKey } });
+    const c = new APIGatewayClient({ region: creds.region, credentials: buildAwsCredentials(creds) });
     await c.send(new UpdateStageCommand({
       restApiId: apiId,
       stageName: stage,
@@ -1219,11 +1232,11 @@ app.post('/api/aws/apis', async (req, res) => {
 // â”€â”€â”€ 1b. List API Gateway Stages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/stages', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
-  const { region, accessKeyId, secretAccessKey } = creds;
   const { apiId, protocol, bypassCache } = req.body;
-  if (!region || !accessKeyId || !secretAccessKey || !apiId || !protocol) {
+  if (!creds.region || !apiId || !protocol) {
     return res.status(400).json({ error: 'Missing params' });
   }
+  if (!hasAwsCreds(creds)) return res.status(400).json({ error: 'Missing credentials' });
 
   const cacheKey = `stages:${apiId}:${protocol}`;
   if (!bypassCache) {
@@ -1231,7 +1244,7 @@ app.post('/api/aws/stages', async (req, res) => {
     if (cached) return res.json(cached);
   }
 
-  const credentials = { accessKeyId, secretAccessKey };
+  const credentials = buildAwsCredentials(creds);
   const stagesList: string[] = [];
   let awsError: string | null = null;
 
@@ -1269,9 +1282,9 @@ app.post('/api/aws/stages', async (req, res) => {
 // â”€â”€â”€ 2. List Routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/routes', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
-  const { region, accessKeyId, secretAccessKey } = creds;
   const { apiId, protocol, bypassCache } = req.body;
-  if (!region || !accessKeyId || !secretAccessKey || !apiId || !protocol) return res.status(400).json({ error: 'Missing params' });
+  if (!creds.region || !apiId || !protocol) return res.status(400).json({ error: 'Missing params' });
+  if (!hasAwsCreds(creds)) return res.status(400).json({ error: 'Missing credentials' });
 
   const cacheKey = `routes:${apiId}:${protocol}`;
   if (!bypassCache) {
@@ -1279,7 +1292,7 @@ app.post('/api/aws/routes', async (req, res) => {
     if (cached) return res.json(cached);
   }
 
-  const credentials = { accessKeyId, secretAccessKey };
+  const credentials = buildAwsCredentials(creds);
   const routesList: { method: string; path: string; lambdaName?: string; integrationType?: string }[] = [];
 
   const parseLambdaName = (uri?: string, type?: string) => {
@@ -1377,19 +1390,18 @@ app.post('/api/aws/routes', async (req, res) => {
 // â”€â”€â”€ 2b. Multi-API Gateway Fleet Summary ($N$ Gateways Aggregation) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/gateways/fleet-summary', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
-  const { region, accessKeyId, secretAccessKey } = creds;
-  if (!region || !accessKeyId || !secretAccessKey) {
+  if (!creds.region || !hasAwsCreds(creds)) {
     return res.status(400).json({ error: 'Missing region or credentials' });
   }
 
-  const keyHash = crypto.createHash('sha256').update(accessKeyId).digest('hex').slice(0, 12);
-  const cacheKey = `apigw:fleet-summary:${region}:${keyHash}`;
+  const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || 'imds').digest('hex').slice(0, 12);
+  const cacheKey = `apigw:fleet-summary:${creds.region}:${keyHash}`;
 
   try {
     const result = await cacheGetOrSet(cacheKey, 30, async () => {
-      const credentials = { accessKeyId, secretAccessKey };
-      const v1 = new APIGatewayClient({ region, credentials });
-      const v2 = new ApiGatewayV2Client({ region, credentials });
+      const credentials = buildAwsCredentials(creds);
+      const v1 = new APIGatewayClient({ region: creds.region, credentials });
+      const v2 = new ApiGatewayV2Client({ region: creds.region, credentials });
 
       const apisList: { id: string; name: string; protocol: 'REST' | 'HTTP' | 'WEBSOCKET'; stage: string }[] = [];
 
@@ -2096,10 +2108,10 @@ app.post('/api/notifications/test-template', async (req, res) => {
 // â”€â”€â”€ 3. CloudWatch Metrics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/metrics', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
-  const { region, accessKeyId, secretAccessKey } = creds;
   const { apiId, apiName, protocol, stage, bypassCache } = req.body;
-  if (!region || !accessKeyId || !secretAccessKey || !apiId || !apiName || !protocol || !stage)
+  if (!creds.region || !apiId || !apiName || !protocol || !stage)
     return res.status(400).json({ error: 'Missing params' });
+  if (!hasAwsCreds(creds)) return res.status(400).json({ error: 'Missing credentials' });
 
   const cacheKey = `metrics:${apiId}:${stage}`;
   if (!bypassCache) {
@@ -2108,8 +2120,8 @@ app.post('/api/aws/metrics', async (req, res) => {
   }
 
   try {
-    const credentials = { accessKeyId, secretAccessKey };
-    const cwClient = new CloudWatchClient({ region, credentials });
+    const credentials = buildAwsCredentials(creds);
+    const cwClient = new CloudWatchClient({ region: creds.region, credentials });
     const endTime = new Date();
     const startTime = new Date(endTime.getTime() - 60 * 60 * 1000);
     const isRest = protocol === 'REST';
@@ -2217,9 +2229,9 @@ app.post('/api/aws/metrics', async (req, res) => {
 // â”€â”€â”€ 4. CloudWatch Logs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/logs', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
-  const { region, accessKeyId, secretAccessKey } = creds;
   const { apiId, stage, customLogGroup, startTime: customStart, endTime: customEnd, liveWindow, bypassCache } = req.body;
-  if (!region || !accessKeyId || !secretAccessKey || !apiId || !stage) return res.status(400).json({ error: 'Missing params' });
+  if (!creds.region || !apiId || !stage) return res.status(400).json({ error: 'Missing params' });
+  if (!hasAwsCreds(creds)) return res.status(400).json({ error: 'Missing credentials' });
 
   const liveWindowMinutes = Number(liveWindow) || 30;
   const isHistory = !!customStart;
@@ -2247,8 +2259,8 @@ app.post('/api/aws/logs', async (req, res) => {
     startTime = endTime - liveWindowMinutes * 60_000;
   }
 
-  const credentials = { accessKeyId, secretAccessKey };
-  const logsClient = new CloudWatchLogsClient({ region, credentials });
+  const credentials = buildAwsCredentials(creds);
+  const logsClient = new CloudWatchLogsClient({ region: creds.region, credentials });
   let eventsList: any[] = [];
   let isAccessDenied = false;
   let logsErrorMessage: string | null = null;
@@ -2815,13 +2827,12 @@ app.post('/api/aws/test-request', async (req, res) => {
 // â”€â”€â”€ 5. List Log Groups â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/log-groups', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
-  const { region, accessKeyId, secretAccessKey } = creds;
-  if (!region || !accessKeyId || !secretAccessKey) return res.status(400).json({ error: 'Missing params' });
-  const cacheKey = `loggroups:${region}:${accessKeyId}`;
+  if (!creds.region || !hasAwsCreds(creds)) return res.status(400).json({ error: 'Missing params' });
+  const cacheKey = `loggroups:${creds.region}:${creds.accessKeyId || 'imds'}`;
   const cached = await cacheGet(cacheKey);
   if (cached) return res.json(cached);
   try {
-    const logsClient = new CloudWatchLogsClient({ region, credentials: { accessKeyId, secretAccessKey } });
+    const logsClient = new CloudWatchLogsClient({ region: creds.region, credentials: buildAwsCredentials(creds) });
     const response = await logsClient.send(new DescribeLogGroupsCommand({ limit: 50 }));
     const logGroups = (response.logGroups || []).map((g: any) => g.logGroupName).filter(Boolean);
     const result = { logGroups };
@@ -2833,17 +2844,17 @@ app.post('/api/aws/log-groups', async (req, res) => {
 // â”€â”€â”€ 6. Integrated Lambdas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/aws/integrated-lambdas', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
-  const { region, accessKeyId, secretAccessKey } = creds;
   const { apiId, stage } = req.body;
-  if (!region || !accessKeyId || !secretAccessKey || !apiId || !stage) return res.status(400).json({ error: 'Missing params' });
+  if (!creds.region || !apiId || !stage) return res.status(400).json({ error: 'Missing params' });
+  if (!hasAwsCreds(creds)) return res.status(400).json({ error: 'Missing credentials' });
   const cacheKey = `lambdas:${apiId}:${stage}`;
   const cached = await cacheGet(cacheKey);
   if (cached) return res.json(cached);
-  const credentials = { accessKeyId, secretAccessKey };
+  const credentials = buildAwsCredentials(creds);
   const functions = new Set<string>();
-  try { const c = new ApiGatewayV2Client({ region, credentials }); const r = await c.send(new GetIntegrationsCommand({ ApiId: apiId })); r.Items?.forEach(i => { const m = i.IntegrationUri?.match(/:function:([^/:]+)/); if (m) functions.add(m[1]); }); } catch { }
-  try { const c = new APIGatewayClient({ region, credentials }); const r = await c.send(new GetResourcesCommand({ restApiId: apiId, limit: 100 })); for (const item of r.items || []) { for (const method of Object.keys(item.resourceMethods || {})) { try { const int = await c.send(new GetIntegrationCommand({ restApiId: apiId, resourceId: item.id!, httpMethod: method })); const m = int.uri?.match(/:function:([^/:]+)/); if (m) functions.add(m[1]); } catch { } } } } catch { }
-  try { const c = new APIGatewayClient({ region, credentials }); const ex = await c.send(new GetExportCommand({ restApiId: apiId, stageName: stage, exportType: 'swagger', accepts: 'application/json' })); if (ex.body) { const spec = JSON.parse(new TextDecoder().decode(ex.body)); for (const p of Object.values(spec?.paths || {}) as any[]) for (const m of Object.values(p) as any[]) { const int = m['x-amazon-apigateway-integration']; const match = int?.uri?.match(/:function:([^/:]+)/); if (match) functions.add(match[1]); } } } catch { }
+  try { const c = new ApiGatewayV2Client({ region: creds.region, credentials }); const r = await c.send(new GetIntegrationsCommand({ ApiId: apiId })); r.Items?.forEach(i => { const m = i.IntegrationUri?.match(/:function:([^/:]+)/); if (m) functions.add(m[1]); }); } catch { }
+  try { const c = new APIGatewayClient({ region: creds.region, credentials }); const r = await c.send(new GetResourcesCommand({ restApiId: apiId, limit: 100 })); for (const item of r.items || []) { for (const method of Object.keys(item.resourceMethods || {})) { try { const int = await c.send(new GetIntegrationCommand({ restApiId: apiId, resourceId: item.id!, httpMethod: method })); const m = int.uri?.match(/:function:([^/:]+)/); if (m) functions.add(m[1]); } catch { } } } } catch { }
+  try { const c = new APIGatewayClient({ region: creds.region, credentials }); const ex = await c.send(new GetExportCommand({ restApiId: apiId, stageName: stage, exportType: 'swagger', accepts: 'application/json' })); if (ex.body) { const spec = JSON.parse(new TextDecoder().decode(ex.body)); for (const p of Object.values(spec?.paths || {}) as any[]) for (const m of Object.values(p) as any[]) { const int = m['x-amazon-apigateway-integration']; const match = int?.uri?.match(/:function:([^/:]+)/); if (match) functions.add(match[1]); } } } catch { }
   const lambdas = Array.from(functions).map(n => `/aws/lambda/${n}`);
   const result = { lambdas };
   await cacheSet(cacheKey, result, TTL.LAMBDAS);
