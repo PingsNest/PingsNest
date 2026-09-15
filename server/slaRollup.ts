@@ -42,14 +42,22 @@ async function getSlaFromRaw(targetId: string, hours = 24): Promise<SlaPeriodRes
   try {
     const sql = 'SELECT COUNT(*) AS total,'
       + ' SUM(CASE WHEN "isUp" THEN 1 ELSE 0 END) AS up_checks,'
-      + ' COALESCE(SUM(latency),0) AS total_latency'
+      + ' COALESCE(SUM(latency),0) AS total_latency,'
+      + ' EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) AS span_sec'
       + ' FROM pings WHERE "targetId"=$1'
       + " AND timestamp>=NOW()-($2||' hours')::INTERVAL";
     const { rows } = await query(sql, [targetId, String(hours)]);
     const total = Number(rows[0]?.total || 0);
     const up    = Number(rows[0]?.up_checks || 0);
     const lat   = Number(rows[0]?.total_latency || 0);
-    return { ratio: computeRatio(up, total), total, up, avgLatency: computeAvgLatency(lat, total), downtimeSec: 0, source: 'raw' };
+    const failed = total - up;
+    // BUG-09 FIX: downtimeSec was hardcoded to 0, always showing 0s downtime.
+    // Estimate real downtime: (failed checks) × (average probe interval).
+    // If we have total pings over a known span, interval = span / total. Fallback to 60s.
+    const spanSec = Number(rows[0]?.span_sec || 0);
+    const probeIntervalSec = total > 1 && spanSec > 0 ? Math.round(spanSec / (total - 1)) : 60;
+    const downtimeSec = Math.round(failed * probeIntervalSec);
+    return { ratio: computeRatio(up, total), total, up, avgLatency: computeAvgLatency(lat, total), downtimeSec, source: 'raw' };
   } catch { return emptyPeriod('raw'); }
 }
 

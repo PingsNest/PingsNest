@@ -1617,41 +1617,31 @@ app.post('/api/gateways/fleet-summary', async (req, res) => {
         });
       } catch { }
 
+      // BUG-04 FIX: No longer inject synthetic fake gateways when the account returns 0 APIs.
+      // Previously this fabricated 5 hardcoded gateways (gw-auth-v1, gw-payment-v2, etc.)
+      // with Math.random() traffic, giving operators false confidence in non-existent services.
       if (apisList.length === 0) {
-        apisList.push(
-          { id: 'gw-auth-v1', name: 'Auth & Session API Gateway', protocol: 'REST', stage: 'prod' },
-          { id: 'gw-payment-v2', name: 'Payments & Billing Gateway', protocol: 'HTTP', stage: 'prod' },
-          { id: 'gw-orders-v1', name: 'Orders & Inventory Gateway', protocol: 'REST', stage: 'prod' },
-          { id: 'gw-analytics-v2', name: 'Analytics & Reporting Stream', protocol: 'HTTP', stage: 'staging' },
-          { id: 'gw-realtime-ws', name: 'Realtime WebSockets Gateway', protocol: 'WEBSOCKET', stage: 'prod' }
-        );
+        return {
+          timestamp: new Date().toISOString(),
+          fleetTotals: { totalGateways: 0, healthyCount: 0, warningCount: 0, criticalCount: 0, totalFleetRequests: 0, avgFleetLatency: 0, lambdaFallbackCount: 0 },
+          gateways: []
+        };
       }
 
-      const fleetMetrics = apisList.map((gw, idx) => {
-        const mockReqs = [450, 1280, 890, 240, 620][idx % 5] + Math.floor(Math.random() * 50);
-        const mockAvgLat = [28, 142, 65, 380, 18][idx % 5];
-        const mockP99Lat = Math.round(mockAvgLat * 2.8);
-        const mockErr4xx = [0.2, 1.4, 0.5, 4.2, 0.1][idx % 5];
-        const mockErr5xx = [0.0, 0.05, 0.0, 2.8, 0.0][idx % 5];
-
-        const healthStatus = mockErr5xx > 1.0 || mockP99Lat > 1000 ? 'CRITICAL' : mockErr4xx > 2.0 || mockAvgLat > 300 ? 'WARNING' : 'HEALTHY';
-
-        const hasApigwLogGroup = idx % 2 === 0;
-        const logSource = hasApigwLogGroup
-          ? { type: 'apigateway_access_logs', label: 'API Gateway Access Logs', logGroup: `/aws/apigateway/${gw.id}-${gw.stage}` }
-          : { type: 'lambda_fallback', label: 'Lambda Log Fallback Active', logGroup: `/aws/lambda/${gw.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-worker` };
-
+      const fleetMetrics = apisList.map((gw) => {
+        // No simulated data — real metrics require per-gateway CloudWatch calls.
+        // Fleet summary provides structural data only; deep metrics are in the single-gateway view.
         return {
           ...gw,
           region,
-          requestsPerMin: mockReqs,
-          avgLatencyMs: mockAvgLat,
-          p99LatencyMs: mockP99Lat,
-          errorRate4xxPct: mockErr4xx,
-          errorRate5xxPct: mockErr5xx,
-          healthStatus,
-          logSource,
-          metricsSimulated: true
+          requestsPerMin: 0,
+          avgLatencyMs: 0,
+          p99LatencyMs: 0,
+          errorRate4xxPct: 0,
+          errorRate5xxPct: 0,
+          healthStatus: 'UNKNOWN' as const,
+          logSource: { type: 'apigateway_access_logs' as const, label: 'API Gateway', logGroup: `API-Gateway-Execution-Logs_${gw.id}/prod` },
+          metricsSimulated: false
         };
       });
 
@@ -2317,19 +2307,27 @@ app.post('/api/aws/metrics', async (req, res) => {
   try {
     const credentials = buildAwsCredentials(creds);
     const cwClient = new CloudWatchClient({ region: creds.region, credentials });
+    // BUG-01 FIX: Align endTime to minute boundary. CloudWatch aggregates in 60s
+    // minute-aligned windows. Without this, requests arriving at e.g. :48s would
+    // produce buckets offset by 48s, causing minD > 30s for every data point.
     const endTime = new Date();
+    endTime.setSeconds(0, 0);
     const startTime = new Date(endTime.getTime() - 60 * 60 * 1000);
     const isRest = protocol === 'REST';
     const dimensions = [
       { Name: isRest ? 'ApiName' : 'ApiId', Value: isRest ? apiName : apiId },
       { Name: 'Stage', Value: stage }
     ];
+    // BUG-02 FIX: HTTP APIs (v2) publish '4xx'/'5xx'; REST APIs (v1) use '4XXError'/'5XXError'.
+    // Using REST names for HTTP APIs always returned 0, hiding all HTTP API errors.
+    const err4xxName = isRest ? '4XXError' : '4xx';
+    const err5xxName = isRest ? '5XXError' : '5xx';
     const metricQueries = [
       { Id: 'requests', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'Count', Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
       { Id: 'latency', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'Latency', Dimensions: dimensions }, Period: 60, Stat: 'Average' } },
       { Id: 'integration_latency', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'IntegrationLatency', Dimensions: dimensions }, Period: 60, Stat: 'Average' } },
-      { Id: 'errors_4xx', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: '4XXError', Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
-      { Id: 'errors_5xx', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: '5XXError', Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
+      { Id: 'errors_4xx', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: err4xxName, Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
+      { Id: 'errors_5xx', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: err5xxName, Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
     ];
     const cwResponse = await cwClient.send(new GetMetricDataCommand({ StartTime: startTime, EndTime: endTime, MetricDataQueries: metricQueries, ScanBy: 'TimestampAscending' }));
 
@@ -2345,13 +2343,14 @@ app.post('/api/aws/metrics', async (req, res) => {
         const itemTime = new Date(ts).getTime();
         let best = timeBuckets[0], minD = Math.abs(timeBuckets[0].time.getTime() - itemTime);
         for (let b = 1; b < timeBuckets.length; b++) {
-     // â”€â”€â”€ Bug 2 fix: fleet summary mock metrics clearly labelled + weighted avg â”€â”€â”€â”€
+     // â”€â”€â”€ Bug 2 fix: fleet summary mock metrics clearly labelled + weighted avg â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Real metrics require per-gateway CloudWatch calls; fleet summary uses cached
 // metrics when available or clearly marks data as simulated.
           const d = Math.abs(timeBuckets[b].time.getTime() - itemTime);
           if (d < minD) { minD = d; best = timeBuckets[b]; }
         }
-        if (minD < 45000) best.values[id] = Math.round(result.Values![idx]);
+        // 30s tolerance (half of 60s period) â€” always succeeds now that endTime is minute-aligned
+        if (minD < 30000) best.values[id] = Math.round(result.Values![idx]);
       });
     });
     const dataPoints = timeBuckets.map(b => ({
@@ -2999,7 +2998,11 @@ app.post('/api/aws/test-request', async (req, res) => {
   const { region, apiId, stage, method, path, headers, body } = req.body;
   if (!region || !apiId || !stage || !method) return res.status(400).json({ error: 'Missing required parameters (region, apiId, stage, method)' });
 
-  const invokeBaseUrl = `https://${apiId}.execute-api.${region}.amazonaws.com/${stage}`;
+  // BUG-08 FIX: HTTP APIs (v2) use '$default' as their default stage identifier,
+  // but '$default' is NOT a URL segment — it maps to the root path '/'.
+  // Appending '/$default' to the invoke URL results in a 404 from AWS.
+  const stageSegment = stage === '$default' ? '' : `/${stage}`;
+  const invokeBaseUrl = `https://${apiId}.execute-api.${region}.amazonaws.com${stageSegment}`;
   const cleanPath = (path || '/').startsWith('/') ? (path || '/') : '/' + path;
   const requestUrl = `${invokeBaseUrl}${cleanPath}`;
   const requestHeaders = new Headers(headers || {});

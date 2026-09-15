@@ -81,7 +81,7 @@ export function generateIncidentRca(incident: IncidentRecord): RcaReport {
   const impactAnalysis = `Target service "${incident.targetName}" experienced ${durationText} of outage downtime. During this window, dependent client applications calling ${incident.targetUrl} received HTTP ${statusCode} errors.`;
 
   const actionItems = [
-    `Audit application server resource utilization (CPU, RAM, Database Connections) around ${started.toLocaleTimeString()} UTC.`,
+    // BUG-11 FIX: .toLocaleTimeString() without options uses server's local timezone,\n    // but the string " UTC" was appended, creating a false timestamp (e.g. IST time labeled as UTC).\n    // Now explicitly format in UTC so the label is accurate.\n    `Audit application server resource utilization (CPU, RAM, Database Connections) around ${started.toLocaleTimeString([], { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit' })} UTC.`,
     `Review upstream load balancer / reverse proxy access logs for status code ${statusCode} error traces.`,
     `Verify SSL/TLS certificate validity and ensure automated certificate renewal rules are configured.`,
     `Implement circuit breaker patterns or graceful degradation fallback handling for client callers.`

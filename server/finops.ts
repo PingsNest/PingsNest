@@ -80,7 +80,13 @@ export interface MemoryRightSizingRecommendation {
 export function calculateLambdaMemoryRightSizing(functions: any[]): MemoryRightSizingRecommendation[] {
   return functions.map((fn) => {
     const allocated = fn.memorySize || 1024;
-    const peakUsed = Math.min(allocated, Math.max(64, Math.floor(allocated * 0.35 + (fn.functionName.length % 5) * 20)));
+    // BUG-03 FIX: Previously used (fn.functionName.length % 5) * 20 to estimate
+    // peak memory — meaning renaming a function changed its cost recommendation.
+    // Use actual peakMemoryUsedMb if available (from CloudWatch REPORT logs),
+    // otherwise fall back to a conservative 40% utilization assumption.
+    const peakUsed = fn.peakMemoryUsedMb
+      ? Math.min(allocated, fn.peakMemoryUsedMb)
+      : Math.min(allocated, Math.max(64, Math.floor(allocated * 0.40)));
     const targetOptimal = Math.max(128, Math.ceil((peakUsed * 1.25) / 64) * 64);
     const recommendedMB = targetOptimal < allocated ? targetOptimal : allocated;
     const overRatio = Number(((allocated - peakUsed) / allocated).toFixed(2));

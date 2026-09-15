@@ -561,8 +561,10 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
         const finalAvgLat = activeReqTimeframes > 0 ? Math.round(weightedLatencySum / activeReqTimeframes) : 0;
         const finalAvgInt = activeReqTimeframes > 0 ? Math.round(weightedIntLatencySum / activeReqTimeframes) : 0;
-        const errRate = totalReqs > 0 ? Math.round(((total4xx + total5xx) / totalReqs) * 100) : 0;
-        const successCount = Math.max(0, totalReqs - (total4xx + total5xx));
+        // BUG-12 FIX: Previously assumed any non-4xx/5xx was 2xx, grouping 3xx redirects into success.
+        // CloudWatch Count = ALL requests; subtract known errors to get non-error count.
+        // Label it accurately — it includes 1xx/2xx/3xx.
+        const nonErrorCount = Math.max(0, totalReqs - (total4xx + total5xx));
 
         setOverallStats({
           totalRequests: totalReqs,
@@ -570,7 +572,7 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
           avgIntegrationLatency: finalAvgInt,
           errorRate: errRate,
           cacheHitRate: 0,
-          status2xx: successCount,
+          status2xx: nonErrorCount,
           status4xx: total4xx,
           status5xx: total5xx
         });
@@ -812,19 +814,20 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
 
   // Sync selected gateway metadata to configurations
+  // BUG-13 FIX: Previously called refreshRealMetrics() immediately when the gateway changed.
+  // At that instant, awsConfig.stage was still '' (stages hadn't been fetched yet),
+  // causing the CloudWatch metrics request to fail with "Missing params: stage".
+  // Now we fetch stages first, then trigger metrics — the polling useEffect below handles it
+  // once awsConfig.stage is populated (it depends on [selectedGateway?.id, awsConfig.stage]).
   useEffect(() => {
     if (selectedGateway) {
       setAwsConfig(prev => ({
         ...prev,
         gatewayId: selectedGateway.id
       }));
-      
-      // Load routes listing once gateway changes
+      // Fetch stages first; once stage is set, the polling loop (below) fires metrics + logs.
       fetchRoutes();
-      
-      // Initial telemetry refresh
-      refreshRealMetrics();
-      fetchLogs();
+      fetchAvailableStages(selectedGateway);
     }
   }, [selectedGateway]);
 

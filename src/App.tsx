@@ -1138,8 +1138,9 @@ function MainAppShell() {
                 </div>
               )}
 
-              {/* Global API Gateway Selector & Stage Switcher (Shown exclusively on API Gateway Monitoring tabs) */}
-              {['dashboard', 'routes', 'logs', 'slo', 'topology', 'playbooks'].includes(activeTab) && availableGateways && availableGateways.length > 0 && (
+              {/* Global API Gateway Selector & Stage Switcher (Shown on all API Gateway monitoring tabs incl. overview) */}
+              {/* BUG-13 FIX: 'overview' was missing from this list so the Stage dropdown disappeared on the main Overview tab */}
+              {['overview', 'dashboard', 'routes', 'logs', 'slo', 'topology', 'playbooks'].includes(activeTab) && availableGateways && availableGateways.length > 0 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
                   <Server size={14} color="var(--color-primary)" />
                   <select
@@ -1175,7 +1176,8 @@ function MainAppShell() {
               )}
 
               {/* Global API Gateway Stage Switcher */}
-              {['dashboard', 'routes', 'logs', 'slo', 'topology', 'playbooks'].includes(activeTab) && selectedGateway && (
+              {/* BUG-13 FIX: 'overview' was missing — stage dropdown vanished on Overview, forcing users to visit Logs first */}
+              {['overview', 'dashboard', 'routes', 'logs', 'slo', 'topology', 'playbooks'].includes(activeTab) && selectedGateway && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
                   <Layers size={14} color="var(--color-success)" />
                   <select
