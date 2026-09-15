@@ -1,6 +1,7 @@
 import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import { CloudWatchLogsClient, FilterLogEventsCommand, DescribeLogGroupsCommand } from '@aws-sdk/client-cloudwatch-logs';
 import { LambdaClient, ListFunctionsCommand, GetFunctionConfigurationCommand, ListEventSourceMappingsCommand, UpdateFunctionConfigurationCommand, PutProvisionedConcurrencyConfigCommand, UpdateAliasCommand, ListVersionsByFunctionCommand, ListAliasesCommand } from '@aws-sdk/client-lambda';
+import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
 // ─── Default Monitored Functions Seed ─────────────────────────────────────────
 export const SAMPLE_FUNCTIONS = [
     {
@@ -84,17 +85,40 @@ export const SAMPLE_FUNCTIONS = [
         securityScore: 62
     }
 ];
+export function resolveAwsClientCredentials(credentials) {
+    if (!credentials) {
+        return fromNodeProviderChain();
+    }
+    if (credentials.credentialProvider) {
+        return credentials.credentialProvider;
+    }
+    if (credentials.accessKeyId && credentials.secretAccessKey) {
+        return {
+            accessKeyId: credentials.accessKeyId,
+            secretAccessKey: credentials.secretAccessKey,
+            ...(credentials.sessionToken ? { sessionToken: credentials.sessionToken } : {})
+        };
+    }
+    return fromNodeProviderChain();
+}
+export function hasCredentials(credentials) {
+    if (!credentials)
+        return true;
+    return !!(credentials.credentialProvider ||
+        credentials.accessKeyId ||
+        process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI ||
+        process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI ||
+        process.env.AWS_ROLE_ARN ||
+        process.env.AWS_ACCESS_KEY_ID);
+}
 // ─── Function Discovery Engine ────────────────────────────────────────────────
 export async function discoverLambdaFunctions(region, credentials) {
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         // 1. Primary: Direct AWS Lambda ListFunctions API
         try {
             const lambdaClient = new LambdaClient({
-                region: region || 'us-east-1',
-                credentials: {
-                    accessKeyId: credentials.accessKeyId,
-                    secretAccessKey: credentials.secretAccessKey
-                }
+                region: region || credentials?.region || 'us-east-1',
+                credentials: resolveAwsClientCredentials(credentials)
             });
             let allFunctions = [];
             let marker = undefined;
@@ -180,7 +204,10 @@ export async function discoverLambdaFunctions(region, credentials) {
         // - Reads real accountId from the STS-derived ARN when possible, not hardcoded 123456789012
         // - healthScore clamped to [0, 100] (was going negative at index 32)
         try {
-            const logsClient = new CloudWatchLogsClient({ region, credentials });
+            const logsClient = new CloudWatchLogsClient({
+                region: region || credentials?.region || 'us-east-1',
+                credentials: resolveAwsClientCredentials(credentials)
+            });
             const res = await logsClient.send(new DescribeLogGroupsCommand({ logGroupNamePrefix: '/aws/lambda/', limit: 50 }));
             if (res.logGroups && res.logGroups.length > 0) {
                 return res.logGroups.map((g, idx) => {
@@ -217,14 +244,14 @@ export async function discoverLambdaFunctions(region, credentials) {
 // Reads real AWS function config via GetFunctionConfiguration. Falls back to the
 // SAMPLE_FUNCTIONS seed only if the name matches, or returns a generic placeholder.
 export async function getFunctionDetails(functionName, credentials) {
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
             const lambdaClient = new LambdaClient({
-                region: credentials.region || 'us-east-1',
-                credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey }
+                region: credentials?.region || 'us-east-1',
+                credentials: resolveAwsClientCredentials(credentials)
             });
             const cfg = await lambdaClient.send(new GetFunctionConfigurationCommand({ FunctionName: functionName }));
-            const arn = cfg.FunctionArn || `arn:aws:lambda:${credentials.region || 'us-east-1'}:unknown:function:${functionName}`;
+            const arn = cfg.FunctionArn || `arn:aws:lambda:${credentials?.region || 'us-east-1'}:unknown:function:${functionName}`;
             const accountId = arn.split(':')[4] || 'unknown';
             const timeout = cfg.Timeout || 15;
             const memSize = cfg.MemorySize || 512;
@@ -240,7 +267,7 @@ export async function getFunctionDetails(functionName, credentials) {
                 memorySize: memSize,
                 timeout,
                 handler: cfg.Handler || 'index.handler',
-                region: credentials.region || 'us-east-1',
+                region: credentials?.region || 'us-east-1',
                 accountId,
                 lastModified: cfg.LastModified || new Date().toISOString(),
                 status: cfg.State === 'Inactive' ? 'Inactive' : 'Active',
@@ -294,9 +321,9 @@ export async function getFunctionDetails(functionName, credentials) {
 }
 // ─── Function Health Diagnostic ───────────────────────────────────────────────
 export async function getFunctionHealth(functionName, credentials) {
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
-            const live = await getLiveCloudWatchMetrics(functionName, credentials.region || 'us-east-1', '24h', credentials);
+            const live = await getLiveCloudWatchMetrics(functionName, credentials?.region || 'us-east-1', '24h', credentials);
             const totalInv = live.summaryTotals.totalInvocations;
             const totalErr = live.summaryTotals.totalErrors;
             const errorRate = live.summaryTotals.errorRatePct;
@@ -306,7 +333,7 @@ export async function getFunctionHealth(functionName, credentials) {
             const score = Math.max(0, 100 - Math.round(errorRate * 5) - (throttles > 0 ? 10 : 0));
             const status = isCritical ? 'Critical' : isWarning ? 'Warning' : 'Healthy';
             return {
-                functionArn: `arn:aws:lambda:${credentials.region || 'us-east-1'}:123456789012:function:${functionName}`,
+                functionArn: `arn:aws:lambda:${credentials?.region || 'us-east-1'}:123456789012:function:${functionName}`,
                 functionName,
                 healthScore: score,
                 status,
@@ -353,9 +380,9 @@ export async function getFunctionHealth(functionName, credentials) {
 }
 // ─── Performance Monitoring Metrics ──────────────────────────────────────────
 export async function getPerformanceMetrics(functionName, timeRange = '24h', credentials) {
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
-            const live = await getLiveCloudWatchMetrics(functionName, credentials.region || 'us-east-1', timeRange, credentials);
+            const live = await getLiveCloudWatchMetrics(functionName, credentials?.region || 'us-east-1', timeRange, credentials);
             const labels = live.invocations.map(p => new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
             const invs = live.invocations.map(p => p.value);
             const errs = live.errors.map(p => p.value);
@@ -417,11 +444,11 @@ export async function getPerformanceMetrics(functionName, timeRange = '24h', cre
 }
 // ─── Error Analytics ─────────────────────────────────────────────────────────
 export async function getTopExceptions(functionName, credentials) {
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
             const cwlClient = new CloudWatchLogsClient({
-                region: credentials.region || 'us-east-1',
-                credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey }
+                region: credentials?.region || 'us-east-1',
+                credentials: resolveAwsClientCredentials(credentials)
             });
             const logGroupName = `/aws/lambda/${functionName}`;
             // Bug 10 fix: always supply startTime (24h window) to avoid scanning years of log history.
@@ -525,9 +552,9 @@ export async function getTopExceptions(functionName, credentials) {
 }
 // ─── Cold Start Diagnostics ──────────────────────────────────────────────────
 export async function getColdStartDiagnostic(functionName, credentials) {
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
-            const logs = await getLambdaLogStream(functionName, credentials.region || 'us-east-1', 'REPORT', 100, credentials);
+            const logs = await getLambdaLogStream(functionName, credentials?.region || 'us-east-1', 'REPORT', 100, credentials);
             const coldLines = logs.lines.filter(l => l.isColdStart);
             const coldCount = coldLines.length;
             const initMs = coldLines.map(l => l.initDurationMs || 0).filter(v => v > 0);
@@ -566,9 +593,9 @@ export async function getColdStartDiagnostic(functionName, credentials) {
 }
 // ─── Cost Analysis ───────────────────────────────────────────────────────────
 export async function getCostAnalysis(functionName, credentials) {
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
-            const live = await getLiveCloudWatchMetrics(functionName, credentials.region || 'us-east-1', '24h', credentials);
+            const live = await getLiveCloudWatchMetrics(functionName, credentials?.region || 'us-east-1', '24h', credentials);
             const inv = live.summaryTotals.totalInvocations;
             const avgMs = live.summaryTotals.avgDurationMs;
             const gbSec = Math.round(inv * (avgMs / 1000) * 0.5);
@@ -600,11 +627,11 @@ export async function getCostAnalysis(functionName, credentials) {
     };
 }
 export async function getDeploymentEvents(functionName, credentials) {
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
             const lambdaClient = new LambdaClient({
-                region: credentials.region || 'us-east-1',
-                credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey }
+                region: credentials?.region || 'us-east-1',
+                credentials: resolveAwsClientCredentials(credentials)
             });
             const versionsRes = await lambdaClient.send(new ListVersionsByFunctionCommand({ FunctionName: functionName }));
             const aliasesRes = await lambdaClient.send(new ListAliasesCommand({ FunctionName: functionName }));
@@ -661,15 +688,15 @@ export async function getDeploymentEvents(functionName, credentials) {
 }
 // ─── Memory Analysis & Right-Sizing ───────────────────────────────────────────
 export async function getMemoryRecommendation(functionName, credentials) {
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
             const lambdaClient = new LambdaClient({
-                region: credentials.region || 'us-east-1',
-                credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey }
+                region: credentials?.region || 'us-east-1',
+                credentials: resolveAwsClientCredentials(credentials)
             });
             const cfg = await lambdaClient.send(new GetFunctionConfigurationCommand({ FunctionName: functionName }));
             const allocated = cfg.MemorySize || 512;
-            const logs = await getLambdaLogStream(functionName, credentials.region || 'us-east-1', 'REPORT', 50, credentials);
+            const logs = await getLambdaLogStream(functionName, credentials?.region || 'us-east-1', 'REPORT', 50, credentials);
             const mems = logs.lines.map(l => l.memoryMb || 0).filter(v => v > 0);
             const peak = mems.length ? Math.max(...mems) : Math.round(allocated * 0.4);
             const used = mems.length ? Math.round(mems.reduce((s, v) => s + v, 0) / mems.length) : Math.round(allocated * 0.3);
@@ -729,15 +756,15 @@ export async function getMemoryRecommendation(functionName, credentials) {
 }
 // ─── Timeout Analysis ────────────────────────────────────────────────────────
 export async function getTimeoutDiagnostic(functionName, credentials) {
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
             const lambdaClient = new LambdaClient({
-                region: credentials.region || 'us-east-1',
-                credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey }
+                region: credentials?.region || 'us-east-1',
+                credentials: resolveAwsClientCredentials(credentials)
             });
             const cfg = await lambdaClient.send(new GetFunctionConfigurationCommand({ FunctionName: functionName }));
             const timeoutSec = cfg.Timeout || 15;
-            const live = await getLiveCloudWatchMetrics(functionName, credentials.region || 'us-east-1', '24h', credentials);
+            const live = await getLiveCloudWatchMetrics(functionName, credentials?.region || 'us-east-1', '24h', credentials);
             const avgDurSec = Math.round((live.summaryTotals.avgDurationMs / 1000) * 10) / 10;
             const p99DurSec = Math.round((live.summaryTotals.p99DurationMs / 1000) * 10) / 10;
             const isNearing = p99DurSec >= timeoutSec * 0.8;
@@ -768,11 +795,11 @@ export async function getTimeoutDiagnostic(functionName, credentials) {
 }
 // ─── Event Source Monitoring ──────────────────────────────────────────────────
 export async function getEventSources(functionName, credentials) {
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
             const lambdaClient = new LambdaClient({
-                region: credentials.region || 'us-east-1',
-                credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey }
+                region: credentials?.region || 'us-east-1',
+                credentials: resolveAwsClientCredentials(credentials)
             });
             const res = await lambdaClient.send(new ListEventSourceMappingsCommand({ FunctionName: functionName }));
             if (res.EventSourceMappings && res.EventSourceMappings.length > 0) {
@@ -814,9 +841,9 @@ export async function getEventSources(functionName, credentials) {
     ];
 }
 export async function getInvocationExplorer(functionName, filterText = '', credentials) {
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
-            const logs = await getLambdaLogStream(functionName, credentials.region || 'us-east-1', filterText, 100, credentials);
+            const logs = await getLambdaLogStream(functionName, credentials?.region || 'us-east-1', filterText, 100, credentials);
             if (logs.lines && logs.lines.length > 0) {
                 // Group lines by RequestId
                 const traceMap = new Map();
@@ -928,11 +955,11 @@ export async function getSecurityPosture(functionName, credentials) {
     let realTracingMode;
     let realEnvKeys = [];
     let realRoleArn;
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
             const lambdaClient = new LambdaClient({
-                region: credentials.region || 'us-east-1',
-                credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey }
+                region: credentials?.region || 'us-east-1',
+                credentials: resolveAwsClientCredentials(credentials)
             });
             const cfg = await lambdaClient.send(new GetFunctionConfigurationCommand({ FunctionName: functionName }));
             realRuntime = cfg.Runtime || undefined;
@@ -1040,10 +1067,9 @@ export async function getDependencyGraph(functionName, credentials) {
 // Old code returned hardcoded strings keyed only on function name ('InvoiceGenerator' got
 // a real-looking insight; everything else got 'Normal' with confidencePct: 98 regardless of actual state).
 export async function getAIInsights(functionName, credentials) {
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
-            const narrowedCreds = { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey };
-            const live = await getLiveCloudWatchMetrics(functionName, credentials.region || 'us-east-1', '24h', narrowedCreds);
+            const live = await getLiveCloudWatchMetrics(functionName, credentials?.region || 'us-east-1', '24h', credentials);
             const { errorRatePct, avgDurationMs, p99DurationMs, totalThrottles, totalInvocations } = live.summaryTotals;
             const hasCriticalErrors = errorRatePct > 5;
             const hasHighErrors = errorRatePct > 1;
@@ -1106,11 +1132,11 @@ export async function getAIInsights(functionName, credentials) {
     };
 }
 export async function getLiveCloudWatchMetrics(functionName, region, timeRange, credentials) {
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
             const cwClient = new CloudWatchClient({
-                region: region || 'us-east-1',
-                credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey }
+                region: region || credentials?.region || 'us-east-1',
+                credentials: resolveAwsClientCredentials(credentials)
             });
             const now = new Date();
             const rangeMap = { '15m': 15, '1h': 60, '6h': 360, '24h': 1440, '7d': 10080, '30d': 43200 };
@@ -1250,11 +1276,11 @@ function parseReportLine(msg) {
 export async function getLambdaLogStream(functionName, region, filterPattern = '', limitLines = 100, credentials) {
     const logGroupName = functionName.startsWith('/aws/lambda/') ? functionName : `/aws/lambda/${functionName}`;
     const cleanFnName = functionName.replace('/aws/lambda/', '');
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
             const logsClient = new CloudWatchLogsClient({
-                region: region || 'us-east-1',
-                credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey }
+                region: region || credentials?.region || 'us-east-1',
+                credentials: resolveAwsClientCredentials(credentials)
             });
             const endTime = Date.now();
             // Bug 6 fix: reduced from 30-day to 24h default lookback.
@@ -1391,13 +1417,13 @@ export function getApiGatewayLambdaTrace(functionName, requestId) {
 export async function updateFunctionMemory(functionName, memorySizeMb, credentials) {
     // Bug 2 fix: never return success:true when credentials are absent.
     // Old behaviour silently simulated a real AWS write, misleading operators.
-    if (!credentials?.accessKeyId || !credentials?.secretAccessKey) {
+    if (!hasCredentials(credentials)) {
         return { success: false, functionName, memorySizeMb, message: 'AWS credentials are required to update function memory. Configure credentials in Settings.' };
     }
     try {
         const lambdaClient = new LambdaClient({
-            region: credentials.region || 'us-east-1',
-            credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey }
+            region: credentials?.region || 'us-east-1',
+            credentials: resolveAwsClientCredentials(credentials)
         });
         await lambdaClient.send(new UpdateFunctionConfigurationCommand({
             FunctionName: functionName,
@@ -1417,13 +1443,13 @@ export async function updateFunctionMemory(functionName, memorySizeMb, credentia
 }
 export async function updateProvisionedConcurrency(functionName, concurrencyCount, credentials) {
     // Bug 2 fix: no credentials = no fake success
-    if (!credentials?.accessKeyId || !credentials?.secretAccessKey) {
+    if (!hasCredentials(credentials)) {
         return { success: false, functionName, concurrencyCount, message: 'AWS credentials are required to configure provisioned concurrency.' };
     }
     try {
         const lambdaClient = new LambdaClient({
-            region: credentials.region || 'us-east-1',
-            credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey }
+            region: credentials?.region || 'us-east-1',
+            credentials: resolveAwsClientCredentials(credentials)
         });
         // Bug 3 fix: $LATEST is rejected by PutProvisionedConcurrencyConfig.
         // Use the most recently published numeric version as qualifier.
@@ -1461,7 +1487,7 @@ export async function updateProvisionedConcurrency(functionName, concurrencyCoun
 }
 export async function rollbackFunctionVersion(functionName, targetVersion, credentials) {
     // Bug 2 fix: no credentials = no fake success
-    if (!credentials?.accessKeyId || !credentials?.secretAccessKey) {
+    if (!hasCredentials(credentials)) {
         return { success: false, functionName, targetVersion, message: 'AWS credentials are required to roll back a Lambda function.' };
     }
     // Validate version string before sending to AWS
@@ -1470,8 +1496,8 @@ export async function rollbackFunctionVersion(functionName, targetVersion, crede
     }
     try {
         const lambdaClient = new LambdaClient({
-            region: credentials.region || 'us-east-1',
-            credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey }
+            region: credentials?.region || 'us-east-1',
+            credentials: resolveAwsClientCredentials(credentials)
         });
         // Bug 4 fix: discover real alias instead of hardcoding 'live'.
         let aliasName;
@@ -1700,9 +1726,9 @@ export function buildTelemetryFromFunctions(discovered) {
     };
 }
 export async function getBulkFleetTelemetry(credentials) {
-    if (credentials?.accessKeyId && credentials?.secretAccessKey) {
+    if (hasCredentials(credentials)) {
         try {
-            const discovered = await discoverLambdaFunctions(credentials.region || 'us-east-1', credentials);
+            const discovered = await discoverLambdaFunctions(credentials?.region || 'us-east-1', credentials);
             if (discovered && discovered.length > 0) {
                 return buildTelemetryFromFunctions(discovered);
             }

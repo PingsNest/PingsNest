@@ -389,8 +389,10 @@ function hasAwsCreds(creds: Awaited<ReturnType<typeof getAwsCredentialsFromReq>>
 app.get('/api/lambda/functions', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
-    const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || 'anon').digest('hex').slice(0, 12);
+    const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || creds.authType || 'default').digest('hex').slice(0, 12);
     const cacheKey = `lambda:fns:${creds.region}:${keyHash}`;
+    const bypassCache = req.query.refresh === 'true' || req.query.bypassCache === 'true';
+    if (bypassCache) await cacheDel(cacheKey);
     const result = await cacheGetOrSet(cacheKey, TTL.LAMBDAS, async () => {
       const functions = await discoverLambdaFunctions(creds.region, creds);
       return { functions };
@@ -404,8 +406,10 @@ app.get('/api/lambda/functions', async (req, res) => {
 app.post('/api/aws/lambda/list', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
-    const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || 'anon').digest('hex').slice(0, 12);
+    const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || creds.authType || 'default').digest('hex').slice(0, 12);
     const cacheKey = `lambda:fns:${creds.region}:${keyHash}`;
+    const bypassCache = req.query.refresh === 'true' || req.query.bypassCache === 'true' || req.body?.bypassCache === true;
+    if (bypassCache) await cacheDel(cacheKey);
     const result = await cacheGetOrSet(cacheKey, TTL.LAMBDAS, async () => {
       const functions = await discoverLambdaFunctions(creds.region, creds);
       return { functions };
@@ -630,8 +634,9 @@ app.get('/api/lambda/ai-insights', async (req, res) => {
 
 app.post('/api/lambda/discover', async (req, res) => {
   try {
-    const { region, accessKeyId, secretAccessKey } = req.body;
-    const functions = await discoverLambdaFunctions(region || 'us-east-1', { accessKeyId, secretAccessKey });
+    const creds = await getAwsCredentialsFromReq(req);
+    const region = req.body?.region || creds.region || 'us-east-1';
+    const functions = await discoverLambdaFunctions(region, creds);
     res.json({ success: true, count: functions.length, functions });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -733,8 +738,10 @@ app.post('/api/lambda/remediate/rollback', async (req, res) => {
 app.get('/api/lambda/fleet/telemetry', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
-    const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || 'anon').digest('hex').slice(0, 12);
+    const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || creds.authType || 'default').digest('hex').slice(0, 12);
     const cacheKey = `lambda:fleet:telemetry:${creds.region}:${keyHash}`;
+    const bypassCache = req.query.refresh === 'true' || req.query.bypassCache === 'true';
+    if (bypassCache) await cacheDel(cacheKey);
     const result = await cacheGetOrSet(cacheKey, 30, async () => {
       const fleet = await getBulkFleetTelemetry(creds);
       return { fleet };
@@ -762,8 +769,10 @@ app.post('/api/lambda/fleet/bulk-remediate', async (req, res) => {
 app.get('/api/lambda/fleet/security', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
-    const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || 'anon').digest('hex').slice(0, 12);
+    const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || creds.authType || 'default').digest('hex').slice(0, 12);
     const cacheKey = `lambda:fleet:security:${creds.region}:${keyHash}`;
+    const bypassCache = req.query.refresh === 'true' || req.query.bypassCache === 'true';
+    if (bypassCache) await cacheDel(cacheKey);
     const result = await cacheGetOrSet(cacheKey, 300, async () => {
       const securityAudit = await getBulkFleetSecurityAudit(creds);
       return { securityAudit };
