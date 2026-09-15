@@ -1,6 +1,15 @@
 import { query } from './db.js';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import nodemailer from 'nodemailer';
+// NT-15: HTML escape helper — prevents injection attacks in email templates
+function htmlEscape(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 export async function loadSESConfig() {
     try {
         const { rows } = await query('SELECT * FROM aws_ses_config WHERE id = \'default\'');
@@ -531,7 +540,7 @@ export function buildHTMLNotificationTemplate(alert) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${alert.severity.toUpperCase()} Alert: ${alert.gatewayName}</title>
+  <title>${htmlEscape(alert.severity.toUpperCase())} Alert: ${htmlEscape(alert.gatewayName)}</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: #060913; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #f1f5f9;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #060913; padding: 30px 10px;">
@@ -549,7 +558,7 @@ export function buildHTMLNotificationTemplate(alert) {
                       PINGSNEST FLEET ALERT ENGINE
                     </span>
                     <h1 style="margin: 0; font-size: 22px; font-weight: 800; color: #ffffff; line-height: 1.3;">
-                      ${alert.severity.toUpperCase()}: ${alert.gatewayName}
+                      ${htmlEscape(alert.severity.toUpperCase())}: ${htmlEscape(alert.gatewayName)}
                     </h1>
                   </td>
                 </tr>
@@ -848,18 +857,31 @@ export async function dispatchGatewayFleetAlert(alert) {
             const postUrl = (dest.type === 'pagerduty' && !dest.url.startsWith('http'))
                 ? 'https://events.pagerduty.com/v2/enqueue'
                 : dest.url;
-            await fetch(postUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            }).catch(() => { });
+            // NT-04: Added timeout and proper error tracking instead of silently swallowing failures
+            let fleetDeliveryStatus = 'DELIVERED';
+            try {
+                const fleetRes = await fetch(postUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                    signal: AbortSignal.timeout(8000),
+                });
+                if (!fleetRes.ok) {
+                    fleetDeliveryStatus = 'FAILED';
+                    console.warn(`[Notifications] Fleet alert HTTP ${fleetRes.status} from ${dest.type} (${postUrl})`);
+                }
+            }
+            catch (fetchErr) {
+                fleetDeliveryStatus = 'FAILED';
+                console.error(`[Notifications] Fleet alert fetch failed for ${dest.type}:`, fetchErr.message);
+            }
             await logAlertDispatch({
                 module: `API Gateway (${alert.gatewayName})`,
                 severity: alert.severity.toUpperCase(),
                 destination: postUrl,
                 title: `${alert.gatewayName} — ${alert.metricName}`,
                 message: alert.details || `${alert.metricName}: ${alert.currentValue}`,
-                status: 'DELIVERED'
+                status: fleetDeliveryStatus
             });
         }
         catch (err) {
@@ -1014,7 +1036,9 @@ export async function dispatchUrlMonitorAlert(payload) {
             }
             else if (dest.type === 'pagerduty') {
                 const pdEndpoint = dest.url.startsWith('http') ? dest.url : 'https://events.pagerduty.com/v2/enqueue';
-                const routingKey = dest.url.startsWith('http') ? (dest.url.split('/').pop() || 'pd-key') : dest.url;
+                // NT-11: Strip trailing slash before split to prevent empty routing key
+                const pdCleanUrl = dest.url.replace(/\/$/, '');
+                const routingKey = pdCleanUrl.startsWith('http') ? (pdCleanUrl.split('/').pop() || dest.url) : dest.url;
                 url = pdEndpoint;
                 body = {
                     routing_key: routingKey,
@@ -1202,25 +1226,51 @@ export function checkAndTriggerEscalations() {
         if (track.currentLevel === 1 && elapsedMins >= policy.level2DelayMins) {
             track.currentLevel = 2;
             escalated.push({ alertId, ruleName: track.ruleName, escalatedToLevel: 2 });
+            // NT-03: Actually dispatch the escalation notification instead of only logging
+            const escPayload2 = {
+                severity: 'critical',
+                gatewayId: alertId,
+                gatewayName: track.ruleName,
+                region: 'N/A',
+                stage: 'N/A',
+                metricName: 'SLA Escalation — Level 2',
+                currentValue: `${Math.round(elapsedMins)}m unacknowledged`,
+                thresholdValue: `${policy.level2DelayMins}m`,
+                details: `Alert '${track.ruleName}' was unacknowledged after ${policy.level2DelayMins} minutes. Escalating to: ${policy.level2Channels.join(', ')}.`
+            };
+            dispatchGatewayFleetAlert(escPayload2).catch(e => console.error('[Escalation] Level 2 dispatch failed:', e.message));
             logAlertDispatch({
                 module: 'SLA Escalation Engine',
                 severity: 'CRITICAL',
                 destination: policy.level2Channels.join(', '),
                 title: `🚨 [ESCALATION LEVEL 2] ${track.ruleName} Unacknowledged (${Math.round(elapsedMins)}m SLA Breach)`,
                 message: `Alert '${track.ruleName}' was unacknowledged after ${policy.level2DelayMins} minutes. Escalated to Level 2 channels.`,
-                status: 'DELIVERED'
+                status: 'DISPATCHING'
             });
         }
         else if (track.currentLevel === 2 && elapsedMins >= policy.level3DelayMins) {
             track.currentLevel = 3;
             escalated.push({ alertId, ruleName: track.ruleName, escalatedToLevel: 3 });
+            // NT-03: Actually dispatch the Level 3 escalation notification
+            const escPayload3 = {
+                severity: 'critical',
+                gatewayId: alertId,
+                gatewayName: track.ruleName,
+                region: 'N/A',
+                stage: 'N/A',
+                metricName: 'SLA Escalation — Level 3 CRITICAL',
+                currentValue: `${Math.round(elapsedMins)}m unacknowledged`,
+                thresholdValue: `${policy.level3DelayMins}m`,
+                details: `CRITICAL INCIDENT: Alert '${track.ruleName}' unacknowledged after ${policy.level3DelayMins} minutes. Incident Command channels: ${policy.level3Channels.join(', ')}.`
+            };
+            dispatchGatewayFleetAlert(escPayload3).catch(e => console.error('[Escalation] Level 3 dispatch failed:', e.message));
             logAlertDispatch({
                 module: 'SLA Escalation Engine',
                 severity: 'CRITICAL',
                 destination: policy.level3Channels.join(', '),
                 title: `🚨🔥 [ESCALATION LEVEL 3 MAX] ${track.ruleName} CRITICAL INCIDENT (${Math.round(elapsedMins)}m SLA Breach)`,
                 message: `Alert '${track.ruleName}' unacknowledged after ${policy.level3DelayMins} minutes. Escalated to Incident Command Level 3 channels.`,
-                status: 'DELIVERED'
+                status: 'DISPATCHING'
             });
         }
     }

@@ -1,9 +1,10 @@
 import { query } from './db.js';
 import { pool } from './db.js';
+import { isAlertSilenced, isAlertAcknowledged, recordAlertStateTransition } from './notifications.js';
 
 // ─── Alert metric keys ────────────────────────────────────────────────────────
 export type AlertMetric = 'errorRate' | 'avgLatency' | 'totalRequests' | 'status5xx' | 'status4xx';
-export type AlertCondition = '>' | '<' | '>=';
+export type AlertCondition = '>' | '<' | '>=' | '<=';
 
 export type ChannelType = 'slack' | 'teams' | 'discord' | 'pagerduty' | 'webhookbot' | 'generic';
 
@@ -59,7 +60,10 @@ export async function evaluateAlerts(
     if (activeMaint.length > 0) {
       return; // Suppress alerts during scheduled maintenance
     }
-  } catch {}
+  } catch {
+    // NT-06: Fail-open — a DB error must NOT suppress all alerts.
+    // Assume no active maintenance window and continue evaluating rules.
+  }
 
   let rules: AlertRule[] = [];
   try {
@@ -76,6 +80,11 @@ export async function evaluateAlerts(
     const value = metrics[rule.metric as AlertMetric] ?? 0;
     const triggered = evaluate(value, rule.condition, rule.threshold);
     if (!triggered) continue;
+
+    // NT-10: Respect active silences — skip if this rule has been silenced by an operator
+    if (isAlertSilenced(rule.id)) continue;
+    // NT-09: Respect acknowledgements — skip if an operator already acknowledged this rule
+    if (isAlertAcknowledged(rule.id)) continue;
 
     // Alert Fingerprinting & Deduplication Hashing
     const fingerprint = `${rule.id}:${apiId}:${stage}:${rule.metric}`;
@@ -104,6 +113,9 @@ export async function evaluateAlerts(
 
     lastFiredAt.set(fingerprint, Date.now());
 
+    // NT-08: Record state transition for flapping detection
+    recordAlertStateTransition(fingerprint);
+
     // Record in DB
     try {
       await query(
@@ -113,10 +125,8 @@ export async function evaluateAlerts(
       );
     } catch { /* non-fatal */ }
 
-    // Fire webhook (non-blocking)
-    fireWebhook(rule, value).catch(err =>
-      console.error(`[Alerts] Webhook failed for rule "${rule.name}":`, err.message)
-    );
+    // NT-01: Fire webhook with retry + exponential backoff (non-blocking)
+    fireWebhookWithRetry(rule, value);
 
     console.log(`[Alerts] Rule "${rule.name}" fired — ${rule.metric}=${value} ${rule.condition} ${rule.threshold}`);
   }
@@ -126,6 +136,7 @@ function evaluate(value: number, condition: AlertCondition, threshold: number): 
   if (condition === '>') return value > threshold;
   if (condition === '<') return value < threshold;
   if (condition === '>=') return value >= threshold;
+  if (condition === '<=') return value <= threshold; // NT-07: support "at or below" threshold
   return false;
 }
 
@@ -141,6 +152,24 @@ export async function fireWebhook(rule: AlertRule, value: number): Promise<void>
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
     throw new Error(`HTTP ${res.status}${errText ? `: ${errText}` : ''}`);
+  }
+}
+
+// NT-01: Retry wrapper with exponential backoff — 1 s → 2 s → 4 s before giving up
+async function fireWebhookWithRetry(rule: AlertRule, value: number, maxRetries = 3): Promise<void> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await fireWebhook(rule, value);
+      return;
+    } catch (err: any) {
+      if (attempt === maxRetries) {
+        console.error(`[Alerts] Webhook permanently failed after ${maxRetries} attempts for rule "${rule.name}":`, err.message);
+        return;
+      }
+      const delayMs = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s
+      console.warn(`[Alerts] Webhook attempt ${attempt}/${maxRetries} failed for "${rule.name}", retrying in ${delayMs}ms...`);
+      await new Promise(r => setTimeout(r, delayMs));
+    }
   }
 }
 
@@ -317,7 +346,9 @@ function buildWebhookBody(rule: AlertRule, value: number): object {
 export async function testAlert(ruleId: string): Promise<void> {
   const { rows } = await query<AlertRule>(`SELECT * FROM alert_rules WHERE id=$1`, [ruleId]);
   if (!rows[0]) throw new Error('Rule not found');
-  await fireWebhook(rows[0], rows[0].threshold); // send threshold value as test
+  // NT-16: Prefix rule name with [TEST] so recipients can clearly distinguish from a real incident
+  const testRule: AlertRule = { ...rows[0], name: `[TEST] ${rows[0].name}` };
+  await fireWebhook(testRule, rows[0].threshold);
 }
 
 // ─── URL Uptime Webhook Dispatcher ──────────────────────────────────────────
