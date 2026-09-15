@@ -1205,51 +1205,99 @@ app.post('/api/aws/stages', async (req, res) => {
     const creds = await getAwsCredentialsFromReq(req);
     const { region } = creds;
     const { apiId, protocol, bypassCache } = req.body;
-    if (!region || !apiId || !protocol) {
-        return res.status(400).json({ error: 'Missing params' });
+    if (!region || !apiId) {
+        return res.status(400).json({ error: 'Missing params: apiId and region are required' });
     }
     if (!hasAwsCreds(creds))
         return res.status(400).json({ error: 'Missing credentials' });
-    const cacheKey = `stages:${apiId}:${protocol}`;
+    const cacheKey = `stages:${region}:${apiId}:${protocol || 'any'}`;
     if (!bypassCache) {
         const cached = await cacheGet(cacheKey);
-        if (cached)
+        // Only return cached response if it contains genuine stages and is NOT a fallback
+        if (cached && !cached.fallback && Array.isArray(cached.stages) && cached.stages.length > 0) {
             return res.json(cached);
+        }
     }
     const credentials = buildAwsCredentials(creds);
     const stagesList = [];
     let awsError = null;
-    try {
-        if (protocol === 'REST') {
+    const isRest = !protocol || protocol.toUpperCase() === 'REST';
+    // Strategy: Try the expected protocol client first; if it returns 0 stages or errors, try the alternative
+    if (isRest) {
+        try {
             const c = new APIGatewayClient({ region, credentials });
             const r = await c.send(new GetStagesCommand({ restApiId: apiId }));
             r.item?.forEach(s => {
-                if (s.stageName)
+                if (s.stageName && !stagesList.includes(s.stageName))
                     stagesList.push(s.stageName);
             });
         }
-        else {
+        catch (e) {
+            awsError = e.message;
+            console.warn(`[Stages API REST v1] ${apiId}:`, e.message);
+        }
+        // If REST (v1) returned 0 stages, try API Gateway v2 (HTTP / WebSocket)
+        if (stagesList.length === 0) {
+            try {
+                const c2 = new ApiGatewayV2Client({ region, credentials });
+                const r2 = await c2.send(new GetStagesV2Command({ ApiId: apiId }));
+                r2.Items?.forEach(s => {
+                    if (s.StageName && !stagesList.includes(s.StageName))
+                        stagesList.push(s.StageName);
+                });
+                if (stagesList.length > 0)
+                    awsError = null;
+            }
+            catch (e2) {
+                console.warn(`[Stages API V2 check] ${apiId}:`, e2.message);
+            }
+        }
+    }
+    else {
+        try {
             const c = new ApiGatewayV2Client({ region, credentials });
             const r = await c.send(new GetStagesV2Command({ ApiId: apiId }));
             r.Items?.forEach(s => {
-                if (s.StageName)
+                if (s.StageName && !stagesList.includes(s.StageName))
                     stagesList.push(s.StageName);
             });
         }
+        catch (e) {
+            awsError = e.message;
+            console.warn(`[Stages API V2] ${apiId}:`, e.message);
+        }
+        // If v2 returned 0 stages, try REST (v1)
+        if (stagesList.length === 0) {
+            try {
+                const c1 = new APIGatewayClient({ region, credentials });
+                const r1 = await c1.send(new GetStagesCommand({ restApiId: apiId }));
+                r1.item?.forEach(s => {
+                    if (s.stageName && !stagesList.includes(s.stageName))
+                        stagesList.push(s.stageName);
+                });
+                if (stagesList.length > 0)
+                    awsError = null;
+            }
+            catch (e1) {
+                console.warn(`[Stages API REST check] ${apiId}:`, e1.message);
+            }
+        }
     }
-    catch (e) {
-        awsError = e.message;
-        console.warn(`[Stages API] Error fetching stages for ${apiId}:`, e.message);
-    }
-    // Bug 10 fix: flag fallback stages so caller knows these are guesses, not real AWS data.
-    // Old behaviour silently injected 'prod'/$default with no indication of failure.
     const isFallback = stagesList.length === 0;
     if (isFallback) {
         stagesList.push(protocol === 'REST' ? 'prod' : '$default');
     }
-    const result = { stages: stagesList, ...(isFallback && { fallback: true, warning: awsError ? `AWS error: ${awsError}` : 'Could not fetch stages from AWS; showing default values.' }) };
-    if (!isFallback)
+    const result = {
+        stages: stagesList,
+        ...(isFallback && {
+            fallback: true,
+            warning: awsError ? `AWS error: ${awsError}` : 'No deployed stages found from AWS; showing default placeholder.'
+        })
+    };
+    // Only cache if genuine stages were retrieved from AWS (NEVER cache fallbacks)
+    if (!isFallback) {
         await cacheSet(cacheKey, result, TTL.APIS);
+    }
     res.json(result);
 });
 // â”€â”€â”€ 2. List Routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

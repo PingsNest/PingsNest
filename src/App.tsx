@@ -1103,11 +1103,12 @@ function MainAppShell() {
                   <Server size={14} color="var(--color-primary)" />
                   <select
                     value={selectedGateway?.id || ''}
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const found = availableGateways.find((g: any) => g.id === e.target.value);
                       if (found) {
                         setSelectedGateway(found);
-                        fetchAvailableStages(found);
+                        setAwsConfig((prev: any) => ({ ...prev, gatewayId: found.id }));
+                        await fetchAvailableStages(found);
                       }
                     }}
                     style={{
@@ -1153,11 +1154,19 @@ function MainAppShell() {
                     }}
                     title="Switch Deployed Gateway Stage"
                   >
-                    {(availableStages && availableStages.length > 0 ? availableStages : [awsConfig.stage || 'prod']).map((s: string) => (
-                      <option key={s} value={s} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
-                        Stage: {s}
+                    {loadingStages ? (
+                      <option value="">Loading real stages...</option>
+                    ) : availableStages && availableStages.length > 0 ? (
+                      availableStages.map((s: string) => (
+                        <option key={s} value={s} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+                          Stage: {s}
+                        </option>
+                      ))
+                    ) : (
+                      <option value={awsConfig.stage || ''} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+                        {awsConfig.stage ? `Stage: ${awsConfig.stage}` : 'No Stages Deployed'}
                       </option>
-                    ))}
+                    )}
                   </select>
                 </div>
               )}

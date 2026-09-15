@@ -146,7 +146,7 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [awsConfig, setAwsConfig] = useState<AWSConfig>({
     region: 'eu-west-2',
     gatewayId: '',
-    stage: 'v1',
+    stage: '',
     accessKeyId: '',
     secretAccessKey: '',
     customLogGroup: '__lambdas__'
@@ -295,49 +295,60 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const response = await fetch('/api/aws/stages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-aws-profile-id': profileId, ...getAuthHeader() },
-        body: JSON.stringify({ region, apiId: gateway.id, protocol: gateway.protocol })
+        body: JSON.stringify({ region, apiId: gateway.id, protocol: gateway.protocol, bypassCache: true })
       });
       const data = await response.json();
-      const list = data.stages || [gateway.protocol === 'REST' ? 'prod' : '$default'];
+      const list: string[] = (Array.isArray(data.stages) && data.stages.length > 0) ? data.stages : [];
       setAvailableStages(list);
-      if (list.length > 0) setAwsConfig(prev => ({ ...prev, stage: list[0] }));
+      if (list.length > 0) {
+        setAwsConfig(prev => {
+          const keepCurrent = list.includes(prev.stage);
+          return { ...prev, stage: keepCurrent ? prev.stage : list[0] };
+        });
+      }
       return list;
     } catch (err) {
       console.error('Failed fetching stages (profileId):', err);
-      const fallback = [gateway.protocol === 'REST' ? 'prod' : '$default'];
-      setAvailableStages(fallback);
-      return fallback;
+      return [];
     } finally {
       setLoadingStages(false);
     }
   };
 
-  // Fetch deployed stages for a specific API Gateway (inline credentials path)
+  // Fetch deployed stages for a specific API Gateway (inline credentials or active profile)
   const fetchAvailableStages = async (gateway: APIGatewayItem, creds?: { accessKeyId: string; secretAccessKey: string; region: string }): Promise<string[]> => {
     setLoadingStages(true);
     const credentials = creds || { accessKeyId: awsConfig.accessKeyId, secretAccessKey: awsConfig.secretAccessKey, region: awsConfig.region };
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json', ...getAuthHeader() };
+      if (activeProfileId) {
+        headers['x-aws-profile-id'] = activeProfileId;
+      }
       const response = await fetch('/api/aws/stages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+        headers,
         body: JSON.stringify({
-          region: credentials.region,
+          region: credentials.region || awsConfig.region,
           accessKeyId: credentials.accessKeyId,
           secretAccessKey: credentials.secretAccessKey,
           apiId: gateway.id,
-          protocol: gateway.protocol
+          protocol: gateway.protocol,
+          bypassCache: true
         })
       });
       const data = await response.json();
-      const list = data.stages || [gateway.protocol === 'REST' ? 'prod' : '$default'];
+      const list: string[] = (Array.isArray(data.stages) && data.stages.length > 0) ? data.stages : [];
       setAvailableStages(list);
-      if (list.length > 0) setAwsConfig(prev => ({ ...prev, stage: list[0] }));
+      if (list.length > 0) {
+        setAwsConfig(prev => {
+          const keepCurrent = list.includes(prev.stage);
+          return { ...prev, stage: keepCurrent ? prev.stage : list[0] };
+        });
+      }
       return list;
     } catch (err) {
       console.error('Failed fetching stages:', err);
-      const fallback = [gateway.protocol === 'REST' ? 'prod' : '$default'];
-      setAvailableStages(fallback);
-      return fallback;
+      return [];
     } finally {
       setLoadingStages(false);
     }
