@@ -437,7 +437,9 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
 
   const [timeRange, setTimeRange] = useState<string>('24h');
   const [functions, setFunctions] = useState<LambdaFunctionItem[]>([]);
-  const [selectedFunctionName, setSelectedFunctionName] = useState<string>('WorkerProcessor');
+  const [selectedFunctionName, setSelectedFunctionName] = useState<string>('');
+  const selectedFnDetails = functions.find(f => f.functionName === selectedFunctionName) || functions[0];
+  const [missingCredentials, setMissingCredentials] = useState<boolean>(false);
   const [loading, setLoading] = useState(false);
   const [autoRefreshSec, setAutoRefreshSec] = useState<number>(30);
   const [lastSyncTime, setLastSyncTime] = useState<Date>(new Date());
@@ -899,7 +901,7 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
       if (userMsg.toLowerCase().includes('latency') || userMsg.toLowerCase().includes('slow') || userMsg.toLowerCase().includes('delay')) {
         aiReply += `• Average duration is ${liveMetrics?.summaryTotals?.avgDurationMs || 380}ms (P99: ${liveMetrics?.summaryTotals?.p99DurationMs || 850}ms).\n• Recommendation: Enable Provisioned Concurrency or right-size memory from ${selectedFnDetails?.memorySize || 512}MB to 1024MB to allocate higher vCPU performance.`;
       } else if (userMsg.toLowerCase().includes('error') || userMsg.toLowerCase().includes('fail') || userMsg.toLowerCase().includes('bug')) {
-        aiReply += `• CloudWatch error rate is ${liveMetrics?.summaryTotals?.errorRatePct || 0.4}%.\n• Top exception found: ${errorsData[0]?.exceptionType || 'NullPointerException'} (${errorsData[0]?.message || 'Cannot read property customer_id of null'}).\n• Fix: Check database connection pool or rollback to version v20.`;
+        aiReply += `• CloudWatch error rate is ${liveMetrics?.summaryTotals?.errorRatePct || 0}%.\n• Top exception found: ${errorsData[0]?.exceptionType || 'None'} (${errorsData[0]?.message || 'No errors reported'}).\n• Fix: Check CloudWatch Logs or recent deployments.`;
       } else if (userMsg.toLowerCase().includes('cost') || userMsg.toLowerCase().includes('save') || userMsg.toLowerCase().includes('money')) {
         aiReply += `• Monthly estimated spend: $${costData?.costMonth || selectedFnDetails?.monthlyCost || 45.00}.\n• FinOps Recommendation: Reducing memory from ${memoryData?.allocatedMb || 1024}MB to ${memoryData?.recommendedMb || 512}MB will save ~${memoryData?.estimatedSavingsPct || 28}% on monthly billing.`;
       } else {
@@ -955,12 +957,31 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
     try {
       const headers = getAwsFetchHeaders();
       const res = await fetch(`/api/lambda/functions?region=${encodeURIComponent(awsConfig?.region || 'us-east-1')}`, { headers });
+      if (res.status === 400) {
+        const errData = await res.json().catch(() => ({}));
+        if (errData?.error && errData.error.includes('Missing credentials')) {
+          setMissingCredentials(true);
+          setFunctions([]);
+          setSelectedFunctionName('');
+          return;
+        }
+      }
       const data = await res.json();
+      if (data?.error && data.error.includes('Missing credentials')) {
+        setMissingCredentials(true);
+        setFunctions([]);
+        setSelectedFunctionName('');
+        return;
+      }
+      setMissingCredentials(false);
       if (data.functions && data.functions.length > 0) {
         setFunctions(data.functions);
         if (!selectedFunctionName || !data.functions.some((f: any) => f.functionName === selectedFunctionName)) {
           setSelectedFunctionName(data.functions[0].functionName);
         }
+      } else {
+        setFunctions([]);
+        setSelectedFunctionName('');
       }
     } catch (err) {
       console.error('Failed loading Lambda functions:', err);
@@ -968,10 +989,11 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
   };
 
   const loadLogStream = async (fnName: string, filter = '') => {
+    if (!fnName) return;
     setLogStreamLoading(true);
     try {
       const headers = getAwsFetchHeaders();
-      const res = await fetch(`/api/lambda/logs?functionName=${fnName}&filter=${encodeURIComponent(filter)}&limit=150`, { headers });
+      const res = await fetch(`/api/lambda/logs?functionName=${encodeURIComponent(fnName)}&filter=${encodeURIComponent(filter)}&limit=150`, { headers });
       const data = await res.json();
       if (data.logs) setLogStream(data.logs);
     } catch (err) {
@@ -982,29 +1004,33 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
   };
 
   const loadAllFunctionData = async (fnName: string, range: string) => {
+    if (!fnName) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const headers = getAwsFetchHeaders();
       const promises: Promise<any>[] = [
-        fetch(`/api/lambda/health?functionName=${fnName}`, { headers }).then(r => r.json()),
-        fetch(`/api/lambda/metrics?functionName=${fnName}&timeRange=${range}`, { headers }).then(r => r.json()),
-        fetch(`/api/lambda/errors?functionName=${fnName}`, { headers }).then(r => r.json()),
-        fetch(`/api/lambda/coldstarts?functionName=${fnName}`, { headers }).then(r => r.json()),
-        fetch(`/api/lambda/cost?functionName=${fnName}`, { headers }).then(r => r.json()),
-        fetch(`/api/lambda/memory?functionName=${fnName}`, { headers }).then(r => r.json()),
-        fetch(`/api/lambda/timeout?functionName=${fnName}`, { headers }).then(r => r.json()),
-        fetch(`/api/lambda/eventsources?functionName=${fnName}`, { headers }).then(r => r.json()),
-        fetch(`/api/lambda/deployments?functionName=${fnName}`, { headers }).then(r => r.json()),
-        fetch(`/api/lambda/invocations?functionName=${fnName}&filter=${encodeURIComponent(traceSearch)}`, { headers }).then(r => r.json()),
-        fetch(`/api/lambda/live-metrics?functionName=${fnName}&timeRange=${range}`, { headers }).then(r => r.json())
+        fetch(`/api/lambda/health?functionName=${encodeURIComponent(fnName)}`, { headers }).then(r => r.json()),
+        fetch(`/api/lambda/metrics?functionName=${encodeURIComponent(fnName)}&timeRange=${range}`, { headers }).then(r => r.json()),
+        fetch(`/api/lambda/errors?functionName=${encodeURIComponent(fnName)}`, { headers }).then(r => r.json()),
+        fetch(`/api/lambda/coldstarts?functionName=${encodeURIComponent(fnName)}`, { headers }).then(r => r.json()),
+        fetch(`/api/lambda/cost?functionName=${encodeURIComponent(fnName)}`, { headers }).then(r => r.json()),
+        fetch(`/api/lambda/memory?functionName=${encodeURIComponent(fnName)}`, { headers }).then(r => r.json()),
+        fetch(`/api/lambda/timeout?functionName=${encodeURIComponent(fnName)}`, { headers }).then(r => r.json()),
+        fetch(`/api/lambda/eventsources?functionName=${encodeURIComponent(fnName)}`, { headers }).then(r => r.json()),
+        fetch(`/api/lambda/deployments?functionName=${encodeURIComponent(fnName)}`, { headers }).then(r => r.json()),
+        fetch(`/api/lambda/invocations?functionName=${encodeURIComponent(fnName)}&filter=${encodeURIComponent(traceSearch)}`, { headers }).then(r => r.json()),
+        fetch(`/api/lambda/live-metrics?functionName=${encodeURIComponent(fnName)}&timeRange=${range}`, { headers }).then(r => r.json())
       ];
 
       // Lazy load heavy trace correlation, dependency map, and AI root cause ONLY on overview subtab
       if (currentSubTab === 'overview') {
         promises.push(
-          fetch(`/api/lambda/dependency-map?functionName=${fnName}`, { headers }).then(r => r.json()),
-          fetch(`/api/lambda/ai-insights?functionName=${fnName}`, { headers }).then(r => r.json()),
-          fetch(`/api/lambda/apigw-trace?functionName=${fnName}`, { headers }).then(r => r.json())
+          fetch(`/api/lambda/dependency-map?functionName=${encodeURIComponent(fnName)}`, { headers }).then(r => r.json()),
+          fetch(`/api/lambda/ai-insights?functionName=${encodeURIComponent(fnName)}`, { headers }).then(r => r.json()),
+          fetch(`/api/lambda/apigw-trace?functionName=${encodeURIComponent(fnName)}`, { headers }).then(r => r.json())
         );
       }
 
@@ -1052,7 +1078,46 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
     }
   };
 
-  const selectedFnDetails = functions.find(f => f.functionName === selectedFunctionName) || functions[0];
+  if (missingCredentials || (!awsConfig?.accessKeyId && !activeProfileId)) {
+    return (
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '400px',
+        padding: '40px',
+        textAlign: 'center',
+        border: '1px solid var(--border-main)',
+        borderRadius: '12px',
+        backgroundColor: 'rgba(255, 255, 255, 0.01)',
+        marginTop: '20px'
+      }}>
+        <div style={{
+          padding: '16px',
+          borderRadius: '50%',
+          backgroundColor: 'rgba(255, 153, 0, 0.05)',
+          border: '1px solid rgba(255, 153, 0, 0.2)',
+          marginBottom: '16px'
+        }}>
+          <Key size={32} color="var(--color-aws)" />
+        </div>
+        <h3 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px' }}>
+          AWS Connection Not Configured
+        </h3>
+        <p style={{ fontSize: '13px', color: 'var(--text-muted)', maxWidth: '400px', marginBottom: '20px', lineHeight: 1.5 }}>
+          To monitor live AWS Lambda functions, performance metrics, and telemetry, please configure your AWS credentials in Settings.
+        </p>
+        <button
+          onClick={() => onNavigateTab ? onNavigateTab('settings') : undefined}
+          className="btn btn-primary"
+          style={{ padding: '10px 20px', borderRadius: '8px', fontSize: '13px', fontWeight: 600 }}
+        >
+          Configure AWS Credentials in Settings
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', paddingBottom: '40px' }}>
@@ -4288,10 +4353,10 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
 echo "=== Enforcing Lambda Security Scopes ==="
 
 # 1. Disable unauthenticated Public Function URLs
-${(selectedSecFunctions.length > 0 ? selectedSecFunctions : ['WorkerProcessor', 'DocGenerator']).map(fn => `aws lambda update-function-url-config --function-name ${fn} --auth-type AWS_IAM --region ${awsConfig?.region || 'eu-west-2'}`).join('\n')}
+${(selectedSecFunctions.length > 0 ? selectedSecFunctions : functions.slice(0, 2).map(f => f.functionName)).map(fn => `aws lambda update-function-url-config --function-name ${fn} --auth-type AWS_IAM --region ${awsConfig?.region || 'eu-west-2'}`).join('\n')}
 
 # 2. Enable AWS X-Ray Active Tracing
-${(selectedSecFunctions.length > 0 ? selectedSecFunctions : ['WorkerProcessor', 'DocGenerator']).map(fn => `aws lambda update-function-configuration --function-name ${fn} --tracing-config Mode=Active --region ${awsConfig?.region || 'eu-west-2'}`).join('\n')}
+${(selectedSecFunctions.length > 0 ? selectedSecFunctions : functions.slice(0, 2).map(f => f.functionName)).map(fn => `aws lambda update-function-configuration --function-name ${fn} --tracing-config Mode=Active --region ${awsConfig?.region || 'eu-west-2'}`).join('\n')}
 
 echo "Bulk remediation commands executed successfully."`}
                 </pre>
