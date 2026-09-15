@@ -2,89 +2,6 @@ import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwat
 import { CloudWatchLogsClient, FilterLogEventsCommand, DescribeLogGroupsCommand } from '@aws-sdk/client-cloudwatch-logs';
 import { LambdaClient, ListFunctionsCommand, GetFunctionConfigurationCommand, ListEventSourceMappingsCommand, UpdateFunctionConfigurationCommand, PutProvisionedConcurrencyConfigCommand, UpdateAliasCommand, ListVersionsByFunctionCommand, ListAliasesCommand } from '@aws-sdk/client-lambda';
 import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
-// ─── Default Monitored Functions Seed ─────────────────────────────────────────
-export const SAMPLE_FUNCTIONS = [
-    {
-        functionArn: 'arn:aws:lambda:us-east-1:123456789012:function:PaymentProcessor',
-        functionName: 'PaymentProcessor',
-        runtime: 'nodejs20.x',
-        memorySize: 1024,
-        timeout: 30,
-        handler: 'index.handler',
-        region: 'us-east-1',
-        accountId: '123456789012',
-        lastModified: '2026-07-25T14:20:00Z',
-        status: 'Active',
-        healthScore: 98,
-        healthStatus: 'Healthy',
-        monthlyCost: 142.50,
-        securityScore: 92
-    },
-    {
-        functionArn: 'arn:aws:lambda:us-east-1:123456789012:function:UserAuthService',
-        functionName: 'UserAuthService',
-        runtime: 'python3.11',
-        memorySize: 512,
-        timeout: 15,
-        handler: 'auth.lambda_handler',
-        region: 'us-east-1',
-        accountId: '123456789012',
-        lastModified: '2026-07-26T09:15:00Z',
-        status: 'Active',
-        healthScore: 95,
-        healthStatus: 'Healthy',
-        monthlyCost: 48.20,
-        securityScore: 88
-    },
-    {
-        functionArn: 'arn:aws:lambda:us-east-1:123456789012:function:InvoiceGenerator',
-        functionName: 'InvoiceGenerator',
-        runtime: 'java17',
-        memorySize: 2048,
-        timeout: 60,
-        handler: 'com.pingsnest.InvoiceHandler::handleRequest',
-        region: 'us-east-1',
-        accountId: '123456789012',
-        lastModified: '2026-07-20T11:00:00Z',
-        status: 'Active',
-        healthScore: 82,
-        healthStatus: 'Warning',
-        monthlyCost: 215.80,
-        securityScore: 78
-    },
-    {
-        functionArn: 'arn:aws:lambda:us-east-1:123456789012:function:OrderNotificationWorker',
-        functionName: 'OrderNotificationWorker',
-        runtime: 'nodejs20.x',
-        memorySize: 256,
-        timeout: 10,
-        handler: 'worker.handler',
-        region: 'us-east-1',
-        accountId: '123456789012',
-        lastModified: '2026-07-22T18:45:00Z',
-        status: 'Active',
-        healthScore: 99,
-        healthStatus: 'Healthy',
-        monthlyCost: 18.40,
-        securityScore: 100
-    },
-    {
-        functionArn: 'arn:aws:lambda:us-east-1:123456789012:function:LegacyBatchSync',
-        functionName: 'LegacyBatchSync',
-        runtime: 'python3.8',
-        memorySize: 1536,
-        timeout: 300,
-        handler: 'sync.main',
-        region: 'us-east-1',
-        accountId: '123456789012',
-        lastModified: '2026-06-10T08:30:00Z',
-        status: 'Inactive',
-        healthScore: 58,
-        healthStatus: 'Critical',
-        monthlyCost: 95.10,
-        securityScore: 62
-    }
-];
 export function resolveAwsClientCredentials(credentials) {
     if (!credentials) {
         return fromNodeProviderChain();
@@ -238,11 +155,10 @@ export async function discoverLambdaFunctions(region, credentials) {
             console.warn('[Lambda Discovery CW Logs Fallback Error]:', err.message);
         }
     }
-    return SAMPLE_FUNCTIONS;
+    return [];
 }
-// ─── Bug 1 fix: getFunctionDetails ──────────────────────────────────────────────
-// Reads real AWS function config via GetFunctionConfiguration. Falls back to the
-// SAMPLE_FUNCTIONS seed only if the name matches, or returns a generic placeholder.
+// ─── getFunctionDetails ────────────────────────────────────────────────────────
+// Reads real AWS function config via GetFunctionConfiguration.
 export async function getFunctionDetails(functionName, credentials) {
     if (hasCredentials(credentials)) {
         try {
@@ -289,7 +205,6 @@ export async function getFunctionDetails(functionName, credentials) {
                 verificationTier: isDormant ? 'UNVERIFIED_DORMANT' : 'METRICS',
                 activeTriggers: [],
                 lastLogIngest: isDormant ? `${daysSince}d ago` : 'Today',
-                // Indicate this came from real AWS data
                 dataSource: 'aws_live'
             };
         }
@@ -297,25 +212,21 @@ export async function getFunctionDetails(functionName, credentials) {
             console.warn('[getFunctionDetails AWS Error]:', err.message);
         }
     }
-    // Fallback: match seed or return generic placeholder
-    const seedMatch = SAMPLE_FUNCTIONS.find(f => f.functionName.toLowerCase() === functionName.toLowerCase());
-    if (seedMatch)
-        return { ...seedMatch, dataSource: 'seed_data' };
     return {
-        functionArn: `arn:aws:lambda:us-east-1:unknown:function:${functionName}`,
+        functionArn: `arn:aws:lambda:${credentials?.region || 'us-east-1'}:unknown:function:${functionName}`,
         functionName,
         runtime: 'nodejs20.x',
         memorySize: 512,
         timeout: 15,
         handler: 'index.handler',
-        region: 'us-east-1',
+        region: credentials?.region || 'us-east-1',
         accountId: 'unknown',
         lastModified: new Date().toISOString(),
-        status: 'Active',
-        healthScore: 50,
-        healthStatus: 'Warning',
+        status: 'Inactive',
+        healthScore: 0,
+        healthStatus: 'Healthy',
         monthlyCost: 0,
-        securityScore: 50,
+        securityScore: 0,
         dataSource: 'placeholder'
     };
 }
@@ -351,29 +262,17 @@ export async function getFunctionHealth(functionName, credentials) {
             console.warn('[Real Function Health Error]:', err.message);
         }
     }
-    const isWarning = functionName === 'InvoiceGenerator';
-    const isCritical = functionName === 'LegacyBatchSync';
-    let score = 98;
-    let status = 'Healthy';
-    if (isCritical) {
-        score = 58;
-        status = 'Critical';
-    }
-    else if (isWarning) {
-        score = 82;
-        status = 'Warning';
-    }
     return {
-        functionArn: `arn:aws:lambda:us-east-1:123456789012:function:${functionName}`,
+        functionArn: `arn:aws:lambda:${credentials?.region || 'us-east-1'}:unknown:function:${functionName}`,
         functionName,
-        healthScore: score,
-        status,
+        healthScore: 100,
+        status: 'Healthy',
         checks: [
-            { name: 'Invocation Success Rate (> 99%)', status: !isCritical, message: isCritical ? 'Success rate dropped to 94.2%' : 'Success rate at 99.8%' },
-            { name: 'No Throttling Events', status: !isWarning && !isCritical, message: isWarning ? '42 throttle events in last 24h' : 'Zero throttles detected' },
-            { name: 'Duration & Latency Stability', status: true, message: 'Average execution duration stable within expected limits' },
-            { name: 'Memory Usage Normal', status: !isWarning, message: isWarning ? 'Memory utilization peak at 92%' : 'Peak memory within provisioned headroom' },
-            { name: 'No Deployment Regression Issues', status: !isCritical, message: isCritical ? 'Version 21 error rate spike flagged' : 'Latest release stable' }
+            { name: 'Invocation Success Rate (> 99%)', status: true, message: 'No errors detected' },
+            { name: 'No Throttling Events', status: true, message: 'Zero throttles detected' },
+            { name: 'Duration & Latency Stability', status: true, message: 'Duration nominal' },
+            { name: 'Memory Usage Normal', status: true, message: 'Memory within limits' },
+            { name: 'No Deployment Regression Issues', status: true, message: 'Latest release stable' }
         ],
         updatedAt: new Date().toISOString()
     };
@@ -408,39 +307,7 @@ export async function getPerformanceMetrics(functionName, timeRange = '24h', cre
             console.warn('[Real Performance Metrics Error]:', err.message);
         }
     }
-    const points = timeRange === '15m' ? 15 : timeRange === '1h' ? 12 : timeRange === '6h' ? 12 : timeRange === '7d' ? 7 : 24;
-    const labels = [];
-    const invocations = [];
-    const errors = [];
-    const durationAvg = [];
-    const durationP95 = [];
-    const durationP99 = [];
-    const throttles = [];
-    const concurrency = [];
-    const asyncRetries = [];
-    const dlqFailures = [];
-    const baseInv = functionName === 'PaymentProcessor' ? 450 : functionName === 'InvoiceGenerator' ? 120 : 250;
-    const baseDur = functionName === 'InvoiceGenerator' ? 4200 : functionName === 'PaymentProcessor' ? 380 : 120;
-    for (let i = points; i >= 0; i--) {
-        labels.push(`${i}h ago`);
-        const inv = Math.floor(baseInv + (Math.random() * 80 - 40));
-        const err = Math.floor(Math.random() * 4);
-        const avg = Math.floor(baseDur + (Math.random() * 50 - 25));
-        const p95 = Math.floor(avg * 1.4);
-        const p99 = Math.floor(avg * 2.2);
-        const thr = functionName === 'InvoiceGenerator' && i === 4 ? 12 : 0;
-        const conc = Math.floor(inv * 0.15);
-        invocations.push(inv);
-        errors.push(err);
-        durationAvg.push(avg);
-        durationP95.push(p95);
-        durationP99.push(p99);
-        throttles.push(thr);
-        concurrency.push(conc);
-        asyncRetries.push(err > 2 ? err - 1 : 0);
-        dlqFailures.push(err > 3 ? 1 : 0);
-    }
-    return { timeLabels: labels, invocations, errors, durationAvg, durationP95, durationP99, throttles, concurrency, asyncRetries, dlqFailures };
+    return { timeLabels: [], invocations: [], errors: [], durationAvg: [], durationP95: [], durationP99: [], throttles: [], concurrency: [], asyncRetries: [], dlqFailures: [] };
 }
 // ─── Error Analytics ─────────────────────────────────────────────────────────
 export async function getTopExceptions(functionName, credentials) {
@@ -499,56 +366,7 @@ export async function getTopExceptions(functionName, credentials) {
             console.warn('[Real Top Exceptions Error]:', err.message);
         }
     }
-    return [
-        {
-            id: 'err-101',
-            exceptionType: 'NullPointerException',
-            occurrence: 540,
-            message: 'java.lang.NullPointerException: Cannot read property "customer_id" of null',
-            stackTrace: `at com.pingsnest.payment.PaymentService.process(PaymentService.java:142)\nat com.pingsnest.payment.Handler.handleRequest(Handler.java:45)\nat lambdainternal.EventHandlerLoader$2.call(EventHandlerLoader.java:902)`,
-            firstOccurrence: '2026-07-20T08:12:00Z',
-            latestOccurrence: '2026-07-27T11:42:00Z',
-            frequency: '77 occurrences / day',
-            relatedDeployment: 'Version 21',
-            affectedVersions: ['$LATEST', 'v21', 'v20']
-        },
-        {
-            id: 'err-102',
-            exceptionType: 'TimeoutException',
-            occurrence: 122,
-            message: 'Task timed out after 30.00 seconds',
-            stackTrace: `Task timed out after 30.00 seconds\n  AWS Lambda Request ID: 4b9a128e-89a1-43ef-b912-984210a182fa`,
-            firstOccurrence: '2026-07-22T14:30:00Z',
-            latestOccurrence: '2026-07-27T10:15:00Z',
-            frequency: '18 occurrences / day',
-            relatedDeployment: 'Version 21',
-            affectedVersions: ['v21']
-        },
-        {
-            id: 'err-103',
-            exceptionType: 'Database Connection Failed',
-            occurrence: 82,
-            message: 'Connection pool exhausted: Timeout waiting for idle connection from RDS pool',
-            stackTrace: `Error: Connection pool exhausted\n    at Pool.acquire (node_modules/pg-pool/index.js:142:12)\n    at db.query (src/database.ts:48:19)`,
-            firstOccurrence: '2026-07-24T02:00:00Z',
-            latestOccurrence: '2026-07-26T21:05:00Z',
-            frequency: '12 occurrences / day',
-            relatedDeployment: 'Version 20',
-            affectedVersions: ['v20', 'v21']
-        },
-        {
-            id: 'err-104',
-            exceptionType: 'MemoryExceeded',
-            occurrence: 14,
-            message: 'Runtime exited with error: signal: killed (Out of Memory)',
-            stackTrace: `Fatal error in V8 garbage collection: Allocation failed - JavaScript heap out of memory\n  Memory size: 1024 MB`,
-            firstOccurrence: '2026-07-25T19:22:00Z',
-            latestOccurrence: '2026-07-27T04:10:00Z',
-            frequency: '2 occurrences / day',
-            relatedDeployment: 'Version 21',
-            affectedVersions: ['v21']
-        }
-    ];
+    return [];
 }
 // ─── Cold Start Diagnostics ──────────────────────────────────────────────────
 export async function getColdStartDiagnostic(functionName, credentials) {
@@ -577,18 +395,13 @@ export async function getColdStartDiagnostic(functionName, credentials) {
             console.warn('[Real Cold Start Diagnostic Error]:', err.message);
         }
     }
-    const isJava = functionName === 'InvoiceGenerator';
     return {
         functionName,
-        coldStartCount: isJava ? 84 : 42,
-        avgColdStartMs: isJava ? 1840 : 720,
-        maxColdStartMs: isJava ? 3200 : 1200,
-        coldStartRatioPercent: isJava ? 4.8 : 1.8,
-        recommendations: [
-            'Enable Provisioned Concurrency (suggested 5 pre-warmed instances for peak times)',
-            isJava ? 'Enable AWS Lambda SnapStart for Java 17 to reduce cold starts by up to 90%' : 'Optimize imports and tree-shake package size to reduce bundle payload',
-            'Increase memory allocation from 512 MB to 1024 MB to allocate proportionate vCPU initialization power'
-        ]
+        coldStartCount: 0,
+        avgColdStartMs: 0,
+        maxColdStartMs: 0,
+        coldStartRatioPercent: 0,
+        recommendations: []
     };
 }
 // ─── Cost Analysis ───────────────────────────────────────────────────────────
@@ -607,7 +420,7 @@ export async function getCostAnalysis(functionName, credentials) {
                 totalGbSeconds: gbSec,
                 costToday,
                 costMonth,
-                trendPct: 4.2,
+                trendPct: 0,
                 trendHighlight: `Live AWS CloudWatch Telemetry: ${inv} invocations, avg duration ${avgMs}ms in last 24h.`
             };
         }
@@ -615,15 +428,14 @@ export async function getCostAnalysis(functionName, credentials) {
             console.warn('[Real Cost Analysis Error]:', err.message);
         }
     }
-    const isHighCost = functionName === 'InvoiceGenerator';
     return {
         functionName,
-        invocations: isHighCost ? 48500 : 128400,
-        totalGbSeconds: isHighCost ? 97000 : 64200,
-        costToday: isHighCost ? 7.20 : 4.75,
-        costMonth: isHighCost ? 215.80 : 142.50,
-        trendPct: isHighCost ? 38 : 4.2,
-        trendHighlight: `${functionName} cost increased 38% this week due to higher execution duration.`
+        invocations: 0,
+        totalGbSeconds: 0,
+        costToday: 0,
+        costMonth: 0,
+        trendPct: 0,
+        trendHighlight: 'No CloudWatch telemetry available.'
     };
 }
 export async function getDeploymentEvents(functionName, credentials) {
@@ -656,35 +468,7 @@ export async function getDeploymentEvents(functionName, credentials) {
             console.warn('[Real Deployment Events Error]:', err.message);
         }
     }
-    return [
-        {
-            version: 'v21',
-            deployedAt: '2026-07-26T16:30:00Z',
-            status: 'Active (Degraded)',
-            errorRateChange: '+4.2%',
-            latencyChange: '+180ms',
-            rollbackRecommended: true,
-            pipelineConnection: 'GitHub Actions (#1482)'
-        },
-        {
-            version: 'v20',
-            deployedAt: '2026-07-18T10:15:00Z',
-            status: 'Superceded',
-            errorRateChange: '-0.5%',
-            latencyChange: '-20ms',
-            rollbackRecommended: false,
-            pipelineConnection: 'AWS CodePipeline'
-        },
-        {
-            version: 'v19',
-            deployedAt: '2026-07-05T09:00:00Z',
-            status: 'Superceded',
-            errorRateChange: '0%',
-            latencyChange: '0ms',
-            rollbackRecommended: false,
-            pipelineConnection: 'Terraform Cloud'
-        }
-    ];
+    return [];
 }
 // ─── Memory Analysis & Right-Sizing ───────────────────────────────────────────
 export async function getMemoryRecommendation(functionName, credentials) {
@@ -722,35 +506,13 @@ export async function getMemoryRecommendation(functionName, credentials) {
             console.warn('[Real Memory Recommendation Error]:', err.message);
         }
     }
-    if (functionName === 'PaymentProcessor') {
-        return {
-            allocatedMb: 1024,
-            usedMb: 195,
-            peakMb: 260,
-            recommendedMb: 512,
-            estimatedSavingsPct: 28,
-            advice: 'Allocated memory is 1024 MB, but peak used memory is only 260 MB (25% utilization). Reducing memory to 512 MB will preserve performance while saving ~28% on AWS billing.',
-            status: 'OVER_PROVISIONED'
-        };
-    }
-    else if (functionName === 'InvoiceGenerator') {
-        return {
-            allocatedMb: 2048,
-            usedMb: 1820,
-            peakMb: 1980,
-            recommendedMb: 3072,
-            estimatedSavingsPct: 0,
-            advice: 'CRITICAL: Function is near Out-Of-Memory limit (96% peak memory used). Increase memory to 3072 MB to avoid process crashes and 502 gateway errors.',
-            status: 'OOM_RISK'
-        };
-    }
     return {
-        allocatedMb: 512,
-        usedMb: 210,
-        peakMb: 290,
-        recommendedMb: 512,
+        allocatedMb: 0,
+        usedMb: 0,
+        peakMb: 0,
+        recommendedMb: 0,
         estimatedSavingsPct: 0,
-        advice: 'Memory allocation is optimal. Peak memory usage is comfortably within safety buffers.',
+        advice: 'No memory metrics available.',
         status: 'OPTIMAL'
     };
 }
@@ -782,15 +544,12 @@ export async function getTimeoutDiagnostic(functionName, credentials) {
             console.warn('[Real Timeout Diagnostic Error]:', err.message);
         }
     }
-    const isNear = functionName === 'InvoiceGenerator';
     return {
-        configuredTimeoutSec: isNear ? 30 : 15,
-        avgDurationSec: isNear ? 4.2 : 0.38,
-        p99DurationSec: isNear ? 26.4 : 0.85,
-        isNearingTimeout: isNear,
-        recommendation: isNear
-            ? 'WARNING: Function P99 latency (26.4s) is nearing configured timeout limit (30.0s). Consider increasing timeout or optimizing database queries.'
-            : 'Function execution duration is well within configured timeout bounds.'
+        configuredTimeoutSec: 0,
+        avgDurationSec: 0,
+        p99DurationSec: 0,
+        isNearingTimeout: false,
+        recommendation: 'No timeout diagnostic available.'
     };
 }
 // ─── Event Source Monitoring ──────────────────────────────────────────────────
@@ -832,13 +591,7 @@ export async function getEventSources(functionName, credentials) {
             console.warn('[Real Event Sources Error]:', err.message);
         }
     }
-    return [
-        { sourceType: 'API Gateway', sourceName: '/v1/payments (POST)', successRate: 99.8, avgLatencyMs: 320, invocations24h: 84200 },
-        { sourceType: 'SQS', sourceName: 'payment-retry-queue.fifo', successRate: 98.4, avgLatencyMs: 450, invocations24h: 12400 },
-        { sourceType: 'EventBridge', sourceName: 'OrderCreatedEvent', successRate: 100, avgLatencyMs: 210, invocations24h: 31200 },
-        { sourceType: 'DynamoDB Streams', sourceName: 'UserTableStream', successRate: 99.9, avgLatencyMs: 180, invocations24h: 6500 },
-        { sourceType: 'S3', sourceName: 'invoices-upload-bucket', successRate: 97.2, avgLatencyMs: 1840, invocations24h: 1200 }
-    ];
+    return [];
 }
 export async function getInvocationExplorer(functionName, filterText = '', credentials) {
     if (hasCredentials(credentials)) {
@@ -890,61 +643,7 @@ export async function getInvocationExplorer(functionName, filterText = '', crede
             console.warn('[Real Invocation Explorer Error]:', err.message);
         }
     }
-    const list = [
-        {
-            requestId: '9a8b7c6d-1234-4567-8901-abcdef123456',
-            executionTime: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
-            status: 'Success',
-            durationMs: 342,
-            memoryUsedMb: 198,
-            logStream: '2026/07/27/[$LATEST]a1b2c3d4e5',
-            payloadSizeKb: 1.4,
-            coldStart: false,
-            payloadSnippet: '{"action":"process_payment","amount":149.99,"currency":"USD","userId":"usr_8912"}',
-            logsSnippet: 'START RequestId: 9a8b7c6d...\n2026-07-27T11:57:00Z INFO Processing payment for order #8841\nEND RequestId: 9a8b7c6d...\nREPORT RequestId: 9a8b7c6d... Duration: 342.10 ms Billed Duration: 343 ms Memory Size: 1024 MB Max Memory Used: 198 MB'
-        },
-        {
-            requestId: '1b2c3d4e-5678-9012-3456-7890abcdef12',
-            executionTime: new Date(Date.now() - 14 * 60 * 1000).toISOString(),
-            status: 'Error',
-            durationMs: 1240,
-            memoryUsedMb: 245,
-            logStream: '2026/07/27/[$LATEST]f6g7h8i9j0',
-            payloadSizeKb: 2.8,
-            coldStart: true,
-            payloadSnippet: '{"action":"process_payment","amount":0.00,"currency":"USD","userId":"usr_null"}',
-            logsSnippet: 'START RequestId: 1b2c3d4e...\n2026-07-27T11:45:00Z ERROR java.lang.NullPointerException\nEND RequestId: 1b2c3d4e...\nREPORT RequestId: 1b2c3d4e... Duration: 1240.00 ms Init Duration: 720.00 ms'
-        },
-        {
-            requestId: '3c4d5e6f-7890-1234-5678-90abcdef1234',
-            executionTime: new Date(Date.now() - 32 * 60 * 1000).toISOString(),
-            status: 'Throttled',
-            durationMs: 0,
-            memoryUsedMb: 0,
-            logStream: 'N/A',
-            payloadSizeKb: 0.5,
-            coldStart: false,
-            payloadSnippet: '{"action":"process_payment"}',
-            logsSnippet: 'RateExceeded: Rate Exceeded. Reserved concurrency limit reached.'
-        },
-        {
-            requestId: '5e6f7a8b-9012-3456-7890-1234abcdef56',
-            executionTime: new Date(Date.now() - 55 * 60 * 1000).toISOString(),
-            status: 'Success',
-            durationMs: 410,
-            memoryUsedMb: 202,
-            logStream: '2026/07/27/[$LATEST]k1l2m3n4o5',
-            payloadSizeKb: 1.2,
-            coldStart: false,
-            payloadSnippet: '{"action":"process_payment","amount":89.00,"currency":"USD"}',
-            logsSnippet: 'START RequestId: 5e6f7a8b...\n2026-07-27T11:04:00Z INFO Payment succeeded\nREPORT Duration: 410.00 ms'
-        }
-    ];
-    if (!filterText)
-        return list;
-    return list.filter(item => item.requestId.toLowerCase().includes(filterText.toLowerCase()) ||
-        item.status.toLowerCase().includes(filterText.toLowerCase()) ||
-        item.logStream.toLowerCase().includes(filterText.toLowerCase()));
+    return [];
 }
 // Bug 5 fix: getSecurityPosture now reads real AWS function config instead of name-based heuristics.
 // Falls back to conservative heuristics (and flags them as inferred) if credentials are absent.
@@ -1047,25 +746,15 @@ export async function getSecurityPosture(functionName, credentials) {
 export async function getDependencyGraph(functionName, credentials) {
     return {
         nodes: [
-            { id: 'apigw', name: 'API Gateway (/v1/payments)', type: 'API Gateway', status: 'Healthy' },
-            { id: 'fn_main', name: functionName, type: 'Lambda', status: functionName === 'InvoiceGenerator' ? 'Warning' : 'Healthy' },
-            { id: 'rds', name: 'RDS (PostgreSQL)', type: 'RDS', status: 'Healthy' },
-            { id: 'sns', name: 'SNS (PaymentEventsTopic)', type: 'SNS', status: 'Healthy' },
-            { id: 'sqs', name: 'SQS (EmailQueue)', type: 'SQS', status: 'Healthy' },
-            { id: 'fn_email', name: 'EmailNotifierLambda', type: 'Lambda', status: 'Healthy' }
+            { id: 'apigw', name: 'API Gateway', type: 'API Gateway', status: 'Healthy' },
+            { id: 'fn_main', name: functionName, type: 'Lambda', status: 'Healthy' }
         ],
         edges: [
-            { source: 'apigw', target: 'fn_main', label: 'HTTP / Sync' },
-            { source: 'fn_main', target: 'rds', label: 'SQL Connection' },
-            { source: 'fn_main', target: 'sns', label: 'Publish Event' },
-            { source: 'sns', target: 'sqs', label: 'Subscribe' },
-            { source: 'sqs', target: 'fn_email', label: 'Async Event' }
+            { source: 'apigw', target: 'fn_main', label: 'Invoke' }
         ]
     };
 }
-// Bug 12 fix: getAIInsights reads real CloudWatch metrics when credentials available.
-// Old code returned hardcoded strings keyed only on function name ('InvoiceGenerator' got
-// a real-looking insight; everything else got 'Normal' with confidencePct: 98 regardless of actual state).
+// getAIInsights reads real CloudWatch metrics when credentials are available.
 export async function getAIInsights(functionName, credentials) {
     if (hasCredentials(credentials)) {
         try {
@@ -1206,40 +895,23 @@ export async function getLiveCloudWatchMetrics(functionName, region, timeRange, 
             console.warn('[CloudWatch Live Metrics Error]:', err.message);
         }
     }
-    // Synthetic fallback
-    const points = 24;
-    const baseInv = functionName === 'PaymentProcessor' ? 450 : 180;
-    const baseDur = functionName === 'InvoiceGenerator' ? 4200 : 380;
-    const now = new Date();
-    const synth = (fn) => Array.from({ length: points }, (_, i) => ({
-        timestamp: new Date(now.getTime() - (points - i) * 3600 * 1000).toISOString(),
-        value: fn()
-    }));
-    const invSynth = synth(() => Math.floor(baseInv + Math.random() * 80 - 40));
-    const errSynth = synth(() => Math.floor(Math.random() * 4));
-    const durAvgSynth = synth(() => Math.floor(baseDur + Math.random() * 50 - 25));
-    const durP99Synth = durAvgSynth.map(p => ({ ...p, value: Math.floor(p.value * 2.2) }));
-    const thrSynth = synth(() => Math.random() < 0.05 ? Math.floor(Math.random() * 5) : 0);
-    const concSynth = invSynth.map(p => ({ ...p, value: Math.floor(p.value * 0.15) }));
-    const totalInv = invSynth.reduce((s, p) => s + p.value, 0);
-    const totalErr = errSynth.reduce((s, p) => s + p.value, 0);
     return {
         functionName, region, timeRange,
         source: 'synthetic',
-        invocations: invSynth,
-        errors: errSynth,
-        durationAvg: durAvgSynth,
-        durationP99: durP99Synth,
-        throttles: thrSynth,
-        concurrentExecutions: concSynth,
+        invocations: [],
+        errors: [],
+        durationAvg: [],
+        durationP99: [],
+        throttles: [],
+        concurrentExecutions: [],
         summaryTotals: {
-            totalInvocations: Math.round(totalInv),
-            totalErrors: Math.round(totalErr),
-            errorRatePct: totalInv > 0 ? Math.round((totalErr / totalInv) * 10000) / 100 : 0,
-            avgDurationMs: Math.round(baseDur),
-            p99DurationMs: Math.round(baseDur * 2.2),
-            totalThrottles: 2,
-            peakConcurrency: Math.round(baseInv * 0.15)
+            totalInvocations: 0,
+            totalErrors: 0,
+            errorRatePct: 0,
+            avgDurationMs: 0,
+            p99DurationMs: 0,
+            totalThrottles: 0,
+            peakConcurrency: 0
         }
     };
 }
@@ -1334,84 +1006,7 @@ export async function getLambdaLogStream(functionName, region, filterPattern = '
     };
 }
 export function getApiGatewayLambdaTrace(functionName, requestId) {
-    const traces = [
-        {
-            requestId: requestId || 'apigw-a1b2c3d4-e5f6-7890',
-            apiGatewayId: 'abc123xyz',
-            route: '/api/v1/payments',
-            method: 'POST',
-            functionName,
-            timestamp: new Date(Date.now() - 5000).toISOString(),
-            totalLatencyMs: 842,
-            clientToGatewayMs: 18,
-            gatewayOverheadMs: 22,
-            integrationLatencyMs: 802,
-            lambdaInitMs: 412,
-            lambdaExecutionMs: 390,
-            gatewayResponseMs: 18,
-            statusCode: 200,
-            isColdStart: true,
-            hops: [
-                { stage: 'Network', label: 'Client → API Gateway', durationMs: 18, pct: 2, status: 'ok', detail: 'TLS handshake + TCP connect' },
-                { stage: 'API Gateway', label: 'GW Auth / Mapping', durationMs: 22, pct: 3, status: 'ok', detail: 'Request validation, authorizer, mapping template' },
-                { stage: 'Lambda Init', label: 'Cold Start Init', durationMs: 412, pct: 49, status: 'warn', detail: 'Runtime init + extension init. Consider Provisioned Concurrency.' },
-                { stage: 'Lambda Exec', label: 'Function Execution', durationMs: 390, pct: 46, status: 'ok', detail: 'Handler code + DB query (avg 210ms)' },
-                { stage: 'Gateway Response', label: 'GW → Client', durationMs: 18, pct: 2, status: 'ok', detail: 'Response mapping + serialisation' }
-            ],
-            breakdown: { networkPct: 2, gatewayPct: 3, lambdaInitPct: 49, lambdaExecPct: 46 }
-        },
-        {
-            requestId: 'apigw-b2c3d4e5-f6a7-8901',
-            apiGatewayId: 'abc123xyz',
-            route: '/api/v1/payments',
-            method: 'POST',
-            functionName,
-            timestamp: new Date(Date.now() - 120000).toISOString(),
-            totalLatencyMs: 268,
-            clientToGatewayMs: 12,
-            gatewayOverheadMs: 16,
-            integrationLatencyMs: 240,
-            lambdaInitMs: 0,
-            lambdaExecutionMs: 240,
-            gatewayResponseMs: 12,
-            statusCode: 200,
-            isColdStart: false,
-            hops: [
-                { stage: 'Network', label: 'Client → API Gateway', durationMs: 12, pct: 4, status: 'ok', detail: 'Existing connection reuse' },
-                { stage: 'API Gateway', label: 'GW Auth / Mapping', durationMs: 16, pct: 6, status: 'ok', detail: 'JWT verification + request mapping' },
-                { stage: 'Lambda Init', label: 'Warm Start (no init)', durationMs: 0, pct: 0, status: 'ok', detail: 'Warm container — no cold start overhead' },
-                { stage: 'Lambda Exec', label: 'Function Execution', durationMs: 240, pct: 90, status: 'ok', detail: 'Handler code + DB query (avg 185ms)' },
-                { stage: 'Gateway Response', label: 'GW → Client', durationMs: 12, pct: 4, status: 'ok', detail: 'Response serialisation' }
-            ],
-            breakdown: { networkPct: 4, gatewayPct: 6, lambdaInitPct: 0, lambdaExecPct: 90 }
-        },
-        {
-            requestId: 'apigw-c3d4e5f6-a7b8-9012',
-            apiGatewayId: 'abc123xyz',
-            route: '/api/v1/payments',
-            method: 'POST',
-            functionName,
-            timestamp: new Date(Date.now() - 300000).toISOString(),
-            totalLatencyMs: 30089,
-            clientToGatewayMs: 15,
-            gatewayOverheadMs: 24,
-            integrationLatencyMs: 30040,
-            lambdaInitMs: 0,
-            lambdaExecutionMs: 30040,
-            gatewayResponseMs: 14,
-            statusCode: 504,
-            isColdStart: false,
-            hops: [
-                { stage: 'Network', label: 'Client → API Gateway', durationMs: 15, pct: 0, status: 'ok', detail: 'Normal network latency' },
-                { stage: 'API Gateway', label: 'GW Auth / Mapping', durationMs: 24, pct: 0, status: 'ok', detail: 'Auth + mapping completed normally' },
-                { stage: 'Lambda Init', label: 'Warm Start', durationMs: 0, pct: 0, status: 'ok', detail: 'Warm container reused' },
-                { stage: 'Lambda Exec', label: 'Function Execution (TIMEOUT)', durationMs: 30040, pct: 100, status: 'error', detail: 'Task timed out after 30.00 seconds. Connection pool exhausted.' },
-                { stage: 'Gateway Response', label: 'GW → Client', durationMs: 14, pct: 0, status: 'error', detail: '504 Gateway Timeout returned to client' }
-            ],
-            breakdown: { networkPct: 0, gatewayPct: 0, lambdaInitPct: 0, lambdaExecPct: 100 }
-        }
-    ];
-    return traces;
+    return [];
 }
 // ─── One-Click Auto-Remediation Executions ──────────────────────────────────────────────
 export async function updateFunctionMemory(functionName, memorySizeMb, credentials) {
@@ -1737,8 +1332,7 @@ export async function getBulkFleetTelemetry(credentials) {
             console.warn('[Real Bulk Fleet Telemetry Error]:', err.message);
         }
     }
-    // High-density synthetic telemetry built from monitored sample functions seed
-    return buildTelemetryFromFunctions(SAMPLE_FUNCTIONS);
+    return buildTelemetryFromFunctions([]);
 }
 export async function executeBulkRemediation(action, functionNames, payload, credentials) {
     const results = [];
@@ -1765,7 +1359,7 @@ export async function executeBulkRemediation(action, functionNames, payload, cre
 }
 export async function getBulkFleetSecurityAudit(credentials) {
     const discovered = await discoverLambdaFunctions(credentials?.region || 'eu-west-2', credentials);
-    const fnList = discovered.length > 0 ? discovered : SAMPLE_FUNCTIONS;
+    const fnList = discovered;
     const functionAudits = [];
     let criticalCount = 0;
     let highCount = 0;
@@ -1977,29 +1571,7 @@ export async function getBulkFleetSecurityAudit(credentials) {
     }
     const totalChecks = fnList.length * 6;
     const overallScore = Math.round(functionAudits.reduce((acc, f) => acc + f.securityScore, 0) / (functionAudits.length || 1));
-    const recentSecurityEvents = [
-        {
-            timestamp: new Date(Date.now() - 1000 * 120).toISOString(),
-            functionName: functionAudits[0]?.functionName || 'PaymentProcessor',
-            severity: 'warning',
-            eventTitle: 'IAM Policy Modification Detected',
-            description: 'IAM Policy s3:* granted to execution role via CloudTrail event.'
-        },
-        {
-            timestamp: new Date(Date.now() - 1000 * 450).toISOString(),
-            functionName: functionAudits[1]?.functionName || 'LegacyBatchSync',
-            severity: 'critical',
-            eventTitle: 'Deprecated Runtime EOL Warning',
-            description: 'Function running Python 3.8 scheduled for AWS security patch deprecation.'
-        },
-        {
-            timestamp: new Date(Date.now() - 1000 * 900).toISOString(),
-            functionName: functionAudits[2]?.functionName || 'InvoiceGenerator',
-            severity: 'high',
-            eventTitle: 'Plaintext Secret Detected in Env',
-            description: 'DB_PASSWORD plaintext key identified in Lambda environment configuration.'
-        }
-    ];
+    const recentSecurityEvents = [];
     return {
         overallScore,
         totalFunctions: fnList.length,

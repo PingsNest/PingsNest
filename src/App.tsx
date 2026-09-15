@@ -308,6 +308,47 @@ function MainAppShell() {
     </div>
   );
 
+  const hasAwsConnection = Boolean(activeProfileId || (accountProfiles && accountProfiles.length > 0) || awsConfig?.accessKeyId || selectedGateway);
+
+  const renderLambdaRequiredFallback = () => (
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: '400px',
+      padding: '40px',
+      textAlign: 'center',
+      border: '1px solid var(--border-main)',
+      borderRadius: '12px',
+      backgroundColor: 'rgba(255, 255, 255, 0.01)',
+      marginTop: '20px'
+    }}>
+      <div style={{
+        padding: '16px',
+        borderRadius: '50%',
+        backgroundColor: 'rgba(255, 153, 0, 0.05)',
+        border: '1px solid rgba(255, 153, 0, 0.2)',
+        marginBottom: '16px'
+      }}>
+        <Key size={32} color="var(--color-aws)" />
+      </div>
+      <h3 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px' }}>
+        AWS Connection Not Configured
+      </h3>
+      <p style={{ fontSize: '13px', color: 'var(--text-muted)', maxWidth: '400px', marginBottom: '20px', lineHeight: 1.5 }}>
+        To monitor live AWS Lambda functions, performance metrics, and telemetry, please configure your AWS credentials.
+      </p>
+      <button
+        onClick={() => setActiveTab('settings')}
+        className="btn btn-primary"
+        style={{ padding: '10px 20px', borderRadius: '8px', fontSize: '13px', fontWeight: 600 }}
+      >
+        Configure AWS Connection Scope
+      </button>
+    </div>
+  );
+
   // Check if unauthenticated public status page URL is accessed
   const currentPath = window.location.pathname.toLowerCase();
   const currentSearch = window.location.search.toLowerCase();
@@ -1288,7 +1329,7 @@ function MainAppShell() {
           {activeTab === 'slo' && <SloManager apiId={selectedGateway?.id} />}
           {activeTab === 'topology' && <TopologyMesh />}
           {activeTab === 'playbooks' && <Playbooks />}
-          {activeTab === 'lambda' && <LambdaMonitor activeSubTab={lambdaSubTab} onNavigateTab={(tab) => setActiveTab(tab as any)} />}
+          {activeTab === 'lambda' && (hasAwsConnection ? <LambdaMonitor activeSubTab={lambdaSubTab} onNavigateTab={(tab) => setActiveTab(tab as any)} /> : renderLambdaRequiredFallback())}
           {activeTab === 'system' && <Settings initialSubTab="system" userRole={userRole} />}
           {activeTab === 'url-monitor' && <UrlMonitor token={token} onLogout={handleLogout} />}
           {activeTab === 'status_portal' && <StatusPortal />}

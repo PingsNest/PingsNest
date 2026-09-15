@@ -337,6 +337,9 @@ function hasAwsCreds(creds) {
 app.get('/api/lambda/functions', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
         const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || creds.authType || 'default').digest('hex').slice(0, 12);
         const cacheKey = `lambda:fns:${creds.region}:${keyHash}`;
         const bypassCache = req.query.refresh === 'true' || req.query.bypassCache === 'true';
@@ -355,6 +358,9 @@ app.get('/api/lambda/functions', async (req, res) => {
 app.post('/api/aws/lambda/list', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
         const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || creds.authType || 'default').digest('hex').slice(0, 12);
         const cacheKey = `lambda:fns:${creds.region}:${keyHash}`;
         const bypassCache = req.query.refresh === 'true' || req.query.bypassCache === 'true' || req.body?.bypassCache === true;
@@ -373,7 +379,12 @@ app.post('/api/aws/lambda/list', async (req, res) => {
 app.get('/api/lambda/function-details', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const cacheKey = `lambda:details:${creds.region}:${fnName}`;
         const result = await cacheGetOrSet(cacheKey, TTL.LAMBDAS, async () => {
             const fn = await getFunctionDetails(fnName, creds);
@@ -388,7 +399,12 @@ app.get('/api/lambda/function-details', async (req, res) => {
 app.get('/api/lambda/metrics', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const timeRange = req.query.timeRange || '24h';
         const cacheKey = `lambda:metrics:${creds.region}:${fnName}:${timeRange}`;
         const result = await cacheGetOrSet(cacheKey, TTL.METRICS, async () => {
@@ -404,7 +420,12 @@ app.get('/api/lambda/metrics', async (req, res) => {
 app.get('/api/lambda/errors', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const cacheKey = `lambda:errors:${creds.region}:${fnName}`;
         const result = await cacheGetOrSet(cacheKey, 60, async () => {
             const errors = await getTopExceptions(fnName, creds);
@@ -419,7 +440,12 @@ app.get('/api/lambda/errors', async (req, res) => {
 app.get('/api/lambda/cost', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const cacheKey = `lambda:cost:${creds.region}:${fnName}`;
         const result = await cacheGetOrSet(cacheKey, TTL.FINOPS, async () => {
             const cost = await getCostAnalysis(fnName, creds);
@@ -434,7 +460,12 @@ app.get('/api/lambda/cost', async (req, res) => {
 app.get('/api/lambda/health', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const cacheKey = `lambda:health:${creds.region}:${fnName}`;
         const result = await cacheGetOrSet(cacheKey, 30, async () => {
             const health = await getFunctionHealth(fnName, creds);
@@ -449,7 +480,12 @@ app.get('/api/lambda/health', async (req, res) => {
 app.get('/api/lambda/security', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const cacheKey = `lambda:security:${creds.region}:${fnName}`;
         const result = await cacheGetOrSet(cacheKey, 300, async () => {
             const security = await getSecurityPosture(fnName, creds);
@@ -464,7 +500,12 @@ app.get('/api/lambda/security', async (req, res) => {
 app.get('/api/lambda/invocations', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const filterText = req.query.filter || '';
         const cacheKey = `lambda:invs:${creds.region}:${fnName}:${filterText}`;
         const result = await cacheGetOrSet(cacheKey, 30, async () => {
@@ -480,7 +521,12 @@ app.get('/api/lambda/invocations', async (req, res) => {
 app.get('/api/lambda/coldstarts', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const cacheKey = `lambda:coldstarts:${creds.region}:${fnName}`;
         const result = await cacheGetOrSet(cacheKey, 60, async () => {
             const coldstarts = await getColdStartDiagnostic(fnName, creds);
@@ -495,7 +541,12 @@ app.get('/api/lambda/coldstarts', async (req, res) => {
 app.get('/api/lambda/memory', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const cacheKey = `lambda:memory:${creds.region}:${fnName}`;
         const result = await cacheGetOrSet(cacheKey, 60, async () => {
             const memory = await getMemoryRecommendation(fnName, creds);
@@ -510,7 +561,12 @@ app.get('/api/lambda/memory', async (req, res) => {
 app.get('/api/lambda/timeout', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const cacheKey = `lambda:timeout:${creds.region}:${fnName}`;
         const result = await cacheGetOrSet(cacheKey, 60, async () => {
             const timeout = await getTimeoutDiagnostic(fnName, creds);
@@ -525,7 +581,12 @@ app.get('/api/lambda/timeout', async (req, res) => {
 app.get('/api/lambda/eventsources', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const cacheKey = `lambda:eventsources:${creds.region}:${fnName}`;
         const result = await cacheGetOrSet(cacheKey, 300, async () => {
             const eventSources = await getEventSources(fnName, creds);
@@ -540,7 +601,12 @@ app.get('/api/lambda/eventsources', async (req, res) => {
 app.get('/api/lambda/deployments', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const cacheKey = `lambda:deployments:${creds.region}:${fnName}`;
         const result = await cacheGetOrSet(cacheKey, 300, async () => {
             const deployments = await getDeploymentEvents(fnName, creds);
@@ -555,7 +621,12 @@ app.get('/api/lambda/deployments', async (req, res) => {
 app.get('/api/lambda/dependency-map', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const cacheKey = `lambda:deps:${creds.region}:${fnName}`;
         const result = await cacheGetOrSet(cacheKey, 300, async () => {
             const dependencyMap = await getDependencyGraph(fnName, creds);
@@ -570,7 +641,12 @@ app.get('/api/lambda/dependency-map', async (req, res) => {
 app.get('/api/lambda/ai-insights', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const cacheKey = `lambda:insights:${creds.region}:${fnName}`;
         const result = await cacheGetOrSet(cacheKey, 60, async () => {
             const insights = await getAIInsights(fnName, creds);
@@ -585,6 +661,9 @@ app.get('/api/lambda/ai-insights', async (req, res) => {
 app.post('/api/lambda/discover', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
         const region = req.body?.region || creds.region || 'us-east-1';
         const functions = await discoverLambdaFunctions(region, creds);
         res.json({ success: true, count: functions.length, functions });
@@ -598,7 +677,12 @@ import { getLiveCloudWatchMetrics, getLambdaLogStream, getApiGatewayLambdaTrace,
 app.get('/api/lambda/live-metrics', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const timeRange = req.query.timeRange || '24h';
         const cacheKey = `lambda:livemetrics:${creds.region}:${fnName}:${timeRange}`;
         const result = await cacheGetOrSet(cacheKey, TTL.METRICS, async () => {
@@ -615,7 +699,12 @@ app.get('/api/lambda/live-metrics', async (req, res) => {
 app.get('/api/lambda/logs', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const filter = req.query.filter || '';
         const rawLimit = parseInt(req.query.limit || '100', 10);
         const limit = Number.isNaN(rawLimit) ? 100 : Math.min(500, Math.max(1, rawLimit));
@@ -633,7 +722,13 @@ app.get('/api/lambda/logs', async (req, res) => {
 // ─── Enhancement 3: API Gateway → Lambda End-to-End Trace endpoint ───────────
 app.get('/api/lambda/apigw-trace', async (req, res) => {
     try {
-        const fnName = req.query.functionName || 'PaymentProcessor';
+        const creds = await getAwsCredentialsFromReq(req);
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
+        const fnName = req.query.functionName;
+        if (!fnName)
+            return res.status(400).json({ error: 'functionName is required' });
         const requestId = req.query.requestId || undefined;
         const traces = getApiGatewayLambdaTrace(fnName, requestId);
         res.json({ traces });
@@ -646,6 +741,9 @@ app.get('/api/lambda/apigw-trace', async (req, res) => {
 app.post('/api/lambda/remediate/memory', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
         const { functionName, memorySizeMb } = req.body;
         if (!functionName || memorySizeMb === undefined)
             return res.status(400).json({ error: 'Missing functionName or memorySizeMb' });
@@ -663,6 +761,9 @@ app.post('/api/lambda/remediate/memory', async (req, res) => {
 app.post('/api/lambda/remediate/concurrency', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
         const { functionName, concurrencyCount } = req.body;
         if (!functionName || concurrencyCount === undefined)
             return res.status(400).json({ error: 'Missing functionName or concurrencyCount' });
@@ -676,6 +777,9 @@ app.post('/api/lambda/remediate/concurrency', async (req, res) => {
 app.post('/api/lambda/remediate/rollback', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
         const { functionName, targetVersion } = req.body;
         if (!functionName || !targetVersion)
             return res.status(400).json({ error: 'Missing functionName or targetVersion' });
@@ -690,6 +794,9 @@ app.post('/api/lambda/remediate/rollback', async (req, res) => {
 app.get('/api/lambda/fleet/telemetry', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
         const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || creds.authType || 'default').digest('hex').slice(0, 12);
         const cacheKey = `lambda:fleet:telemetry:${creds.region}:${keyHash}`;
         const bypassCache = req.query.refresh === 'true' || req.query.bypassCache === 'true';
@@ -708,6 +815,9 @@ app.get('/api/lambda/fleet/telemetry', async (req, res) => {
 app.post('/api/lambda/fleet/bulk-remediate', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
         const { action, functionNames, payload } = req.body;
         if (!action || !Array.isArray(functionNames) || functionNames.length === 0) {
             return res.status(400).json({ error: 'Missing action or array of functionNames' });
@@ -722,6 +832,9 @@ app.post('/api/lambda/fleet/bulk-remediate', async (req, res) => {
 app.get('/api/lambda/fleet/security', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
         const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || creds.authType || 'default').digest('hex').slice(0, 12);
         const cacheKey = `lambda:fleet:security:${creds.region}:${keyHash}`;
         const bypassCache = req.query.refresh === 'true' || req.query.bypassCache === 'true';
@@ -740,6 +853,9 @@ app.get('/api/lambda/fleet/security', async (req, res) => {
 app.post('/api/lambda/remediate/security-bulk', async (req, res) => {
     try {
         const creds = await getAwsCredentialsFromReq(req);
+        if (!hasAwsCreds(creds)) {
+            return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
+        }
         const { action, functionNames } = req.body;
         if (!action || !Array.isArray(functionNames) || functionNames.length === 0) {
             return res.status(400).json({ error: 'Missing action or array of functionNames' });
