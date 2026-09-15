@@ -236,7 +236,8 @@ async function getAwsCredentialsFromReq(req) {
     let profileId = req.headers['x-aws-profile-id'] || req.query.profileId || req.body?.profileId;
     let authType = 'keys';
     let credentialProvider;
-    const applyRow = (row) => {
+    let sessionToken;
+    const applyRow = async (row) => {
         authType = row.authType || 'keys';
         region = row.region || region;
         if (authType === 'instance_profile') {
@@ -247,10 +248,41 @@ async function getAwsCredentialsFromReq(req) {
             // SDK default provider chain: env vars → ~/.aws → ECS task role → IMDS
             credentialProvider = fromNodeProviderChain();
         }
+        else if (authType === 'role' && row.roleArn) {
+            // STS AssumeRole
+            try {
+                const stsClient = new STSClient({ region });
+                const command = new AssumeRoleCommand({
+                    RoleArn: row.roleArn,
+                    RoleSessionName: 'PingsNestSession',
+                    ExternalId: row.externalId || undefined,
+                    DurationSeconds: 3600
+                });
+                const resp = await stsClient.send(command);
+                if (resp.Credentials) {
+                    accessKeyId = resp.Credentials.AccessKeyId;
+                    secretAccessKey = resp.Credentials.SecretAccessKey;
+                    sessionToken = resp.Credentials.SessionToken;
+                    credentialProvider = () => Promise.resolve({
+                        accessKeyId: resp.Credentials.AccessKeyId,
+                        secretAccessKey: resp.Credentials.SecretAccessKey,
+                        sessionToken: resp.Credentials.SessionToken
+                    });
+                }
+            }
+            catch (err) {
+                console.warn('[AWS STS] AssumeRole failed for profile, falling back to node provider chain:', err.message);
+                credentialProvider = fromNodeProviderChain();
+            }
+        }
         else {
-            // Static keys or STS role — read from DB
-            accessKeyId = row.accessKeyId;
-            secretAccessKey = decryptSecret(row.secretAccessKeyEncrypted);
+            // Static keys or fallback
+            accessKeyId = row.accessKeyId?.trim() || undefined;
+            secretAccessKey = decryptSecret(row.secretAccessKeyEncrypted)?.trim() || undefined;
+            if (!accessKeyId || !secretAccessKey) {
+                // No static keys saved in this connection — switch to EC2 instance profile / node provider chain
+                credentialProvider = fromNodeProviderChain();
+            }
         }
     };
     // 1. Specific profile requested
@@ -258,7 +290,7 @@ async function getAwsCredentialsFromReq(req) {
         try {
             const { rows } = await query(`SELECT * FROM aws_connections WHERE id = $1`, [profileId]);
             if (rows.length > 0)
-                applyRow(rows[0]);
+                await applyRow(rows[0]);
         }
         catch { }
     }
@@ -267,18 +299,23 @@ async function getAwsCredentialsFromReq(req) {
         try {
             const { rows } = await query(`SELECT * FROM aws_connections WHERE "isDefault" = true LIMIT 1`);
             if (rows.length > 0)
-                applyRow(rows[0]);
+                await applyRow(rows[0]);
         }
         catch { }
     }
     // 3. Last resort: process environment variables
     if (!credentialProvider) {
         if (!accessKeyId)
-            accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+            accessKeyId = process.env.AWS_ACCESS_KEY_ID?.trim();
         if (!secretAccessKey)
-            secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+            secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY?.trim();
     }
-    return { accessKeyId, secretAccessKey, region, authType, credentialProvider };
+    // 4. Default provider chain fallback (EC2 instance profile / ECS task role / ~/.aws / env)
+    // Ensures instance roles work seamlessly if no static keys are configured
+    if (!credentialProvider && (!accessKeyId || !secretAccessKey)) {
+        credentialProvider = fromNodeProviderChain();
+    }
+    return { accessKeyId, secretAccessKey, sessionToken, region, authType, credentialProvider };
 }
 /** Returns the value to pass as `credentials:` to any AWS SDK client.
  *  Works for static keys, IMDS provider functions, and the env provider chain. */
@@ -286,8 +323,12 @@ function buildAwsCredentials(creds) {
     if (creds.credentialProvider)
         return creds.credentialProvider;
     if (creds.accessKeyId && creds.secretAccessKey)
-        return { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey };
-    return undefined; // let SDK use its own default chain (env vars / ~/.aws)
+        return {
+            accessKeyId: creds.accessKeyId,
+            secretAccessKey: creds.secretAccessKey,
+            ...(creds.sessionToken ? { sessionToken: creds.sessionToken } : {})
+        };
+    return fromNodeProviderChain();
 }
 /** True when we have enough to make an AWS call (provider OR static keys). */
 function hasAwsCreds(creds) {
