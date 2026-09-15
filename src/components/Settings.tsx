@@ -1057,7 +1057,7 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
   const [profName, setProfName] = useState('');
   const [profAccountId, setProfAccountId] = useState('');
   const [profRegion, setProfRegion] = useState(awsConfig.region || 'eu-west-2');
-  const [profAuthType, setProfAuthType] = useState<'keys' | 'role'>('keys');
+  const [profAuthType, setProfAuthType] = useState<'keys' | 'role' | 'instance_profile'>('keys');
   const [profAccessKey, setProfAccessKey] = useState('');
   const [profSecretKey, setProfSecretKey] = useState('');
   const [profRoleArn, setProfRoleArn] = useState('');
@@ -1074,6 +1074,10 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
     }
     if (profAuthType === 'role' && !profRoleArn.trim()) {
       setTestResult({ text: 'IAM Role ARN is required to test STS AssumeRole connection.', ok: false });
+      return;
+    }
+    if (profAuthType === 'instance_profile') {
+      setTestResult({ text: 'Instance Profile credentials are resolved by the server at runtime via IMDS. No test needed.', ok: true });
       return;
     }
     setTestingConnection(true);
@@ -1468,7 +1472,7 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
                             <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                               <span>{p.region}</span>
                               <span>•</span>
-                              <span>{p.authType === 'role' ? `STS Role (${p.roleArn ? p.roleArn.split('/').pop() : 'Role'})` : `IAM Key (${p.accessKeyId ? `${p.accessKeyId.substring(0, 8)}...` : 'Encrypted'})`}</span>
+                              <span>{p.authType === 'role' ? `STS Role (${p.roleArn ? p.roleArn.split('/').pop() : 'Role'})` : p.authType === 'instance_profile' ? '🖥️ EC2 Instance Profile' : `IAM Key (${p.accessKeyId ? `${p.accessKeyId.substring(0, 8)}...` : 'Encrypted'})`}</span>
                               {p.accountId && p.accountId !== 'AWS Account' && (
                                 <>
                                   <span>•</span>
@@ -1632,9 +1636,9 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
                     </div>
 
                     {/* Auth Mode Toggle */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '2px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '2px', flexWrap: 'wrap' }}>
                       <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>AUTHENTICATION TYPE:</span>
-                      <div style={{ display: 'flex', gap: '6px' }}>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                         <button
                           type="button"
                           onClick={() => setProfAuthType('keys')}
@@ -1644,7 +1648,7 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
                             color: profAuthType === 'keys' ? 'var(--color-primary)' : 'var(--text-muted)',
                             border: profAuthType === 'keys' ? '1px solid rgba(0,242,254,0.4)' : '1px solid var(--border-main)'
                           }}
-                        >IAM Access Keys</button>
+                        >🔑 IAM Access Keys</button>
                         <button
                           type="button"
                           onClick={() => setProfAuthType('role')}
@@ -1654,12 +1658,22 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
                             color: profAuthType === 'role' ? 'var(--color-aws)' : 'var(--text-muted)',
                             border: profAuthType === 'role' ? '1px solid rgba(255,153,0,0.4)' : '1px solid var(--border-main)'
                           }}
-                        >STS AssumeRole (Cross-Account)</button>
+                        >🔄 STS AssumeRole (Cross-Account)</button>
+                        <button
+                          type="button"
+                          onClick={() => setProfAuthType('instance_profile')}
+                          style={{
+                            padding: '4px 12px', fontSize: '11px', fontWeight: 600, borderRadius: '6px', cursor: 'pointer',
+                            backgroundColor: profAuthType === 'instance_profile' ? 'rgba(16,185,129,0.15)' : 'transparent',
+                            color: profAuthType === 'instance_profile' ? 'var(--color-success)' : 'var(--text-muted)',
+                            border: profAuthType === 'instance_profile' ? '1px solid rgba(16,185,129,0.4)' : '1px solid var(--border-main)'
+                          }}
+                        >🖥️ EC2 Instance Profile</button>
                       </div>
                     </div>
 
                     {/* Conditional Credential Inputs */}
-                    {profAuthType === 'keys' ? (
+                    {profAuthType === 'keys' && (
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                           <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>AWS ACCESS KEY ID *</label>
@@ -1686,7 +1700,8 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
                           />
                         </div>
                       </div>
-                    ) : (
+                    )}
+                    {profAuthType === 'role' && (
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                           <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>IAM ROLE ARN *</label>
@@ -1711,6 +1726,19 @@ export const Settings: React.FC<SettingsProps> = ({ initialSubTab = 'aws', userR
                             style={{ fontSize: '12px' }}
                           />
                         </div>
+                      </div>
+                    )}
+                    {profAuthType === 'instance_profile' && (
+                      <div style={{
+                        padding: '14px 16px', borderRadius: '10px', fontSize: '12px', lineHeight: 1.6,
+                        backgroundColor: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.25)',
+                        color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '6px'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-success)', fontWeight: 700 }}>
+                          🖥️ EC2 Instance Profile (IMDSv2)
+                        </div>
+                        <div>No credentials required. The server will automatically fetch temporary credentials from the <strong>EC2 Instance Metadata Service (IMDS)</strong> using the IAM role attached to the instance.</div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Make sure the EC2 instance has an IAM role attached with the required API Gateway / CloudWatch permissions.</div>
                       </div>
                     )}
 
