@@ -1730,6 +1730,110 @@ app.post('/api/gateways/fleet-summary', async (req, res) => {
   }
 });
 
+// ─── 2c. Multi-Gateway Compare Endpoint ─────────────────────────────────────
+// Accepts an array of { gatewayId, stage, protocol, gatewayName, region }
+// Returns parallel CloudWatch metric snapshots keyed by gatewayId.
+app.post('/api/gateways/compare', async (req, res) => {
+  const creds = await getAwsCredentialsFromReq(req);
+  const explicitRegion = (req.headers['x-aws-region'] as string) || req.body?.region;
+  const region = explicitRegion || creds.region;
+  if (!region || !hasAwsCreds(creds)) {
+    return res.status(400).json({ error: 'Missing region or credentials' });
+  }
+
+  const gateways: { gatewayId: string; gatewayName: string; stage: string; protocol: string; region?: string }[] =
+    req.body?.gateways || [];
+
+  if (!Array.isArray(gateways) || gateways.length === 0) {
+    return res.status(400).json({ error: 'gateways array required' });
+  }
+
+  try {
+    const credentials = buildAwsCredentials(creds);
+    const SPARKLINE_POINTS = 10;
+
+    const results = await Promise.all(gateways.map(async (gw) => {
+      const gwRegion = gw.region || region;
+      const cacheKey = `compare:${gw.gatewayId}:${gw.stage}`;
+      try {
+        const cached = await cacheGet(cacheKey);
+        if (cached) return { gatewayId: gw.gatewayId, ...cached };
+      } catch {}
+
+      try {
+        const cwClient = new CloudWatchClient({ region: gwRegion, credentials });
+        const endTime = new Date(); endTime.setSeconds(0, 0);
+        const startTime = new Date(endTime.getTime() - SPARKLINE_POINTS * 60 * 1000);
+
+        const isRest = gw.protocol === 'REST';
+        const dimensions = [
+          { Name: isRest ? 'ApiName' : 'ApiId', Value: isRest ? gw.gatewayName : gw.gatewayId },
+          { Name: 'Stage', Value: gw.stage }
+        ];
+        const err4xxName = isRest ? '4XXError' : '4xx';
+        const err5xxName = isRest ? '5XXError' : '5xx';
+
+        const cwResponse = await cwClient.send(new GetMetricDataCommand({
+          StartTime: startTime,
+          EndTime: endTime,
+          ScanBy: 'TimestampAscending',
+          MetricDataQueries: [
+            { Id: 'req', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'Count', Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
+            { Id: 'lat', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'Latency', Dimensions: dimensions }, Period: 60, Stat: 'Average' } },
+            { Id: 'lat_p99', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'Latency', Dimensions: dimensions }, Period: 60, Stat: 'p99' } },
+            { Id: 'e4', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: err4xxName, Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
+            { Id: 'e5', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: err5xxName, Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
+          ]
+        }));
+
+        const byId: Record<string, number[]> = {};
+        cwResponse.MetricDataResults?.forEach(r => { if (r.Id && r.Values) byId[r.Id] = r.Values.map(v => Math.round(v)); });
+
+        const sparkline = byId['req'] || Array(SPARKLINE_POINTS).fill(0);
+        const latencyLine = (byId['lat'] || []).map(v => Math.round(v));
+        const errorLine = byId['e5'] || Array(SPARKLINE_POINTS).fill(0);
+
+        const totalReq = sparkline.reduce((a, v) => a + v, 0);
+        const requestsPerMin = sparkline.length > 0 ? Math.round(totalReq / sparkline.length) : 0;
+        const avgLatencyMs = latencyLine.length > 0 ? Math.round(latencyLine.reduce((a, v) => a + v, 0) / latencyLine.length) : 0;
+        const p99Vals = byId['lat_p99'] || [];
+        const p99LatencyMs = p99Vals.length > 0 ? Math.round(p99Vals.reduce((a, v) => a + v, 0) / p99Vals.length) : Math.round(avgLatencyMs * 2.5);
+        const total5xx = errorLine.reduce((a, v) => a + v, 0);
+        const total4xx = (byId['e4'] || []).reduce((a, v) => a + v, 0);
+        const errorRate5xxPct = totalReq > 0 ? Math.round((total5xx / totalReq) * 100) : 0;
+        const errorRate4xxPct = totalReq > 0 ? Math.round((total4xx / totalReq) * 100) : 0;
+
+        const snapshot = {
+          requestsPerMin,
+          avgLatencyMs,
+          p99LatencyMs,
+          errorRate5xxPct,
+          errorRate4xxPct,
+          cacheHitRate: 0,
+          sparkline,
+          latencyLine,
+          errorLine,
+        };
+        await cacheSet(cacheKey, snapshot, 25); // 25s TTL
+        return { gatewayId: gw.gatewayId, ...snapshot };
+      } catch {
+        return {
+          gatewayId: gw.gatewayId,
+          requestsPerMin: 0, avgLatencyMs: 0, p99LatencyMs: 0,
+          errorRate5xxPct: 0, errorRate4xxPct: 0, cacheHitRate: 0,
+          sparkline: [], latencyLine: [], errorLine: [],
+        };
+      }
+    }));
+
+    const resultsMap: Record<string, any> = {};
+    results.forEach(r => { resultsMap[r.gatewayId] = r; });
+    res.json({ results: resultsMap, timestamp: new Date().toISOString() });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 import {
   dispatchGatewayFleetAlert,
   dispatchUrlMonitorAlert,

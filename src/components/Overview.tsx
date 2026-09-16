@@ -2,14 +2,15 @@ import React, { useState, useMemo } from 'react';
 import { useMonitor } from '../context/MonitorContext';
 import { MetricCard } from './MetricCard';
 import { AreaChart, DonutChart } from './CustomChart';
-import { Activity, Clock, Cpu, Server, AlertTriangle, RefreshCw, Search, Layers, LayoutGrid } from 'lucide-react';
+import { Activity, Clock, Cpu, Server, AlertTriangle, RefreshCw, Search, Layers, LayoutGrid, GitCompare } from 'lucide-react';
 import { MultiGatewayFleetView } from './MultiGatewayFleetView';
+import { GatewayCompareDashboard } from './GatewayCompareDashboard';
 
 export const Overview: React.FC = () => {
   const [loadingMetrics, setLoadingMetrics] = useState(false);
   const [searchRouteQuery, setSearchRouteQuery] = useState('');
   const [visibleRoutesCount, setVisibleRoutesCount] = useState(6);
-  const [viewMode, setViewMode] = useState<'fleet' | 'single'>('fleet');
+  const [viewMode, setViewMode] = useState<'fleet' | 'compare' | 'single'>('fleet');
 
   const { overallStats, chartData, selectedGateway, setSelectedGateway, routes, metricsAccessDenied, refreshRealMetrics, awsConfig, setAwsConfig, availableGateways } = useMonitor() as any;
 
@@ -62,47 +63,50 @@ export const Overview: React.FC = () => {
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       
-      {/* Top View Selector Bar (Fleet Matrix vs Single Gateway) */}
+      {/* Top View Selector Bar (Fleet Matrix | Compare | Single Gateway) */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div style={{ display: 'flex', background: 'var(--bg-card)', padding: '4px', borderRadius: '10px', border: '1px solid var(--border-main)', gap: '4px' }}>
           <button
             onClick={() => setViewMode('fleet')}
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '6px 14px',
+              display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 14px',
               borderRadius: '8px',
               border: viewMode === 'fleet' ? '1px solid var(--color-primary)' : '1px solid transparent',
               background: viewMode === 'fleet' ? 'rgba(0, 242, 254, 0.12)' : 'transparent',
               color: viewMode === 'fleet' ? 'var(--color-primary)' : 'var(--text-muted)',
-              fontWeight: viewMode === 'fleet' ? 800 : 600,
-              fontSize: '12px',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease'
+              fontWeight: viewMode === 'fleet' ? 800 : 600, fontSize: '12px',
+              cursor: 'pointer', transition: 'all 0.15s ease'
             }}
           >
-            {/* Bug 9 fix: show real gateway count instead of literal 'N' */}
-            <Layers size={14} /> Multi-Gateway Fleet Matrix ({availableGateways?.length ?? 0} Gateways)
+            <Layers size={14} /> Fleet Matrix ({availableGateways?.length ?? 0} Gateways)
+          </button>
+          <button
+            onClick={() => setViewMode('compare')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 14px',
+              borderRadius: '8px',
+              border: viewMode === 'compare' ? '1px solid #a855f7' : '1px solid transparent',
+              background: viewMode === 'compare' ? 'rgba(168,85,247,0.12)' : 'transparent',
+              color: viewMode === 'compare' ? '#a855f7' : 'var(--text-muted)',
+              fontWeight: viewMode === 'compare' ? 800 : 600, fontSize: '12px',
+              cursor: 'pointer', transition: 'all 0.15s ease'
+            }}
+          >
+            <GitCompare size={14} /> Compare Mode
           </button>
           <button
             onClick={() => setViewMode('single')}
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '6px 14px',
+              display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 14px',
               borderRadius: '8px',
               border: viewMode === 'single' ? '1px solid var(--color-primary)' : '1px solid transparent',
               background: viewMode === 'single' ? 'rgba(0, 242, 254, 0.12)' : 'transparent',
               color: viewMode === 'single' ? 'var(--color-primary)' : 'var(--text-muted)',
-              fontWeight: viewMode === 'single' ? 800 : 600,
-              fontSize: '12px',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease'
+              fontWeight: viewMode === 'single' ? 800 : 600, fontSize: '12px',
+              cursor: 'pointer', transition: 'all 0.15s ease'
             }}
           >
-            <LayoutGrid size={14} /> Single Gateway Deep-Dive ({selectedGateway?.name || 'Selected'})
+            <LayoutGrid size={14} /> Single Gateway ({selectedGateway?.name || 'Select one'})
           </button>
         </div>
       </div>
@@ -116,6 +120,8 @@ export const Overview: React.FC = () => {
           }
           setViewMode('single');
         }} />
+      ) : viewMode === 'compare' ? (
+        <GatewayCompareDashboard />
       ) : (
         <>
       
