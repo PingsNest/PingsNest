@@ -1639,8 +1639,8 @@ app.post('/api/gateways/fleet-summary', async (req, res) => {
           p99LatencyMs: 0,
           errorRate4xxPct: 0,
           errorRate5xxPct: 0,
-          healthStatus: 'UNKNOWN' as const,
-          logSource: { type: 'apigateway_access_logs' as const, label: 'API Gateway', logGroup: `API-Gateway-Execution-Logs_${gw.id}/prod` },
+          healthStatus: 'UNKNOWN' as 'HEALTHY' | 'WARNING' | 'CRITICAL' | 'UNKNOWN',
+          logSource: { type: 'apigateway_access_logs' as 'apigateway_access_logs' | 'lambda_fallback', label: 'API Gateway', logGroup: `API-Gateway-Execution-Logs_${gw.id}/prod` },
           metricsSimulated: false
         };
       });

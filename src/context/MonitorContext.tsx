@@ -561,6 +561,7 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
         const finalAvgLat = activeReqTimeframes > 0 ? Math.round(weightedLatencySum / activeReqTimeframes) : 0;
         const finalAvgInt = activeReqTimeframes > 0 ? Math.round(weightedIntLatencySum / activeReqTimeframes) : 0;
+        const errRate = totalReqs > 0 ? Math.round(((total4xx + total5xx) / totalReqs) * 100) : 0;
         // BUG-12 FIX: Previously assumed any non-4xx/5xx was 2xx, grouping 3xx redirects into success.
         // CloudWatch Count = ALL requests; subtract known errors to get non-error count.
         // Label it accurately — it includes 1xx/2xx/3xx.

@@ -13,7 +13,7 @@ export interface FleetGatewayItem {
   p99LatencyMs: number;
   errorRate4xxPct: number;
   errorRate5xxPct: number;
-  healthStatus: 'HEALTHY' | 'WARNING' | 'CRITICAL';
+  healthStatus: 'HEALTHY' | 'WARNING' | 'CRITICAL' | 'UNKNOWN';
   logSource: {
     type: 'apigateway_access_logs' | 'lambda_fallback';
     label: string;
@@ -220,8 +220,9 @@ export const MultiGatewayFleetView: React.FC<{
           filteredGateways.map(gw => {
             const isCritical = gw.healthStatus === 'CRITICAL';
             const isWarning = gw.healthStatus === 'WARNING';
-            const statusColor = isCritical ? 'var(--color-error)' : isWarning ? 'var(--color-warning)' : 'var(--color-success)';
-            const statusBg = isCritical ? 'rgba(239,68,68,0.12)' : isWarning ? 'rgba(245,158,11,0.12)' : 'rgba(16,185,129,0.12)';
+            const isUnknown = gw.healthStatus === 'UNKNOWN';
+            const statusColor = isCritical ? 'var(--color-error)' : isWarning ? 'var(--color-warning)' : isUnknown ? 'var(--text-muted)' : 'var(--color-success)';
+            const statusBg = isCritical ? 'rgba(239,68,68,0.12)' : isWarning ? 'rgba(245,158,11,0.12)' : isUnknown ? 'rgba(148,163,184,0.12)' : 'rgba(16,185,129,0.12)';
             const isLambdaFallback = gw.logSource.type === 'lambda_fallback';
 
             return (
