@@ -1200,11 +1200,18 @@ function MainAppShell() {
                     {loadingStages ? (
                       <option value="">Loading real stages...</option>
                     ) : availableStages && availableStages.length > 0 ? (
-                      availableStages.map((s: string) => (
-                        <option key={s} value={s} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
-                          Stage: {s}
-                        </option>
-                      ))
+                      <>
+                        {availableStages.map((s: string) => (
+                          <option key={s} value={s} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+                            Stage: {s}
+                          </option>
+                        ))}
+                        {awsConfig.stage && !availableStages.includes(awsConfig.stage) && (
+                          <option key={awsConfig.stage} value={awsConfig.stage} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+                            Stage: {awsConfig.stage}
+                          </option>
+                        )}
+                      </>
                     ) : (
                       <option value={awsConfig.stage || ''} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
                         {awsConfig.stage ? `Stage: ${awsConfig.stage}` : 'No Stages Deployed'}

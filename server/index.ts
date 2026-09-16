@@ -284,7 +284,8 @@ import { broadcastLambdaTelemetry } from './ws.js';
 async function getAwsCredentialsFromReq(req: any) {
   let accessKeyId = (req.headers['x-aws-access-key-id'] as string) || (req.query.accessKeyId as string) || req.body?.accessKeyId;
   let secretAccessKey = (req.headers['x-aws-secret-access-key'] as string) || (req.query.secretAccessKey as string) || req.body?.secretAccessKey;
-  let region = (req.headers['x-aws-region'] as string) || (req.query.region as string) || req.body?.region || process.env.AWS_REGION || 'us-east-1';
+  const explicitRegion = (req.headers['x-aws-region'] as string) || (req.query.region as string) || req.body?.region;
+  let region = explicitRegion || process.env.AWS_REGION || 'us-east-1';
   let profileId = (req.headers['x-aws-profile-id'] as string) || (req.query.profileId as string) || req.body?.profileId;
   let authType: string = 'keys';
   let credentialProvider: (() => Promise<any>) | undefined;
@@ -292,7 +293,9 @@ async function getAwsCredentialsFromReq(req: any) {
 
   const applyRow = async (row: any) => {
     authType = row.authType || 'keys';
-    region = row.region || region;
+    if (!explicitRegion && row.region) {
+      region = row.region;
+    }
     if (authType === 'instance_profile') {
       // EC2 instance profile — IMDSv2 supplies temporary credentials automatically
       credentialProvider = fromInstanceMetadata({ timeout: 1000, maxRetries: 3 });
@@ -1376,10 +1379,11 @@ app.post('/api/aws/apis', async (req, res) => {
   res.json(result);
 });
 
-// â”€â”€â”€ 1b. List API Gateway Stages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── 1b. List API Gateway Stages ────────────────────────────────────────────
 app.post('/api/aws/stages', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
-  const { region } = creds;
+  const explicitRegion = (req.headers['x-aws-region'] as string) || req.body?.region;
+  const region = explicitRegion || creds.region;
   const { apiId, protocol, bypassCache } = req.body;
   if (!region || !apiId) {
     return res.status(400).json({ error: 'Missing params: apiId and region are required' });
@@ -1405,67 +1409,76 @@ app.post('/api/aws/stages', async (req, res) => {
     try {
       const c = new APIGatewayClient({ region, credentials });
       const r = await c.send(new GetStagesCommand({ restApiId: apiId }));
-      r.item?.forEach(s => {
-        if (s.stageName && !stagesList.includes(s.stageName)) stagesList.push(s.stageName);
+      const items = (r as any).item || (r as any).items || (r as any).Items || [];
+      items.forEach((s: any) => {
+        const name = s.stageName || s.StageName || s.name;
+        if (name && !stagesList.includes(name)) stagesList.push(name);
       });
     } catch (e: any) {
       awsError = e.message;
-      console.warn(`[Stages API REST v1] ${apiId}:`, e.message);
+      console.warn(`[Stages API REST v1] ${apiId} in ${region}:`, e.message);
     }
     // If REST (v1) returned 0 stages, try API Gateway v2 (HTTP / WebSocket)
     if (stagesList.length === 0) {
       try {
         const c2 = new ApiGatewayV2Client({ region, credentials });
         const r2 = await c2.send(new GetStagesV2Command({ ApiId: apiId }));
-        r2.Items?.forEach(s => {
-          if (s.StageName && !stagesList.includes(s.StageName)) stagesList.push(s.StageName);
+        const items2 = (r2 as any).Items || (r2 as any).items || (r2 as any).item || [];
+        items2.forEach((s: any) => {
+          const name = s.StageName || s.stageName || s.name;
+          if (name && !stagesList.includes(name)) stagesList.push(name);
         });
         if (stagesList.length > 0) awsError = null;
       } catch (e2: any) {
-        console.warn(`[Stages API V2 check] ${apiId}:`, e2.message);
+        console.warn(`[Stages API V2 check] ${apiId} in ${region}:`, e2.message);
       }
     }
   } else {
     try {
       const c = new ApiGatewayV2Client({ region, credentials });
       const r = await c.send(new GetStagesV2Command({ ApiId: apiId }));
-      r.Items?.forEach(s => {
-        if (s.StageName && !stagesList.includes(s.StageName)) stagesList.push(s.StageName);
+      const items = (r as any).Items || (r as any).items || (r as any).item || [];
+      items.forEach((s: any) => {
+        const name = s.StageName || s.stageName || s.name;
+        if (name && !stagesList.includes(name)) stagesList.push(name);
       });
     } catch (e: any) {
       awsError = e.message;
-      console.warn(`[Stages API V2] ${apiId}:`, e.message);
+      console.warn(`[Stages API V2] ${apiId} in ${region}:`, e.message);
     }
     // If v2 returned 0 stages, try REST (v1)
     if (stagesList.length === 0) {
       try {
         const c1 = new APIGatewayClient({ region, credentials });
         const r1 = await c1.send(new GetStagesCommand({ restApiId: apiId }));
-        r1.item?.forEach(s => {
-          if (s.stageName && !stagesList.includes(s.stageName)) stagesList.push(s.stageName);
+        const items1 = (r1 as any).item || (r1 as any).items || (r1 as any).Items || [];
+        items1.forEach((s: any) => {
+          const name = s.stageName || s.StageName || s.name;
+          if (name && !stagesList.includes(name)) stagesList.push(name);
         });
         if (stagesList.length > 0) awsError = null;
       } catch (e1: any) {
-        console.warn(`[Stages API REST check] ${apiId}:`, e1.message);
+        console.warn(`[Stages API REST check] ${apiId} in ${region}:`, e1.message);
       }
     }
   }
 
-  const isFallback = stagesList.length === 0;
-  if (isFallback) {
-    stagesList.push(protocol === 'REST' ? 'prod' : '$default');
-  }
+  console.log(`[Stages API] Found ${stagesList.length} stage(s) for ${apiId} in ${region}:`, stagesList);
 
+  const isFallback = stagesList.length === 0;
+  const defaultPlaceholder = protocol === 'REST' ? 'prod' : '$default';
   const result = {
     stages: stagesList,
-    ...(isFallback && {
-      fallback: true,
-      warning: awsError ? `AWS error: ${awsError}` : 'No deployed stages found from AWS; showing default placeholder.'
-    })
+    fallbackStages: isFallback ? [defaultPlaceholder] : [],
+    fallback: isFallback,
+    warning: isFallback
+      ? (awsError ? `AWS error: ${awsError}` : 'No deployed stages found for this API Gateway in AWS.')
+      : null,
+    error: isFallback && awsError ? awsError : null
   };
 
   // Only cache if genuine stages were retrieved from AWS (NEVER cache fallbacks)
-  if (!isFallback) {
+  if (!isFallback && stagesList.length > 0) {
     await cacheSet(cacheKey, result, TTL.APIS);
   }
   res.json(result);
