@@ -326,8 +326,11 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setAvailableStages(list);
       if (list.length > 0) {
         setAwsConfig(prev => {
-          const keepCurrent = list.includes(prev.stage);
-          return { ...prev, stage: keepCurrent ? prev.stage : list[0] };
+          const savedDefault = localStorage.getItem(`pingsnest_default_stage_${gateway.id}`);
+          const preferredStage = (savedDefault && list.includes(savedDefault))
+            ? savedDefault
+            : (list.includes(prev.stage) ? prev.stage : list[0]);
+          return { ...prev, stage: preferredStage };
         });
       }
       return list;
@@ -820,9 +823,11 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // once awsConfig.stage is populated (it depends on [selectedGateway?.id, awsConfig.stage]).
   useEffect(() => {
     if (selectedGateway) {
+      const savedDefaultStage = localStorage.getItem(`pingsnest_default_stage_${selectedGateway.id}`);
       setAwsConfig(prev => ({
         ...prev,
-        gatewayId: selectedGateway.id
+        gatewayId: selectedGateway.id,
+        ...(savedDefaultStage ? { stage: savedDefaultStage } : {})
       }));
       // Fetch stages first; once stage is set, the polling loop (below) fires metrics + logs.
       fetchRoutes();

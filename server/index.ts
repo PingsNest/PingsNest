@@ -1596,27 +1596,28 @@ app.post('/api/aws/routes', async (req, res) => {
 // â”€â”€â”€ 2b. Multi-API Gateway Fleet Summary ($N$ Gateways Aggregation) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/gateways/fleet-summary', async (req, res) => {
   const creds = await getAwsCredentialsFromReq(req);
-  const { region } = creds;
+  const explicitRegion = (req.headers['x-aws-region'] as string) || req.body?.region;
+  const region = explicitRegion || creds.region;
   if (!region || !hasAwsCreds(creds)) {
     return res.status(400).json({ error: 'Missing region or credentials' });
   }
 
   const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || 'imds').digest('hex').slice(0, 12);
-  const cacheKey = `apigw:fleet-summary:${creds.region}:${keyHash}`;
+  const cacheKey = `apigw:fleet-summary:${region}:${keyHash}`;
 
   try {
     const result = await cacheGetOrSet(cacheKey, 30, async () => {
       const credentials = buildAwsCredentials(creds);
-      const v1 = new APIGatewayClient({ region: creds.region, credentials });
-      const v2 = new ApiGatewayV2Client({ region: creds.region, credentials });
+      const v1 = new APIGatewayClient({ region, credentials });
+      const v2 = new ApiGatewayV2Client({ region, credentials });
 
-      const apisList: { id: string; name: string; protocol: 'REST' | 'HTTP' | 'WEBSOCKET'; stage: string }[] = [];
+      const apisList: { id: string; name: string; protocol: 'REST' | 'HTTP' | 'WEBSOCKET' }[] = [];
 
       try {
         const r1 = await v1.send(new GetRestApisCommand({}));
         r1.items?.forEach(i => {
           if (i.id && i.name) {
-            apisList.push({ id: i.id, name: i.name, protocol: 'REST', stage: 'prod' });
+            apisList.push({ id: i.id, name: i.name, protocol: 'REST' });
           }
         });
       } catch { }
@@ -1625,7 +1626,7 @@ app.post('/api/gateways/fleet-summary', async (req, res) => {
         const r2 = await v2.send(new GetApisCommand({}));
         r2.Items?.forEach(i => {
           if (i.ApiId && i.Name) {
-            apisList.push({ id: i.ApiId, name: i.Name, protocol: i.ProtocolType === 'WEBSOCKET' ? 'WEBSOCKET' : 'HTTP', stage: '$default' });
+            apisList.push({ id: i.ApiId, name: i.Name, protocol: i.ProtocolType === 'WEBSOCKET' ? 'WEBSOCKET' : 'HTTP' });
           }
         });
       } catch { }
@@ -1641,9 +1642,51 @@ app.post('/api/gateways/fleet-summary', async (req, res) => {
         };
       }
 
-      const fleetMetrics = apisList.map((gw) => {
-        // No simulated data — real metrics require per-gateway CloudWatch calls.
-        // Fleet summary provides structural data only; deep metrics are in the single-gateway view.
+      // Query real deployed stages for each discovered gateway in parallel
+      const apisWithStages = await Promise.all(apisList.map(async (gw) => {
+        const stageCacheKey = `stages:${region}:${gw.id}:${gw.protocol || 'any'}`;
+        let stages: string[] = [];
+        try {
+          const cached = await cacheGet(stageCacheKey);
+          if (cached && !cached.fallback && Array.isArray(cached.stages) && cached.stages.length > 0) {
+            stages = cached.stages;
+          }
+        } catch {}
+
+        if (stages.length === 0) {
+          try {
+            if (gw.protocol === 'REST') {
+              const r = await v1.send(new GetStagesCommand({ restApiId: gw.id }));
+              const items = (r as any).item || (r as any).items || (r as any).Items || [];
+              items.forEach((s: any) => {
+                const name = s.stageName || s.StageName || s.name;
+                if (name && !stages.includes(name)) stages.push(name);
+              });
+            } else {
+              const r = await v2.send(new GetStagesV2Command({ ApiId: gw.id }));
+              const items = (r as any).Items || (r as any).items || (r as any).item || [];
+              items.forEach((s: any) => {
+                const name = s.StageName || s.stageName || s.name;
+                if (name && !stages.includes(name)) stages.push(name);
+              });
+            }
+            if (stages.length > 0) {
+              await cacheSet(stageCacheKey, { stages, fallback: false }, TTL.APIS);
+            }
+          } catch {}
+        }
+
+        const fallbackStage = gw.protocol === 'REST' ? 'prod' : '$default';
+        const defaultStage = stages.length > 0 ? stages[0] : fallbackStage;
+        return {
+          ...gw,
+          stage: defaultStage,
+          stages: stages.length > 0 ? stages : [defaultStage]
+        };
+      }));
+
+      const fleetMetrics = apisWithStages.map((gw) => {
+        // Fleet summary provides structural data with real stage metadata.
         return {
           ...gw,
           region,
@@ -1653,7 +1696,7 @@ app.post('/api/gateways/fleet-summary', async (req, res) => {
           errorRate4xxPct: 0,
           errorRate5xxPct: 0,
           healthStatus: 'UNKNOWN' as 'HEALTHY' | 'WARNING' | 'CRITICAL' | 'UNKNOWN',
-          logSource: { type: 'apigateway_access_logs' as 'apigateway_access_logs' | 'lambda_fallback', label: 'API Gateway', logGroup: `API-Gateway-Execution-Logs_${gw.id}/prod` },
+          logSource: { type: 'apigateway_access_logs' as 'apigateway_access_logs' | 'lambda_fallback', label: 'API Gateway', logGroup: `API-Gateway-Execution-Logs_${gw.id}/${gw.stage}` },
           metricsSimulated: false
         };
       });

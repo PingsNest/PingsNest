@@ -11,7 +11,7 @@ export const Overview: React.FC = () => {
   const [visibleRoutesCount, setVisibleRoutesCount] = useState(6);
   const [viewMode, setViewMode] = useState<'fleet' | 'single'>('fleet');
 
-  const { overallStats, chartData, selectedGateway, setSelectedGateway, routes, metricsAccessDenied, refreshRealMetrics, awsConfig, availableGateways } = useMonitor() as any;
+  const { overallStats, chartData, selectedGateway, setSelectedGateway, routes, metricsAccessDenied, refreshRealMetrics, awsConfig, setAwsConfig, availableGateways } = useMonitor() as any;
 
   const handleRefreshMetrics = async () => {
     setLoadingMetrics(true);
@@ -108,8 +108,12 @@ export const Overview: React.FC = () => {
       </div>
 
       {viewMode === 'fleet' ? (
-        <MultiGatewayFleetView onSelectGateway={(gw) => {
+        <MultiGatewayFleetView onSelectGateway={(gw, stage) => {
           setSelectedGateway(gw);
+          if (stage) {
+            setAwsConfig((prev: any) => ({ ...prev, stage }));
+            localStorage.setItem(`pingsnest_default_stage_${gw.id}`, stage);
+          }
           setViewMode('single');
         }} />
       ) : (

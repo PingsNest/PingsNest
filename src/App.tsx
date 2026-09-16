@@ -1148,8 +1148,13 @@ function MainAppShell() {
                     onChange={async (e) => {
                       const found = availableGateways.find((g: any) => g.id === e.target.value);
                       if (found) {
+                        const savedDefault = localStorage.getItem(`pingsnest_default_stage_${found.id}`);
                         setSelectedGateway(found);
-                        setAwsConfig((prev: any) => ({ ...prev, gatewayId: found.id }));
+                        setAwsConfig((prev: any) => ({
+                          ...prev,
+                          gatewayId: found.id,
+                          ...(savedDefault ? { stage: savedDefault } : {})
+                        }));
                         await fetchAvailableStages(found);
                       }
                     }}
@@ -1182,7 +1187,13 @@ function MainAppShell() {
                   <Layers size={14} color="var(--color-success)" />
                   <select
                     value={awsConfig.stage || ''}
-                    onChange={(e) => setAwsConfig((prev: any) => ({ ...prev, stage: e.target.value }))}
+                    onChange={(e) => {
+                      const newStage = e.target.value;
+                      setAwsConfig((prev: any) => ({ ...prev, stage: newStage }));
+                      if (selectedGateway?.id) {
+                        localStorage.setItem(`pingsnest_default_stage_${selectedGateway.id}`, newStage);
+                      }
+                    }}
                     disabled={loadingStages}
                     style={{
                       backgroundColor: 'rgba(16, 185, 129, 0.08)',

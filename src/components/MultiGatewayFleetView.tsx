@@ -7,6 +7,7 @@ export interface FleetGatewayItem {
   name: string;
   protocol: 'REST' | 'HTTP' | 'WEBSOCKET';
   stage: string;
+  stages?: string[];
   region: string;
   requestsPerMin: number;
   avgLatencyMs: number;
@@ -22,11 +23,14 @@ export interface FleetGatewayItem {
 }
 
 export const MultiGatewayFleetView: React.FC<{
-  onSelectGateway?: (gw: { id: string; name: string; protocol: 'REST' | 'HTTP' | 'WEBSOCKET' }) => void;
+  onSelectGateway?: (gw: { id: string; name: string; protocol: 'REST' | 'HTTP' | 'WEBSOCKET' }, stage?: string) => void;
 }> = ({ onSelectGateway }) => {
-  const { awsConfig, activeProfileId } = useMonitor() as any;
+  const { awsConfig, setAwsConfig, selectedGateway, activeProfileId } = useMonitor() as any;
   const [fleetData, setFleetData] = useState<any>(null);
   const [loadingFleet, setLoadingFleet] = useState(false);
+  const [selectedStages, setSelectedStages] = useState<Record<string, string>>({});
+  const [gatewayStagesMap, setGatewayStagesMap] = useState<Record<string, string[]>>({});
+  const [savedToast, setSavedToast] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [protocolFilter, setProtocolFilter] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -63,6 +67,78 @@ export const MultiGatewayFleetView: React.FC<{
     const interval = setInterval(fetchFleetSummary, 15000);
     return () => clearInterval(interval);
   }, [awsConfig?.region]);
+
+  // Synchronize stages and load real deployed stages for each gateway
+  useEffect(() => {
+    const gateways: FleetGatewayItem[] = fleetData?.gateways || [];
+    if (gateways.length === 0) return;
+
+    const initialSelected: Record<string, string> = {};
+    const initialStagesMap: Record<string, string[]> = {};
+
+    gateways.forEach(gw => {
+      const saved = localStorage.getItem(`pingsnest_default_stage_${gw.id}`);
+      initialSelected[gw.id] = saved || (selectedGateway?.id === gw.id && awsConfig?.stage ? awsConfig.stage : gw.stage);
+      if (gw.stages && gw.stages.length > 0) {
+        initialStagesMap[gw.id] = gw.stages;
+      }
+    });
+
+    setSelectedStages(prev => ({ ...initialSelected, ...prev }));
+    setGatewayStagesMap(prev => ({ ...initialStagesMap, ...prev }));
+
+    // For any gateways that don't have multiple stages listed, fetch live stages from AWS
+    gateways.forEach(async (gw) => {
+      if (initialStagesMap[gw.id] && initialStagesMap[gw.id].length > 1) return;
+      try {
+        const res = await fetch('/api/aws/stages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(activeProfileId ? { 'x-aws-profile-id': activeProfileId } : {})
+          },
+          body: JSON.stringify({
+            region: gw.region || awsConfig?.region || 'eu-west-2',
+            apiId: gw.id,
+            protocol: gw.protocol,
+            bypassCache: true
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const stages: string[] = (Array.isArray(data.stages) && data.stages.length > 0) ? data.stages : (data.fallbackStages || []);
+          if (stages.length > 0) {
+            setGatewayStagesMap(prev => ({ ...prev, [gw.id]: stages }));
+            setSelectedStages(prev => {
+              const curr = prev[gw.id];
+              const saved = localStorage.getItem(`pingsnest_default_stage_${gw.id}`);
+              if (saved && stages.includes(saved)) {
+                return { ...prev, [gw.id]: saved };
+              }
+              if (!curr || !stages.includes(curr)) {
+                return { ...prev, [gw.id]: stages[0] };
+              }
+              return prev;
+            });
+          }
+        }
+      } catch (err) {
+        console.warn(`[FleetView] Error fetching stages for ${gw.id}:`, err);
+      }
+    });
+  }, [fleetData]);
+
+  const handleStageSelect = (gw: FleetGatewayItem, newStage: string) => {
+    localStorage.setItem(`pingsnest_default_stage_${gw.id}`, newStage);
+    setSelectedStages(prev => ({ ...prev, [gw.id]: newStage }));
+    setSavedToast(gw.id);
+    setTimeout(() => setSavedToast(null), 2500);
+
+    // If this is currently the active gateway in context, update it live
+    if (selectedGateway?.id === gw.id) {
+      setAwsConfig((prev: any) => ({ ...prev, stage: newStage }));
+    }
+  };
 
   const filteredGateways = useMemo(() => {
     const list: FleetGatewayItem[] = fleetData?.gateways || [];
@@ -224,6 +300,8 @@ export const MultiGatewayFleetView: React.FC<{
             const statusColor = isCritical ? 'var(--color-error)' : isWarning ? 'var(--color-warning)' : isUnknown ? 'var(--text-muted)' : 'var(--color-success)';
             const statusBg = isCritical ? 'rgba(239,68,68,0.12)' : isWarning ? 'rgba(245,158,11,0.12)' : isUnknown ? 'rgba(148,163,184,0.12)' : 'rgba(16,185,129,0.12)';
             const isLambdaFallback = gw.logSource.type === 'lambda_fallback';
+            const stagesList = gatewayStagesMap[gw.id] || gw.stages || [gw.stage || 'prod'];
+            const currentStage = selectedStages[gw.id] || localStorage.getItem(`pingsnest_default_stage_${gw.id}`) || (selectedGateway?.id === gw.id && awsConfig?.stage ? awsConfig.stage : null) || gw.stage || 'prod';
 
             return (
               <div
@@ -250,9 +328,50 @@ export const MultiGatewayFleetView: React.FC<{
                       <span style={{ fontSize: '10px', fontWeight: 800, padding: '2px 7px', borderRadius: '6px', background: 'rgba(0, 242, 254, 0.12)', color: 'var(--color-primary)', border: '1px solid rgba(0,242,254,0.25)' }}>
                         {gw.protocol}
                       </span>
-                      <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '6px', background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
-                        {gw.stage}
-                      </span>
+
+                      {/* Interactive Stage Selector */}
+                      <div style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        background: 'rgba(16, 185, 129, 0.08)',
+                        border: '1px solid rgba(16, 185, 129, 0.35)',
+                        borderRadius: '8px',
+                        padding: '2px 8px',
+                        transition: 'all 0.2s ease'
+                      }}>
+                        <Layers size={11} color="var(--color-success)" />
+                        <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--color-success)' }}>
+                          STAGE:
+                        </span>
+                        <select
+                          value={currentStage}
+                          onChange={(e) => handleStageSelect(gw, e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          title="Select default stage for this API Gateway"
+                          style={{
+                            backgroundColor: 'transparent',
+                            border: 'none',
+                            color: 'var(--text-primary)',
+                            fontSize: '11px',
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                            outline: 'none',
+                            padding: '0 2px'
+                          }}
+                        >
+                          {stagesList.map((s: string) => (
+                            <option key={s} value={s} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+                              {s} {s === currentStage ? '★ Default' : ''}
+                            </option>
+                          ))}
+                        </select>
+                        {savedToast === gw.id && (
+                          <span style={{ fontSize: '9px', fontWeight: 800, color: 'var(--color-success)', background: 'rgba(16,185,129,0.25)', padding: '1px 5px', borderRadius: '4px', marginLeft: '4px' }}>
+                            Default Set!
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'monospace', marginTop: '4px' }}>
                       ID: {gw.id} • Region: {gw.region}
@@ -319,7 +438,7 @@ export const MultiGatewayFleetView: React.FC<{
 
                 {/* Drill Down Action Button */}
                 <button
-                  onClick={() => onSelectGateway && onSelectGateway({ id: gw.id, name: gw.name, protocol: gw.protocol })}
+                  onClick={() => onSelectGateway && onSelectGateway({ id: gw.id, name: gw.name, protocol: gw.protocol }, currentStage)}
                   className="btn btn-secondary"
                   style={{
                     width: '100%',
@@ -335,7 +454,7 @@ export const MultiGatewayFleetView: React.FC<{
                     color: 'var(--color-primary)'
                   }}
                 >
-                  Inspect Gateway Telemetry & Routes <ExternalLink size={13} />
+                  Inspect Gateway Telemetry & Routes ({currentStage}) <ExternalLink size={13} />
                 </button>
               </div>
             );
