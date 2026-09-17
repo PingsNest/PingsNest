@@ -1747,6 +1747,10 @@ app.post('/api/gateways/compare', async (req, res) => {
   if (!Array.isArray(gateways) || gateways.length === 0) {
     return res.status(400).json({ error: 'gateways array required' });
   }
+  // Protect against unbounded parallel CloudWatch calls
+  if (gateways.length > 10) {
+    return res.status(400).json({ error: 'Maximum 10 gateways per compare request' });
+  }
 
   try {
     const credentials = buildAwsCredentials(creds);
@@ -1766,8 +1770,11 @@ app.post('/api/gateways/compare', async (req, res) => {
         const startTime = new Date(endTime.getTime() - SPARKLINE_POINTS * 60 * 1000);
 
         const isRest = gw.protocol === 'REST';
+        // For REST, use ApiName (display name); fallback to ApiId if name missing
+        const restDimValue = gw.gatewayName && gw.gatewayName !== gw.gatewayId
+          ? gw.gatewayName : gw.gatewayId;
         const dimensions = [
-          { Name: isRest ? 'ApiName' : 'ApiId', Value: isRest ? gw.gatewayName : gw.gatewayId },
+          { Name: isRest ? 'ApiName' : 'ApiId', Value: isRest ? restDimValue : gw.gatewayId },
           { Name: 'Stage', Value: gw.stage }
         ];
         const err4xxName = isRest ? '4XXError' : '4xx';
@@ -1809,7 +1816,7 @@ app.post('/api/gateways/compare', async (req, res) => {
           p99LatencyMs,
           errorRate5xxPct,
           errorRate4xxPct,
-          cacheHitRate: 0,
+          // cacheHitRate intentionally omitted — CloudWatch has no direct cache hit metric for API GW
           sparkline,
           latencyLine,
           errorLine,

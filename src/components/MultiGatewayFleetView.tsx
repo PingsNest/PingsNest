@@ -28,14 +28,30 @@ export interface FleetGatewayItem {
   };
 }
 
-// ─── Mini Sparkline (inline SVG) ─────────────────────────────────────────────
+// gradient id must be unique per gateway to avoid SVG gradient collision
+const sparkGradId = (gwId: string, suffix: string) =>
+  `sg_${gwId.replace(/[^a-zA-Z0-9]/g, '_')}_${suffix}`;
+
+// ─── Module-level constants (not recreated on every render) ───────────────────
+const SORT_OPTIONS = [
+  { id: 'health',       label: 'Health (Critical First)' },
+  { id: 'latency_desc', label: 'Latency (Highest First)' },
+  { id: 'latency_asc',  label: 'Latency (Lowest First)' },
+  { id: 'traffic_desc', label: 'Traffic (Highest First)' },
+  { id: 'traffic_asc',  label: 'Traffic (Lowest First)' },
+  { id: 'errors_desc',  label: 'Error Rate (Highest First)' },
+  { id: 'name_asc',     label: 'Name (A–Z)' },
+];
+const HEALTH_ORDER: Record<string, number> = { CRITICAL: 0, WARNING: 1, UNKNOWN: 2, HEALTHY: 3 };
+
 
 const MiniSparkline: React.FC<{
   values: number[];
   color: string;
   width?: number;
   height?: number;
-}> = ({ values, color, width = 80, height = 24 }) => {
+  gradId?: string;
+}> = ({ values, color, width = 80, height = 24, gradId }) => {
   if (!values || values.length < 2) {
     return (
       <svg width={width} height={height}>
@@ -48,17 +64,18 @@ const MiniSparkline: React.FC<{
   const pts = values.map((v, i) =>
     `${((i / (values.length - 1)) * width).toFixed(1)},${(height - 2 - ((v / max) * (height - 4))).toFixed(1)}`
   ).join(' ');
+  const gid = gradId || `sg_${color.replace(/[^a-zA-Z0-9]/g, '')}`;
   return (
     <svg width={width} height={height} style={{ display: 'block' }}>
       <defs>
-        <linearGradient id={`sg_${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor={color} stopOpacity="0.35" />
           <stop offset="100%" stopColor={color} stopOpacity="0.02" />
         </linearGradient>
       </defs>
       <polyline
         points={`0,${height} ${pts} ${width},${height}`}
-        fill={`url(#sg_${color.replace('#', '')})`}
+        fill={`url(#${gid})`}
         stroke="none"
       />
       <polyline
@@ -193,6 +210,8 @@ export const MultiGatewayFleetView: React.FC<{
   const [loadingFleet, setLoadingFleet] = useState(false);
   const [selectedStages, setSelectedStages] = useState<Record<string, string>>({});
   const [gatewayStagesMap, setGatewayStagesMap] = useState<Record<string, string[]>>({});
+  // Real sparkline data keyed by gatewayId, populated by /api/gateways/compare batch call
+  const [sparklineData, setSparklineData] = useState<Record<string, { req: number[]; lat: number[] }>>({});
   const [savedToast, setSavedToast] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [protocolFilter, setProtocolFilter] = useState<string>('ALL');
@@ -200,8 +219,9 @@ export const MultiGatewayFleetView: React.FC<{
   const [logTypeFilter, setLogTypeFilter] = useState<string>('ALL');
   const [sortBy, setSortBy] = useState<string>('health');
   const [viewMode, setViewMode] = useState<'cards' | 'heatmap'>('cards');
-  // Health history: gatewayId → last 5 health poll statuses
   const [healthHistory, setHealthHistory] = useState<Record<string, ('HEALTHY' | 'WARNING' | 'CRITICAL' | 'UNKNOWN')[]>>({});
+  // Track which gateway IDs have already had their stages fetched this session
+  const fetchedStagesRef = React.useRef<Set<string>>(new Set());
 
   // ─── Data Fetching ──────────────────────────────────────────────────────────
 
@@ -257,9 +277,11 @@ export const MultiGatewayFleetView: React.FC<{
     } catch {}
 
     fetchFleetSummary();
-    const interval = setInterval(fetchFleetSummary, 15000);
-    return () => clearInterval(interval);
-  }, [awsConfig?.region]);
+    // Use a ref-captured callback to avoid stale closure in interval
+    const intervalId = setInterval(() => fetchFleetSummary(), 15000);
+    return () => clearInterval(intervalId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [awsConfig?.region, awsConfig?.accessKeyId, awsConfig?.secretAccessKey]);
 
   // Synchronize stages and load real deployed stages for each gateway
   useEffect(() => {
@@ -280,8 +302,13 @@ export const MultiGatewayFleetView: React.FC<{
     setSelectedStages(prev => ({ ...initialSelected, ...prev }));
     setGatewayStagesMap(prev => ({ ...initialStagesMap, ...prev }));
 
-    gateways.forEach(async (gw) => {
-      if (initialStagesMap[gw.id] && initialStagesMap[gw.id].length > 1) return;
+    // Only fetch stages for gateways not yet fetched this session
+    const newGateways = gateways.filter(gw => !fetchedStagesRef.current.has(gw.id));
+    if (newGateways.length === 0) return;
+
+    newGateways.forEach(gw => fetchedStagesRef.current.add(gw.id));
+
+    newGateways.forEach(async (gw) => {
       try {
         const res = await fetch('/api/aws/stages', {
           method: 'POST',
@@ -314,6 +341,40 @@ export const MultiGatewayFleetView: React.FC<{
         console.warn(`[FleetView] Error fetching stages for ${gw.id}:`, err);
       }
     });
+
+    // Fetch real sparklines for all gateways in ONE batched call
+    const filledGws = gateways.filter(gw => gw.id);
+    if (filledGws.length > 0) {
+      (async () => {
+        try {
+          const res = await fetch('/api/gateways/compare', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(activeProfileId ? { 'x-aws-profile-id': activeProfileId } : {}),
+            },
+            body: JSON.stringify({
+              gateways: filledGws.map(gw => ({
+                gatewayId: gw.id,
+                gatewayName: gw.name,
+                stage: selectedStages[gw.id] || gw.stage,
+                protocol: gw.protocol,
+                region: gw.region || awsConfig?.region || 'us-east-1',
+              })),
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const next: Record<string, { req: number[]; lat: number[] }> = {};
+            filledGws.forEach(gw => {
+              const r = data.results?.[gw.id];
+              if (r) next[gw.id] = { req: r.sparkline || [], lat: r.latencyLine || [] };
+            });
+            setSparklineData(prev => ({ ...prev, ...next }));
+          }
+        } catch {}
+      })();
+    }
   }, [fleetData]);
 
   const handleStageSelect = (gw: FleetGatewayItem, newStage: string) => {
@@ -325,20 +386,6 @@ export const MultiGatewayFleetView: React.FC<{
       setAwsConfig((prev: any) => ({ ...prev, stage: newStage }));
     }
   };
-
-  // ─── Sorting + Filtering ────────────────────────────────────────────────────
-
-  const SORT_OPTIONS = [
-    { id: 'health', label: 'Health (Critical First)' },
-    { id: 'latency_desc', label: 'Latency (Highest First)' },
-    { id: 'latency_asc', label: 'Latency (Lowest First)' },
-    { id: 'traffic_desc', label: 'Traffic (Highest First)' },
-    { id: 'traffic_asc', label: 'Traffic (Lowest First)' },
-    { id: 'errors_desc', label: 'Error Rate (Highest First)' },
-    { id: 'name_asc', label: 'Name (A–Z)' },
-  ];
-
-  const HEALTH_ORDER: Record<string, number> = { CRITICAL: 0, WARNING: 1, UNKNOWN: 2, HEALTHY: 3 };
 
   const filteredGateways = useMemo(() => {
     const list: FleetGatewayItem[] = fleetData?.gateways || [];
@@ -632,8 +679,10 @@ export const MultiGatewayFleetView: React.FC<{
               const stagesList = gatewayStagesMap[gw.id] || gw.stages || [gw.stage || 'prod'];
               const currentStage = selectedStages[gw.id] || localStorage.getItem(`pingsnest_default_stage_${gw.id}`) || (selectedGateway?.id === gw.id && awsConfig?.stage ? awsConfig.stage : null) || gw.stage || 'prod';
               const hist = healthHistory[gw.id] || [];
-
-              // Dummy sparklines from requestsPerMin (will be real when compare data loaded)
+              // Real sparkline data from /api/gateways/compare batch call
+              const realSpark = sparklineData[gw.id];
+              const reqSpark = realSpark?.req || [];
+              const latSpark = realSpark?.lat || [];
               const sparkColor = isCritical ? '#f87171' : isWarning ? '#f59e0b' : '#34d399';
 
               return (
@@ -737,7 +786,7 @@ export const MultiGatewayFleetView: React.FC<{
                         <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>THROUGHPUT</span>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                           <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-primary)' }}>{gw.requestsPerMin} /min</span>
-                          <TrendArrow values={[gw.requestsPerMin]} />
+                          <TrendArrow values={reqSpark.length >= 2 ? reqSpark : [gw.requestsPerMin]} />
                         </div>
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -760,16 +809,18 @@ export const MultiGatewayFleetView: React.FC<{
                       <Activity size={10} color="var(--text-muted)" />
                       <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', minWidth: 60 }}>Req Trend</span>
                       <MiniSparkline
-                        values={gw.requestsPerMin > 0 ? [gw.requestsPerMin * 0.7, gw.requestsPerMin * 0.9, gw.requestsPerMin] : [0, 0, 0]}
+                        values={reqSpark}
                         color={sparkColor}
+                        gradId={sparkGradId(gw.id, 'req')}
                         width={80}
                         height={20}
                       />
                       <Clock size={10} color="var(--text-muted)" style={{ marginLeft: 6 }} />
                       <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', minWidth: 60 }}>Latency</span>
                       <MiniSparkline
-                        values={gw.avgLatencyMs > 0 ? [gw.avgLatencyMs * 0.8, gw.avgLatencyMs * 1.1, gw.avgLatencyMs] : [0, 0, 0]}
+                        values={latSpark}
                         color={gw.avgLatencyMs > 300 ? 'var(--color-warning)' : '#60a5fa'}
+                        gradId={sparkGradId(gw.id, 'lat')}
                         width={80}
                         height={20}
                       />

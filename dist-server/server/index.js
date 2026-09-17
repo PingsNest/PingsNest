@@ -232,14 +232,17 @@ import { discoverLambdaFunctions, getFunctionHealth, getPerformanceMetrics, getT
 async function getAwsCredentialsFromReq(req) {
     let accessKeyId = req.headers['x-aws-access-key-id'] || req.query.accessKeyId || req.body?.accessKeyId;
     let secretAccessKey = req.headers['x-aws-secret-access-key'] || req.query.secretAccessKey || req.body?.secretAccessKey;
-    let region = req.headers['x-aws-region'] || req.query.region || req.body?.region || process.env.AWS_REGION || 'us-east-1';
+    const explicitRegion = req.headers['x-aws-region'] || req.query.region || req.body?.region;
+    let region = explicitRegion || process.env.AWS_REGION || 'us-east-1';
     let profileId = req.headers['x-aws-profile-id'] || req.query.profileId || req.body?.profileId;
     let authType = 'keys';
     let credentialProvider;
     let sessionToken;
     const applyRow = async (row) => {
         authType = row.authType || 'keys';
-        region = row.region || region;
+        if (!explicitRegion && row.region) {
+            region = row.region;
+        }
         if (authType === 'instance_profile') {
             // EC2 instance profile — IMDSv2 supplies temporary credentials automatically
             credentialProvider = fromInstanceMetadata({ timeout: 1000, maxRetries: 3 });
@@ -1329,10 +1332,11 @@ app.post('/api/aws/apis', async (req, res) => {
     await cacheSet(cacheKey, result, TTL.APIS);
     res.json(result);
 });
-// â”€â”€â”€ 1b. List API Gateway Stages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── 1b. List API Gateway Stages ────────────────────────────────────────────
 app.post('/api/aws/stages', async (req, res) => {
     const creds = await getAwsCredentialsFromReq(req);
-    const { region } = creds;
+    const explicitRegion = req.headers['x-aws-region'] || req.body?.region;
+    const region = explicitRegion || creds.region;
     const { apiId, protocol, bypassCache } = req.body;
     if (!region || !apiId) {
         return res.status(400).json({ error: 'Missing params: apiId and region are required' });
@@ -1356,29 +1360,33 @@ app.post('/api/aws/stages', async (req, res) => {
         try {
             const c = new APIGatewayClient({ region, credentials });
             const r = await c.send(new GetStagesCommand({ restApiId: apiId }));
-            r.item?.forEach(s => {
-                if (s.stageName && !stagesList.includes(s.stageName))
-                    stagesList.push(s.stageName);
+            const items = r.item || r.items || r.Items || [];
+            items.forEach((s) => {
+                const name = s.stageName || s.StageName || s.name;
+                if (name && !stagesList.includes(name))
+                    stagesList.push(name);
             });
         }
         catch (e) {
             awsError = e.message;
-            console.warn(`[Stages API REST v1] ${apiId}:`, e.message);
+            console.warn(`[Stages API REST v1] ${apiId} in ${region}:`, e.message);
         }
         // If REST (v1) returned 0 stages, try API Gateway v2 (HTTP / WebSocket)
         if (stagesList.length === 0) {
             try {
                 const c2 = new ApiGatewayV2Client({ region, credentials });
                 const r2 = await c2.send(new GetStagesV2Command({ ApiId: apiId }));
-                r2.Items?.forEach(s => {
-                    if (s.StageName && !stagesList.includes(s.StageName))
-                        stagesList.push(s.StageName);
+                const items2 = r2.Items || r2.items || r2.item || [];
+                items2.forEach((s) => {
+                    const name = s.StageName || s.stageName || s.name;
+                    if (name && !stagesList.includes(name))
+                        stagesList.push(name);
                 });
                 if (stagesList.length > 0)
                     awsError = null;
             }
             catch (e2) {
-                console.warn(`[Stages API V2 check] ${apiId}:`, e2.message);
+                console.warn(`[Stages API V2 check] ${apiId} in ${region}:`, e2.message);
             }
         }
     }
@@ -1386,45 +1394,50 @@ app.post('/api/aws/stages', async (req, res) => {
         try {
             const c = new ApiGatewayV2Client({ region, credentials });
             const r = await c.send(new GetStagesV2Command({ ApiId: apiId }));
-            r.Items?.forEach(s => {
-                if (s.StageName && !stagesList.includes(s.StageName))
-                    stagesList.push(s.StageName);
+            const items = r.Items || r.items || r.item || [];
+            items.forEach((s) => {
+                const name = s.StageName || s.stageName || s.name;
+                if (name && !stagesList.includes(name))
+                    stagesList.push(name);
             });
         }
         catch (e) {
             awsError = e.message;
-            console.warn(`[Stages API V2] ${apiId}:`, e.message);
+            console.warn(`[Stages API V2] ${apiId} in ${region}:`, e.message);
         }
         // If v2 returned 0 stages, try REST (v1)
         if (stagesList.length === 0) {
             try {
                 const c1 = new APIGatewayClient({ region, credentials });
                 const r1 = await c1.send(new GetStagesCommand({ restApiId: apiId }));
-                r1.item?.forEach(s => {
-                    if (s.stageName && !stagesList.includes(s.stageName))
-                        stagesList.push(s.stageName);
+                const items1 = r1.item || r1.items || r1.Items || [];
+                items1.forEach((s) => {
+                    const name = s.stageName || s.StageName || s.name;
+                    if (name && !stagesList.includes(name))
+                        stagesList.push(name);
                 });
                 if (stagesList.length > 0)
                     awsError = null;
             }
             catch (e1) {
-                console.warn(`[Stages API REST check] ${apiId}:`, e1.message);
+                console.warn(`[Stages API REST check] ${apiId} in ${region}:`, e1.message);
             }
         }
     }
+    console.log(`[Stages API] Found ${stagesList.length} stage(s) for ${apiId} in ${region}:`, stagesList);
     const isFallback = stagesList.length === 0;
-    if (isFallback) {
-        stagesList.push(protocol === 'REST' ? 'prod' : '$default');
-    }
+    const defaultPlaceholder = protocol === 'REST' ? 'prod' : '$default';
     const result = {
         stages: stagesList,
-        ...(isFallback && {
-            fallback: true,
-            warning: awsError ? `AWS error: ${awsError}` : 'No deployed stages found from AWS; showing default placeholder.'
-        })
+        fallbackStages: isFallback ? [defaultPlaceholder] : [],
+        fallback: isFallback,
+        warning: isFallback
+            ? (awsError ? `AWS error: ${awsError}` : 'No deployed stages found for this API Gateway in AWS.')
+            : null,
+        error: isFallback && awsError ? awsError : null
     };
     // Only cache if genuine stages were retrieved from AWS (NEVER cache fallbacks)
-    if (!isFallback) {
+    if (!isFallback && stagesList.length > 0) {
         await cacheSet(cacheKey, result, TTL.APIS);
     }
     res.json(result);
@@ -1547,23 +1560,24 @@ app.post('/api/aws/routes', async (req, res) => {
 // â”€â”€â”€ 2b. Multi-API Gateway Fleet Summary ($N$ Gateways Aggregation) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.post('/api/gateways/fleet-summary', async (req, res) => {
     const creds = await getAwsCredentialsFromReq(req);
-    const { region } = creds;
+    const explicitRegion = req.headers['x-aws-region'] || req.body?.region;
+    const region = explicitRegion || creds.region;
     if (!region || !hasAwsCreds(creds)) {
         return res.status(400).json({ error: 'Missing region or credentials' });
     }
     const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || 'imds').digest('hex').slice(0, 12);
-    const cacheKey = `apigw:fleet-summary:${creds.region}:${keyHash}`;
+    const cacheKey = `apigw:fleet-summary:${region}:${keyHash}`;
     try {
         const result = await cacheGetOrSet(cacheKey, 30, async () => {
             const credentials = buildAwsCredentials(creds);
-            const v1 = new APIGatewayClient({ region: creds.region, credentials });
-            const v2 = new ApiGatewayV2Client({ region: creds.region, credentials });
+            const v1 = new APIGatewayClient({ region, credentials });
+            const v2 = new ApiGatewayV2Client({ region, credentials });
             const apisList = [];
             try {
                 const r1 = await v1.send(new GetRestApisCommand({}));
                 r1.items?.forEach(i => {
                     if (i.id && i.name) {
-                        apisList.push({ id: i.id, name: i.name, protocol: 'REST', stage: 'prod' });
+                        apisList.push({ id: i.id, name: i.name, protocol: 'REST' });
                     }
                 });
             }
@@ -1572,36 +1586,79 @@ app.post('/api/gateways/fleet-summary', async (req, res) => {
                 const r2 = await v2.send(new GetApisCommand({}));
                 r2.Items?.forEach(i => {
                     if (i.ApiId && i.Name) {
-                        apisList.push({ id: i.ApiId, name: i.Name, protocol: i.ProtocolType === 'WEBSOCKET' ? 'WEBSOCKET' : 'HTTP', stage: '$default' });
+                        apisList.push({ id: i.ApiId, name: i.Name, protocol: i.ProtocolType === 'WEBSOCKET' ? 'WEBSOCKET' : 'HTTP' });
                     }
                 });
             }
             catch { }
+            // BUG-04 FIX: No longer inject synthetic fake gateways when the account returns 0 APIs.
+            // Previously this fabricated 5 hardcoded gateways (gw-auth-v1, gw-payment-v2, etc.)
+            // with Math.random() traffic, giving operators false confidence in non-existent services.
             if (apisList.length === 0) {
-                apisList.push({ id: 'gw-auth-v1', name: 'Auth & Session API Gateway', protocol: 'REST', stage: 'prod' }, { id: 'gw-payment-v2', name: 'Payments & Billing Gateway', protocol: 'HTTP', stage: 'prod' }, { id: 'gw-orders-v1', name: 'Orders & Inventory Gateway', protocol: 'REST', stage: 'prod' }, { id: 'gw-analytics-v2', name: 'Analytics & Reporting Stream', protocol: 'HTTP', stage: 'staging' }, { id: 'gw-realtime-ws', name: 'Realtime WebSockets Gateway', protocol: 'WEBSOCKET', stage: 'prod' });
+                return {
+                    timestamp: new Date().toISOString(),
+                    fleetTotals: { totalGateways: 0, healthyCount: 0, warningCount: 0, criticalCount: 0, totalFleetRequests: 0, avgFleetLatency: 0, lambdaFallbackCount: 0 },
+                    gateways: []
+                };
             }
-            const fleetMetrics = apisList.map((gw, idx) => {
-                const mockReqs = [450, 1280, 890, 240, 620][idx % 5] + Math.floor(Math.random() * 50);
-                const mockAvgLat = [28, 142, 65, 380, 18][idx % 5];
-                const mockP99Lat = Math.round(mockAvgLat * 2.8);
-                const mockErr4xx = [0.2, 1.4, 0.5, 4.2, 0.1][idx % 5];
-                const mockErr5xx = [0.0, 0.05, 0.0, 2.8, 0.0][idx % 5];
-                const healthStatus = mockErr5xx > 1.0 || mockP99Lat > 1000 ? 'CRITICAL' : mockErr4xx > 2.0 || mockAvgLat > 300 ? 'WARNING' : 'HEALTHY';
-                const hasApigwLogGroup = idx % 2 === 0;
-                const logSource = hasApigwLogGroup
-                    ? { type: 'apigateway_access_logs', label: 'API Gateway Access Logs', logGroup: `/aws/apigateway/${gw.id}-${gw.stage}` }
-                    : { type: 'lambda_fallback', label: 'Lambda Log Fallback Active', logGroup: `/aws/lambda/${gw.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-worker` };
+            // Query real deployed stages for each discovered gateway in parallel
+            const apisWithStages = await Promise.all(apisList.map(async (gw) => {
+                const stageCacheKey = `stages:${region}:${gw.id}:${gw.protocol || 'any'}`;
+                let stages = [];
+                try {
+                    const cached = await cacheGet(stageCacheKey);
+                    if (cached && !cached.fallback && Array.isArray(cached.stages) && cached.stages.length > 0) {
+                        stages = cached.stages;
+                    }
+                }
+                catch { }
+                if (stages.length === 0) {
+                    try {
+                        if (gw.protocol === 'REST') {
+                            const r = await v1.send(new GetStagesCommand({ restApiId: gw.id }));
+                            const items = r.item || r.items || r.Items || [];
+                            items.forEach((s) => {
+                                const name = s.stageName || s.StageName || s.name;
+                                if (name && !stages.includes(name))
+                                    stages.push(name);
+                            });
+                        }
+                        else {
+                            const r = await v2.send(new GetStagesV2Command({ ApiId: gw.id }));
+                            const items = r.Items || r.items || r.item || [];
+                            items.forEach((s) => {
+                                const name = s.StageName || s.stageName || s.name;
+                                if (name && !stages.includes(name))
+                                    stages.push(name);
+                            });
+                        }
+                        if (stages.length > 0) {
+                            await cacheSet(stageCacheKey, { stages, fallback: false }, TTL.APIS);
+                        }
+                    }
+                    catch { }
+                }
+                const fallbackStage = gw.protocol === 'REST' ? 'prod' : '$default';
+                const defaultStage = stages.length > 0 ? stages[0] : fallbackStage;
+                return {
+                    ...gw,
+                    stage: defaultStage,
+                    stages: stages.length > 0 ? stages : [defaultStage]
+                };
+            }));
+            const fleetMetrics = apisWithStages.map((gw) => {
+                // Fleet summary provides structural data with real stage metadata.
                 return {
                     ...gw,
                     region,
-                    requestsPerMin: mockReqs,
-                    avgLatencyMs: mockAvgLat,
-                    p99LatencyMs: mockP99Lat,
-                    errorRate4xxPct: mockErr4xx,
-                    errorRate5xxPct: mockErr5xx,
-                    healthStatus,
-                    logSource,
-                    metricsSimulated: true
+                    requestsPerMin: 0,
+                    avgLatencyMs: 0,
+                    p99LatencyMs: 0,
+                    errorRate4xxPct: 0,
+                    errorRate5xxPct: 0,
+                    healthStatus: 'UNKNOWN',
+                    logSource: { type: 'apigateway_access_logs', label: 'API Gateway', logGroup: `API-Gateway-Execution-Logs_${gw.id}/${gw.stage}` },
+                    metricsSimulated: false
                 };
             });
             const totalFleetRequests = fleetMetrics.reduce((acc, g) => acc + g.requestsPerMin, 0);
@@ -1626,6 +1683,109 @@ app.post('/api/gateways/fleet-summary', async (req, res) => {
             };
         });
         res.json(result);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── 2c. Multi-Gateway Compare Endpoint ─────────────────────────────────────
+// Accepts an array of { gatewayId, stage, protocol, gatewayName, region }
+// Returns parallel CloudWatch metric snapshots keyed by gatewayId.
+app.post('/api/gateways/compare', async (req, res) => {
+    const creds = await getAwsCredentialsFromReq(req);
+    const explicitRegion = req.headers['x-aws-region'] || req.body?.region;
+    const region = explicitRegion || creds.region;
+    if (!region || !hasAwsCreds(creds)) {
+        return res.status(400).json({ error: 'Missing region or credentials' });
+    }
+    const gateways = req.body?.gateways || [];
+    if (!Array.isArray(gateways) || gateways.length === 0) {
+        return res.status(400).json({ error: 'gateways array required' });
+    }
+    // Protect against unbounded parallel CloudWatch calls
+    if (gateways.length > 10) {
+        return res.status(400).json({ error: 'Maximum 10 gateways per compare request' });
+    }
+    try {
+        const credentials = buildAwsCredentials(creds);
+        const SPARKLINE_POINTS = 10;
+        const results = await Promise.all(gateways.map(async (gw) => {
+            const gwRegion = gw.region || region;
+            const cacheKey = `compare:${gw.gatewayId}:${gw.stage}`;
+            try {
+                const cached = await cacheGet(cacheKey);
+                if (cached)
+                    return { gatewayId: gw.gatewayId, ...cached };
+            }
+            catch { }
+            try {
+                const cwClient = new CloudWatchClient({ region: gwRegion, credentials });
+                const endTime = new Date();
+                endTime.setSeconds(0, 0);
+                const startTime = new Date(endTime.getTime() - SPARKLINE_POINTS * 60 * 1000);
+                const isRest = gw.protocol === 'REST';
+                // For REST, use ApiName (display name); fallback to ApiId if name missing
+                const restDimValue = gw.gatewayName && gw.gatewayName !== gw.gatewayId
+                    ? gw.gatewayName : gw.gatewayId;
+                const dimensions = [
+                    { Name: isRest ? 'ApiName' : 'ApiId', Value: isRest ? restDimValue : gw.gatewayId },
+                    { Name: 'Stage', Value: gw.stage }
+                ];
+                const err4xxName = isRest ? '4XXError' : '4xx';
+                const err5xxName = isRest ? '5XXError' : '5xx';
+                const cwResponse = await cwClient.send(new GetMetricDataCommand({
+                    StartTime: startTime,
+                    EndTime: endTime,
+                    ScanBy: 'TimestampAscending',
+                    MetricDataQueries: [
+                        { Id: 'req', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'Count', Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
+                        { Id: 'lat', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'Latency', Dimensions: dimensions }, Period: 60, Stat: 'Average' } },
+                        { Id: 'lat_p99', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'Latency', Dimensions: dimensions }, Period: 60, Stat: 'p99' } },
+                        { Id: 'e4', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: err4xxName, Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
+                        { Id: 'e5', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: err5xxName, Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
+                    ]
+                }));
+                const byId = {};
+                cwResponse.MetricDataResults?.forEach(r => { if (r.Id && r.Values)
+                    byId[r.Id] = r.Values.map(v => Math.round(v)); });
+                const sparkline = byId['req'] || Array(SPARKLINE_POINTS).fill(0);
+                const latencyLine = (byId['lat'] || []).map(v => Math.round(v));
+                const errorLine = byId['e5'] || Array(SPARKLINE_POINTS).fill(0);
+                const totalReq = sparkline.reduce((a, v) => a + v, 0);
+                const requestsPerMin = sparkline.length > 0 ? Math.round(totalReq / sparkline.length) : 0;
+                const avgLatencyMs = latencyLine.length > 0 ? Math.round(latencyLine.reduce((a, v) => a + v, 0) / latencyLine.length) : 0;
+                const p99Vals = byId['lat_p99'] || [];
+                const p99LatencyMs = p99Vals.length > 0 ? Math.round(p99Vals.reduce((a, v) => a + v, 0) / p99Vals.length) : Math.round(avgLatencyMs * 2.5);
+                const total5xx = errorLine.reduce((a, v) => a + v, 0);
+                const total4xx = (byId['e4'] || []).reduce((a, v) => a + v, 0);
+                const errorRate5xxPct = totalReq > 0 ? Math.round((total5xx / totalReq) * 100) : 0;
+                const errorRate4xxPct = totalReq > 0 ? Math.round((total4xx / totalReq) * 100) : 0;
+                const snapshot = {
+                    requestsPerMin,
+                    avgLatencyMs,
+                    p99LatencyMs,
+                    errorRate5xxPct,
+                    errorRate4xxPct,
+                    // cacheHitRate intentionally omitted — CloudWatch has no direct cache hit metric for API GW
+                    sparkline,
+                    latencyLine,
+                    errorLine,
+                };
+                await cacheSet(cacheKey, snapshot, 25); // 25s TTL
+                return { gatewayId: gw.gatewayId, ...snapshot };
+            }
+            catch {
+                return {
+                    gatewayId: gw.gatewayId,
+                    requestsPerMin: 0, avgLatencyMs: 0, p99LatencyMs: 0,
+                    errorRate5xxPct: 0, errorRate4xxPct: 0, cacheHitRate: 0,
+                    sparkline: [], latencyLine: [], errorLine: [],
+                };
+            }
+        }));
+        const resultsMap = {};
+        results.forEach(r => { resultsMap[r.gatewayId] = r; });
+        res.json({ results: resultsMap, timestamp: new Date().toISOString() });
     }
     catch (err) {
         res.status(500).json({ error: err.message });
@@ -2227,19 +2387,27 @@ app.post('/api/aws/metrics', async (req, res) => {
     try {
         const credentials = buildAwsCredentials(creds);
         const cwClient = new CloudWatchClient({ region: creds.region, credentials });
+        // BUG-01 FIX: Align endTime to minute boundary. CloudWatch aggregates in 60s
+        // minute-aligned windows. Without this, requests arriving at e.g. :48s would
+        // produce buckets offset by 48s, causing minD > 30s for every data point.
         const endTime = new Date();
+        endTime.setSeconds(0, 0);
         const startTime = new Date(endTime.getTime() - 60 * 60 * 1000);
         const isRest = protocol === 'REST';
         const dimensions = [
             { Name: isRest ? 'ApiName' : 'ApiId', Value: isRest ? apiName : apiId },
             { Name: 'Stage', Value: stage }
         ];
+        // BUG-02 FIX: HTTP APIs (v2) publish '4xx'/'5xx'; REST APIs (v1) use '4XXError'/'5XXError'.
+        // Using REST names for HTTP APIs always returned 0, hiding all HTTP API errors.
+        const err4xxName = isRest ? '4XXError' : '4xx';
+        const err5xxName = isRest ? '5XXError' : '5xx';
         const metricQueries = [
             { Id: 'requests', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'Count', Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
             { Id: 'latency', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'Latency', Dimensions: dimensions }, Period: 60, Stat: 'Average' } },
             { Id: 'integration_latency', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'IntegrationLatency', Dimensions: dimensions }, Period: 60, Stat: 'Average' } },
-            { Id: 'errors_4xx', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: '4XXError', Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
-            { Id: 'errors_5xx', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: '5XXError', Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
+            { Id: 'errors_4xx', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: err4xxName, Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
+            { Id: 'errors_5xx', MetricStat: { Metric: { Namespace: 'AWS/ApiGateway', MetricName: err5xxName, Dimensions: dimensions }, Period: 60, Stat: 'Sum' } },
         ];
         const cwResponse = await cwClient.send(new GetMetricDataCommand({ StartTime: startTime, EndTime: endTime, MetricDataQueries: metricQueries, ScanBy: 'TimestampAscending' }));
         const timeBuckets = [];
@@ -2255,7 +2423,7 @@ app.post('/api/aws/metrics', async (req, res) => {
                 const itemTime = new Date(ts).getTime();
                 let best = timeBuckets[0], minD = Math.abs(timeBuckets[0].time.getTime() - itemTime);
                 for (let b = 1; b < timeBuckets.length; b++) {
-                    // â”€â”€â”€ Bug 2 fix: fleet summary mock metrics clearly labelled + weighted avg â”€â”€â”€â”€
+                    // â”€â”€â”€ Bug 2 fix: fleet summary mock metrics clearly labelled + weighted avg â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     // Real metrics require per-gateway CloudWatch calls; fleet summary uses cached
                     // metrics when available or clearly marks data as simulated.
                     const d = Math.abs(timeBuckets[b].time.getTime() - itemTime);
@@ -2264,7 +2432,8 @@ app.post('/api/aws/metrics', async (req, res) => {
                         best = timeBuckets[b];
                     }
                 }
-                if (minD < 45000)
+                // 30s tolerance (half of 60s period) â€” always succeeds now that endTime is minute-aligned
+                if (minD < 30000)
                     best.values[id] = Math.round(result.Values[idx]);
             });
         });
@@ -2974,7 +3143,11 @@ app.post('/api/aws/test-request', async (req, res) => {
     const { region, apiId, stage, method, path, headers, body } = req.body;
     if (!region || !apiId || !stage || !method)
         return res.status(400).json({ error: 'Missing required parameters (region, apiId, stage, method)' });
-    const invokeBaseUrl = `https://${apiId}.execute-api.${region}.amazonaws.com/${stage}`;
+    // BUG-08 FIX: HTTP APIs (v2) use '$default' as their default stage identifier,
+    // but '$default' is NOT a URL segment — it maps to the root path '/'.
+    // Appending '/$default' to the invoke URL results in a 404 from AWS.
+    const stageSegment = stage === '$default' ? '' : `/${stage}`;
+    const invokeBaseUrl = `https://${apiId}.execute-api.${region}.amazonaws.com${stageSegment}`;
     const cleanPath = (path || '/').startsWith('/') ? (path || '/') : '/' + path;
     const requestUrl = `${invokeBaseUrl}${cleanPath}`;
     const requestHeaders = new Headers(headers || {});

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useMonitor } from '../context/MonitorContext';
 import {
   GitCompare, Plus, X, RefreshCw, Crown, TrendingUp, TrendingDown,
@@ -498,86 +498,94 @@ export const GatewayCompareDashboard: React.FC = () => {
     setLoadingStages(prev => ({ ...prev, [slot.gatewayId]: false }));
   }, [stagesMap, awsConfig, activeProfileId]);
 
-  // Fetch compare metrics for all slots with gatewayId
+  // Fetch compare metrics — ONE batched request for ALL filled slots
   const fetchAllMetrics = useCallback(async () => {
     const filled = slots.filter(s => s.gatewayId);
     if (filled.length === 0) return;
 
     setGlobalRefreshing(true);
-    // Mark all as loading
     setMetricsMap(prev => {
       const next = { ...prev };
       filled.forEach(s => { next[s.instanceId] = { ...(prev[s.instanceId] as any), isLoading: true }; });
       return next;
     });
 
-    await Promise.all(filled.map(async (slot) => {
-      try {
+    try {
+      const gws = filled.map(slot => {
         const gw = (availableGateways || []).find((g: any) => g.id === slot.gatewayId);
-        const res = await fetch('/api/gateways/compare', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(activeProfileId ? { 'x-aws-profile-id': activeProfileId } : {}),
-          },
-          body: JSON.stringify({
-            gateways: [{
-              gatewayId: slot.gatewayId,
-              gatewayName: slot.gatewayName || gw?.name || slot.gatewayId,
-              stage: slot.stage,
-              protocol: slot.protocol || gw?.protocol || 'REST',
-              region: slot.region || awsConfig?.region || 'us-east-1',
-            }],
-            region: awsConfig?.region || 'us-east-1',
-            accessKeyId: awsConfig?.accessKeyId,
-            secretAccessKey: awsConfig?.secretAccessKey,
-          }),
+        return {
+          gatewayId: slot.gatewayId,
+          gatewayName: slot.gatewayName || gw?.name || slot.gatewayId,
+          stage: slot.stage,
+          protocol: slot.protocol || gw?.protocol || 'REST',
+          region: slot.region || awsConfig?.region || 'us-east-1',
+        };
+      });
+
+      const res = await fetch('/api/gateways/compare', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(activeProfileId ? { 'x-aws-profile-id': activeProfileId } : {}),
+          // Credentials are resolved server-side from the profile — NOT sent in body
+        },
+        body: JSON.stringify({ gateways: gws }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setMetricsMap(prev => {
+          const next = { ...prev };
+          filled.forEach(slot => {
+            const gwData = data.results?.[slot.gatewayId];
+            next[slot.instanceId] = gwData
+              ? { ...gwData, isLoading: false, fetchedAt: new Date().toISOString() }
+              : buildZeroMetrics();
+          });
+          return next;
         });
-        if (res.ok) {
-          const data = await res.json();
-          const gwData = data.results?.[slot.gatewayId] || data.results?.[0];
-          if (gwData) {
-            setMetricsMap(prev => ({
-              ...prev,
-              [slot.instanceId]: { ...gwData, isLoading: false, fetchedAt: new Date().toISOString() }
-            }));
-          } else {
-            setMetricsMap(prev => ({
-              ...prev,
-              [slot.instanceId]: buildZeroMetrics()
-            }));
-          }
-        } else {
-          setMetricsMap(prev => ({
-            ...prev,
-            [slot.instanceId]: buildZeroMetrics()
-          }));
-        }
-      } catch (e: any) {
-        setMetricsMap(prev => ({
-          ...prev,
-          [slot.instanceId]: { ...buildZeroMetrics(), error: e.message }
-        }));
+      } else {
+        setMetricsMap(prev => {
+          const next = { ...prev };
+          filled.forEach(s => { next[s.instanceId] = buildZeroMetrics(); });
+          return next;
+        });
       }
-    }));
+    } catch (e: any) {
+      setMetricsMap(prev => {
+        const next = { ...prev };
+        filled.forEach(s => { next[s.instanceId] = { ...buildZeroMetrics(), error: e.message }; });
+        return next;
+      });
+    }
 
     setGlobalRefreshing(false);
-  }, [slots, availableGateways, awsConfig, activeProfileId]);
+  }, [slots, availableGateways, awsConfig?.region, activeProfileId]);
+
+  // Stable key derived from slot gateway+stage combos — used as effect dep
+  const slotKey = slots.map(s => `${s.gatewayId}:${s.stage}`).join(',');
 
   // Initial fetch + auto-refresh every 30s
-  useEffect(() => {
-    fetchAllMetrics();
-    if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
-    refreshTimerRef.current = setInterval(fetchAllMetrics, 30000);
-    return () => { if (refreshTimerRef.current) clearInterval(refreshTimerRef.current); };
-  }, [slots.map(s => `${s.gatewayId}:${s.stage}`).join(',')]);
+  // Use a ref so the interval always calls the latest fetchAllMetrics (no stale closure)
+  const fetchAllMetricsRef = useRef(fetchAllMetrics);
+  useEffect(() => { fetchAllMetricsRef.current = fetchAllMetrics; }, [fetchAllMetrics]);
 
-  // Fetch stages for all slots
+  useEffect(() => {
+    fetchAllMetricsRef.current();
+    if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+    refreshTimerRef.current = setInterval(() => fetchAllMetricsRef.current(), 30000);
+    return () => { if (refreshTimerRef.current) clearInterval(refreshTimerRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slotKey]);
+
+  // Re-fetch stages when gateway selection in any slot changes (not just count changes)
+  const slotGwKey = slots.map(s => `${s.instanceId}:${s.gatewayId}`).join(',');
   useEffect(() => {
     slots.forEach(slot => {
       if (slot.gatewayId) fetchStagesForSlot(slot);
     });
-  }, [slots.length]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slotGwKey]);
 
   // ── Slot management ──────────────────────────────────────────────────────────
 
@@ -601,6 +609,11 @@ export const GatewayCompareDashboard: React.FC = () => {
   };
 
   const changeGateway = (instanceId: string, gwId: string) => {
+    // Guard: don't allow the same gateway in two slots
+    if (slots.some(s => s.instanceId !== instanceId && s.gatewayId === gwId)) {
+      alert('This gateway is already added to another slot. Choose a different one.');
+      return;
+    }
     const gw = (availableGateways || []).find((g: any) => g.id === gwId);
     const savedStage = localStorage.getItem(`pingsnest_default_stage_${gwId}`);
     setSlots(prev => prev.map(s => s.instanceId === instanceId ? {
@@ -610,11 +623,7 @@ export const GatewayCompareDashboard: React.FC = () => {
       protocol: gw?.protocol || 'REST',
       stage: savedStage || 'prod',
     } : s));
-    // Trigger stage fetch after short delay
-    setTimeout(() => {
-      const updated = { instanceId, gatewayId: gwId, gatewayName: gw?.name || gwId, protocol: gw?.protocol || 'REST', stage: savedStage || 'prod', color: '', region: awsConfig?.region || 'us-east-1' };
-      fetchStagesForSlot(updated as CompareSlot);
-    }, 100);
+    // Stage fetch is now triggered by the slotGwKey effect (no more setTimeout hack)
   };
 
   const changeStage = (instanceId: string, stage: string) => {
@@ -625,25 +634,35 @@ export const GatewayCompareDashboard: React.FC = () => {
     }));
   };
 
-  // ── Best/worst detection ─────────────────────────────────────────────────────
+  // ── Best/worst detection (memoized — not recalculated on every render) ────────
 
-  const getBestMap = (instanceId: string): Record<string, boolean> => {
-    const m = metricsMap[instanceId];
-    if (!m || m.isLoading) return {};
-    const filled = slots.filter(s => s.gatewayId);
-    const allMetrics = filled.map(s => metricsMap[s.instanceId]).filter(Boolean) as SlotMetrics[];
-    if (allMetrics.length < 2) return {};
-    const result: Record<string, boolean> = {};
+  const bestMaps = useMemo(() => {
+    const filledSlots = slots.filter(s => s.gatewayId);
+    const allMetrics = filledSlots
+      .map(s => metricsMap[s.instanceId])
+      .filter((m): m is SlotMetrics => !!(m && !m.isLoading));
+    if (allMetrics.length < 2) return {} as Record<string, Record<string, boolean>>;
+
     const maxReq = Math.max(...allMetrics.map(x => x.requestsPerMin));
-    result['requestsPerMin'] = m.requestsPerMin === maxReq;
     const minLat = Math.min(...allMetrics.map(x => x.avgLatencyMs));
-    result['latency'] = m.avgLatencyMs === minLat;
     const minP99 = Math.min(...allMetrics.map(x => x.p99LatencyMs));
-    result['p99'] = m.p99LatencyMs === minP99;
     const minErr = Math.min(...allMetrics.map(x => x.errorRate5xxPct));
-    result['errors5xx'] = m.errorRate5xxPct === minErr;
+
+    const result: Record<string, Record<string, boolean>> = {};
+    filledSlots.forEach(slot => {
+      const m = metricsMap[slot.instanceId];
+      if (!m || m.isLoading) { result[slot.instanceId] = {}; return; }
+      result[slot.instanceId] = {
+        requestsPerMin: m.requestsPerMin === maxReq,
+        latency: m.avgLatencyMs === minLat,
+        p99: m.p99LatencyMs === minP99,
+        errors5xx: m.errorRate5xxPct === minErr,
+      };
+    });
     return result;
-  };
+  }, [slots, metricsMap]);
+
+  const getBestMap = (instanceId: string) => bestMaps[instanceId] || {};
 
   // ── Chart datasets ───────────────────────────────────────────────────────────
 
