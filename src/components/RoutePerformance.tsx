@@ -29,9 +29,12 @@ export const RoutePerformance: React.FC = () => {
       return { p50: null, p90: null, p99: null, hasData: false };
     }
     const latencies = matching.map((l: any) => l.latency || 10).sort((a: number, b: number) => a - b);
-    const p50 = latencies[Math.floor(latencies.length * 0.5)] || 15;
-    const p90 = latencies[Math.floor(latencies.length * 0.9)] || Math.round(p50 * 1.5);
-    const p99 = latencies[Math.floor(latencies.length * 0.99)] || Math.round(p50 * 2.5);
+    // BUG-10 FIX: Previously fabricated P90 = p50*1.5 and P99 = p50*2.5 when there wasn't enough data.
+    // Now return null for percentiles that require more samples than are available.
+    // Need at least 10 samples for P90 to be statistically meaningful, 100 for P99.
+    const p50 = latencies[Math.floor(latencies.length * 0.5)] ?? null;
+    const p90 = latencies.length >= 10 ? latencies[Math.floor(latencies.length * 0.9)] : null;
+    const p99 = latencies.length >= 100 ? latencies[Math.floor(latencies.length * 0.99)] : null;
     return { p50, p90, p99, hasData: true };
   };
 

@@ -1138,8 +1138,9 @@ function MainAppShell() {
                 </div>
               )}
 
-              {/* Global API Gateway Selector & Stage Switcher (Shown exclusively on API Gateway Monitoring tabs) */}
-              {['dashboard', 'routes', 'logs', 'slo', 'topology', 'playbooks'].includes(activeTab) && availableGateways && availableGateways.length > 0 && (
+              {/* Global API Gateway Selector & Stage Switcher (Shown on all API Gateway monitoring tabs incl. overview) */}
+              {/* BUG-13 FIX: 'overview' was missing from this list so the Stage dropdown disappeared on the main Overview tab */}
+              {['overview', 'dashboard', 'routes', 'logs', 'slo', 'topology', 'playbooks'].includes(activeTab) && availableGateways && availableGateways.length > 0 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
                   <Server size={14} color="var(--color-primary)" />
                   <select
@@ -1147,8 +1148,13 @@ function MainAppShell() {
                     onChange={async (e) => {
                       const found = availableGateways.find((g: any) => g.id === e.target.value);
                       if (found) {
+                        const savedDefault = localStorage.getItem(`pingsnest_default_stage_${found.id}`);
                         setSelectedGateway(found);
-                        setAwsConfig((prev: any) => ({ ...prev, gatewayId: found.id }));
+                        setAwsConfig((prev: any) => ({
+                          ...prev,
+                          gatewayId: found.id,
+                          ...(savedDefault ? { stage: savedDefault } : {})
+                        }));
                         await fetchAvailableStages(found);
                       }
                     }}
@@ -1175,12 +1181,19 @@ function MainAppShell() {
               )}
 
               {/* Global API Gateway Stage Switcher */}
-              {['dashboard', 'routes', 'logs', 'slo', 'topology', 'playbooks'].includes(activeTab) && selectedGateway && (
+              {/* BUG-13 FIX: 'overview' was missing — stage dropdown vanished on Overview, forcing users to visit Logs first */}
+              {['overview', 'dashboard', 'routes', 'logs', 'slo', 'topology', 'playbooks'].includes(activeTab) && selectedGateway && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
                   <Layers size={14} color="var(--color-success)" />
                   <select
                     value={awsConfig.stage || ''}
-                    onChange={(e) => setAwsConfig((prev: any) => ({ ...prev, stage: e.target.value }))}
+                    onChange={(e) => {
+                      const newStage = e.target.value;
+                      setAwsConfig((prev: any) => ({ ...prev, stage: newStage }));
+                      if (selectedGateway?.id) {
+                        localStorage.setItem(`pingsnest_default_stage_${selectedGateway.id}`, newStage);
+                      }
+                    }}
                     disabled={loadingStages}
                     style={{
                       backgroundColor: 'rgba(16, 185, 129, 0.08)',
@@ -1198,11 +1211,18 @@ function MainAppShell() {
                     {loadingStages ? (
                       <option value="">Loading real stages...</option>
                     ) : availableStages && availableStages.length > 0 ? (
-                      availableStages.map((s: string) => (
-                        <option key={s} value={s} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
-                          Stage: {s}
-                        </option>
-                      ))
+                      <>
+                        {availableStages.map((s: string) => (
+                          <option key={s} value={s} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+                            Stage: {s}
+                          </option>
+                        ))}
+                        {awsConfig.stage && !availableStages.includes(awsConfig.stage) && (
+                          <option key={awsConfig.stage} value={awsConfig.stage} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+                            Stage: {awsConfig.stage}
+                          </option>
+                        )}
+                      </>
                     ) : (
                       <option value={awsConfig.stage || ''} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
                         {awsConfig.stage ? `Stage: ${awsConfig.stage}` : 'No Stages Deployed'}

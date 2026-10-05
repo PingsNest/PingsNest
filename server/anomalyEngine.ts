@@ -11,10 +11,16 @@ export interface AnomalyResult {
 }
 
 /**
- * ML-Lite Statistical Anomaly Engine using Exponentially Weighted Moving Average (EWMA)
- * and 3-Sigma (Z-Score > 3.0) threshold detection for route latencies and error rates.
+ * Statistical Anomaly Engine using 3-Sigma (Z-Score >= 3.0) threshold detection
+ * for route latencies, with an absolute minimum threshold guard.
+ *
+ * BUG-05 FIX: Now accepts `region` parameter so alert dispatches use the real
+ *   gateway region instead of the hardcoded 'us-east-1'.
+ * BUG-06 FIX: The stdDev === 0 (perfectly flat baseline) case previously set
+ *   zScore = 0, silently ignoring catastrophic latency spikes. Now uses an
+ *   absolute threshold comparison when stdDev is 0.
  */
-export async function detectLatencyAnomalies(apiId: string, stage: string): Promise<AnomalyResult[]> {
+export async function detectLatencyAnomalies(apiId: string, stage: string, region: string = 'us-east-1'): Promise<AnomalyResult[]> {
   const anomalies: AnomalyResult[] = [];
 
   try {
@@ -51,9 +57,18 @@ export async function detectLatencyAnomalies(apiId: string, stage: string): Prom
       const variance = historical.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / historical.length;
       const stdDev = Math.sqrt(variance);
 
-      // Calculate Z-Score: (current - mean) / stdDev
-      const zScore = stdDev > 0 ? (latestLatency - mean) / stdDev : 0;
-      const isAnomaly = zScore >= 3.0 && latestLatency > 150; // 3-Sigma Rule with minimum threshold
+      // BUG-06 FIX: When stdDev === 0, all historical samples were identical.
+      // A latency spike yields zScore = (spike - mean) / 0 which is NaN or 0,
+      // silently bypassing anomaly detection. Use absolute deviation instead.
+      let zScore: number;
+      let isAnomaly: boolean;
+      if (stdDev === 0) {
+        zScore = latestLatency > mean ? 3.0 : 0;
+        isAnomaly = latestLatency - mean > 100 && latestLatency > 150;
+      } else {
+        zScore = (latestLatency - mean) / stdDev;
+        isAnomaly = zScore >= 3.0 && latestLatency > 150;
+      }
 
       const result: AnomalyResult = {
         route,
@@ -80,14 +95,14 @@ export async function detectLatencyAnomalies(apiId: string, stage: string): Prom
           timestamp: new Date().toISOString()
         });
 
-        // Dispatch multi-channel Gateway anomaly alert
+        // BUG-05 FIX: Use the actual `region` param instead of hardcoded 'us-east-1'.
         try {
           const { dispatchGatewayFleetAlert } = await import('./notifications.js');
           await dispatchGatewayFleetAlert({
             severity: 'warning',
             gatewayId: apiId,
             gatewayName: `API Gateway (${apiId})`,
-            region: 'us-east-1',
+            region,
             stage,
             routePath: route,
             metricName: '3-Sigma Latency Anomaly Spike',

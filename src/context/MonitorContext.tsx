@@ -155,6 +155,10 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Multi-Account Profile States
   const [accountProfiles, setAccountProfiles] = useState<AWSAccountProfile[]>([]);
   const [activeProfileId, setActiveProfileIdState] = useState<string | null>(null);
+  const activeProfileIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeProfileIdRef.current = activeProfileId;
+  }, [activeProfileId]);
 
   // Helper: get auth header from localStorage token
   const getAuthHeader = (): Record<string, string> => {
@@ -240,6 +244,7 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const setActiveProfileId = async (id: string) => {
     setActiveProfileIdState(id);
+    activeProfileIdRef.current = id;
     const target = accountProfiles.find(p => p.id === id);
     if (target) {
       // Update region only — credentials are resolved server-side via x-aws-profile-id
@@ -288,41 +293,19 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const chartDataRef = useRef<{ label: string; values: number[] }[]>([]);
 
-  // Fetch deployed stages for a specific API Gateway (profileId path)
-  const fetchAvailableStagesWithProfileId = async (gateway: APIGatewayItem, profileId: string, region: string): Promise<string[]> => {
-    setLoadingStages(true);
-    try {
-      const response = await fetch('/api/aws/stages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-aws-profile-id': profileId, ...getAuthHeader() },
-        body: JSON.stringify({ region, apiId: gateway.id, protocol: gateway.protocol, bypassCache: true })
-      });
-      const data = await response.json();
-      const list: string[] = (Array.isArray(data.stages) && data.stages.length > 0) ? data.stages : [];
-      setAvailableStages(list);
-      if (list.length > 0) {
-        setAwsConfig(prev => {
-          const keepCurrent = list.includes(prev.stage);
-          return { ...prev, stage: keepCurrent ? prev.stage : list[0] };
-        });
-      }
-      return list;
-    } catch (err) {
-      console.error('Failed fetching stages (profileId):', err);
-      return [];
-    } finally {
-      setLoadingStages(false);
-    }
-  };
-
   // Fetch deployed stages for a specific API Gateway (inline credentials or active profile)
-  const fetchAvailableStages = async (gateway: APIGatewayItem, creds?: { accessKeyId: string; secretAccessKey: string; region: string }): Promise<string[]> => {
+  const fetchAvailableStages = async (
+    gateway: APIGatewayItem,
+    creds?: { accessKeyId: string; secretAccessKey: string; region: string },
+    profileId?: string
+  ): Promise<string[]> => {
     setLoadingStages(true);
     const credentials = creds || { accessKeyId: awsConfig.accessKeyId, secretAccessKey: awsConfig.secretAccessKey, region: awsConfig.region };
+    const effectiveProfileId = profileId || activeProfileId || activeProfileIdRef.current;
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json', ...getAuthHeader() };
-      if (activeProfileId) {
-        headers['x-aws-profile-id'] = activeProfileId;
+      if (effectiveProfileId) {
+        headers['x-aws-profile-id'] = effectiveProfileId;
       }
       const response = await fetch('/api/aws/stages', {
         method: 'POST',
@@ -337,12 +320,17 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
         })
       });
       const data = await response.json();
-      const list: string[] = (Array.isArray(data.stages) && data.stages.length > 0) ? data.stages : [];
+      const genuineStages: string[] = (Array.isArray(data.stages) && data.stages.length > 0) ? data.stages : [];
+      const fallbackList: string[] = Array.isArray(data.fallbackStages) ? data.fallbackStages : [];
+      const list = genuineStages.length > 0 ? genuineStages : fallbackList;
       setAvailableStages(list);
       if (list.length > 0) {
         setAwsConfig(prev => {
-          const keepCurrent = list.includes(prev.stage);
-          return { ...prev, stage: keepCurrent ? prev.stage : list[0] };
+          const savedDefault = localStorage.getItem(`pingsnest_default_stage_${gateway.id}`);
+          const preferredStage = (savedDefault && list.includes(savedDefault))
+            ? savedDefault
+            : (list.includes(prev.stage) ? prev.stage : list[0]);
+          return { ...prev, stage: preferredStage };
         });
       }
       return list;
@@ -352,6 +340,11 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
     } finally {
       setLoadingStages(false);
     }
+  };
+
+  // Fetch deployed stages for a specific API Gateway (profileId path)
+  const fetchAvailableStagesWithProfileId = async (gateway: APIGatewayItem, profileId: string, region: string): Promise<string[]> => {
+    return fetchAvailableStages(gateway, { accessKeyId: '', secretAccessKey: '', region }, profileId);
   };
 
   // 1a. Fetch available gateways via server-side profile ID (server decrypts credentials)
@@ -470,11 +463,12 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (!selectedGateway) return;
     setLoadingRoutes(true);
     try {
+      const effectiveProfileId = activeProfileId || activeProfileIdRef.current;
       const response = await fetch('/api/aws/routes', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(activeProfileId ? { 'x-aws-profile-id': activeProfileId } : {}),
+          ...(effectiveProfileId ? { 'x-aws-profile-id': effectiveProfileId } : {}),
           ...getAuthHeader()
         },
         body: JSON.stringify({
@@ -503,11 +497,12 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const refreshRealMetrics = async (bypassCache?: boolean) => {
     if (!selectedGateway) return;
     try {
+      const effectiveProfileId = activeProfileId || activeProfileIdRef.current;
       const response = await fetch('/api/aws/metrics', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(activeProfileId ? { 'x-aws-profile-id': activeProfileId } : {}),
+          ...(effectiveProfileId ? { 'x-aws-profile-id': effectiveProfileId } : {}),
           ...getAuthHeader()
         },
         body: JSON.stringify({
@@ -562,7 +557,10 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const finalAvgLat = activeReqTimeframes > 0 ? Math.round(weightedLatencySum / activeReqTimeframes) : 0;
         const finalAvgInt = activeReqTimeframes > 0 ? Math.round(weightedIntLatencySum / activeReqTimeframes) : 0;
         const errRate = totalReqs > 0 ? Math.round(((total4xx + total5xx) / totalReqs) * 100) : 0;
-        const successCount = Math.max(0, totalReqs - (total4xx + total5xx));
+        // BUG-12 FIX: Previously assumed any non-4xx/5xx was 2xx, grouping 3xx redirects into success.
+        // CloudWatch Count = ALL requests; subtract known errors to get non-error count.
+        // Label it accurately — it includes 1xx/2xx/3xx.
+        const nonErrorCount = Math.max(0, totalReqs - (total4xx + total5xx));
 
         setOverallStats({
           totalRequests: totalReqs,
@@ -570,7 +568,7 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
           avgIntegrationLatency: finalAvgInt,
           errorRate: errRate,
           cacheHitRate: 0,
-          status2xx: successCount,
+          status2xx: nonErrorCount,
           status4xx: total4xx,
           status5xx: total5xx
         });
@@ -607,9 +605,14 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     setLoadingLogs(true);
     try {
+      const effectiveProfileId = activeProfileId || activeProfileIdRef.current;
       const response = await fetch('/api/aws/logs', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(effectiveProfileId ? { 'x-aws-profile-id': effectiveProfileId } : {}),
+          ...getAuthHeader()
+        },
         body: JSON.stringify({
           region: awsConfig.region,
           accessKeyId: awsConfig.accessKeyId,
@@ -738,6 +741,7 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const profiles = connections.map(mapConnectionToProfile);
           setAccountProfiles(profiles);
           setActiveProfileIdState(defaultConn.id);
+          activeProfileIdRef.current = defaultConn.id;
           setAwsConfig(prev => ({ ...prev, region: defaultConn.region }));
           console.info(`[PingsNest] Loaded default AWS connection "${defaultConn.name}" from database.`);
           fetchAvailableGatewaysWithProfileId(defaultConn.id, defaultConn.region).catch(() => {});
@@ -812,19 +816,22 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
 
   // Sync selected gateway metadata to configurations
+  // BUG-13 FIX: Previously called refreshRealMetrics() immediately when the gateway changed.
+  // At that instant, awsConfig.stage was still '' (stages hadn't been fetched yet),
+  // causing the CloudWatch metrics request to fail with "Missing params: stage".
+  // Now we fetch stages first, then trigger metrics — the polling useEffect below handles it
+  // once awsConfig.stage is populated (it depends on [selectedGateway?.id, awsConfig.stage]).
   useEffect(() => {
     if (selectedGateway) {
+      const savedDefaultStage = localStorage.getItem(`pingsnest_default_stage_${selectedGateway.id}`);
       setAwsConfig(prev => ({
         ...prev,
-        gatewayId: selectedGateway.id
+        gatewayId: selectedGateway.id,
+        ...(savedDefaultStage ? { stage: savedDefaultStage } : {})
       }));
-      
-      // Load routes listing once gateway changes
+      // Fetch stages first; once stage is set, the polling loop (below) fires metrics + logs.
       fetchRoutes();
-      
-      // Initial telemetry refresh
-      refreshRealMetrics();
-      fetchLogs();
+      fetchAvailableStages(selectedGateway);
     }
   }, [selectedGateway]);
 

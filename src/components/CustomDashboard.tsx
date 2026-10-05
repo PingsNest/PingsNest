@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Plus, X, GripVertical, Activity, Clock,
   AlertTriangle, Server, Zap, DollarSign, TrendingUp,
   Globe, Shield, PlayCircle, BarChart3, CheckCircle2,
-  ChevronRight, Eye, EyeOff
+  ChevronRight, Eye, EyeOff, Layers
 } from 'lucide-react';
 
 // ─── Widget registry ──────────────────────────────────────────────────────────
@@ -17,24 +17,31 @@ export interface WidgetDef {
   description: string;
   icon: React.ReactNode;
   size: 'sm' | 'md' | 'lg'; // sm=1 col, md=2 col, lg=3 col
-  category: 'kpi' | 'chart' | 'feed' | 'status';
+  category: 'kpi' | 'chart' | 'feed' | 'status' | 'fleet';
+  scope?: 'fleet' | 'gateway'; // fleet = fleet-wide aggregation
 }
 
 export const ALL_WIDGETS: WidgetDef[] = [
-  { id: 'kpi_requests',     name: 'Total Requests',        description: 'Cumulative gateway request count from CloudWatch',       icon: <Activity size={16} />,     size: 'sm', category: 'kpi'    },
-  { id: 'kpi_latency',      name: 'Avg Latency (p50)',     description: 'Average end-to-end gateway latency in milliseconds',     icon: <Clock size={16} />,        size: 'sm', category: 'kpi'    },
-  { id: 'kpi_error_rate',   name: 'Error Rate',            description: 'Percentage of 4xx + 5xx responses',                      icon: <AlertTriangle size={16} />, size: 'sm', category: 'kpi'    },
-  { id: 'kpi_cache_hit',    name: 'Cache Hit Rate',        description: 'Redis cache hit ratio across all cached API calls',       icon: <Zap size={16} />,          size: 'sm', category: 'kpi'    },
-  { id: 'chart_throughput', name: 'Request Throughput',    description: 'Time-series area chart of requests per minute',           icon: <TrendingUp size={16} />,   size: 'lg', category: 'chart'  },
-  { id: 'chart_latency',    name: 'Latency Trend',         description: 'Gateway vs Integration latency over time',               icon: <BarChart3 size={16} />,    size: 'lg', category: 'chart'  },
-  { id: 'chart_errors',     name: 'Error Distribution',    description: 'Donut chart: 2xx vs 4xx vs 5xx breakdown',               icon: <AlertTriangle size={16} />, size: 'md', category: 'chart'  },
-  { id: 'finops_costs',     name: 'FinOps Cost Breakdown', description: 'Per-route AWS gateway + Lambda cost analysis',           icon: <DollarSign size={16} />,   size: 'lg', category: 'feed'   },
-  { id: 'anomaly_feed',     name: 'Live Anomaly Feed',     description: '3-sigma Z-score anomaly detector output',               icon: <Zap size={16} />,          size: 'md', category: 'feed'   },
-  { id: 'url_status',       name: 'URL Monitor Status',    description: 'Up/down status grid for all monitored endpoints',        icon: <Globe size={16} />,        size: 'md', category: 'status' },
-  { id: 'system_health',    name: 'System Health',         description: 'DB, Redis, Kafka, and WebSocket connection status',      icon: <Server size={16} />,       size: 'md', category: 'status' },
-  { id: 'alert_rules',      name: 'Active Alert Rules',    description: 'Count and list of enabled alert rules',                  icon: <Shield size={16} />,       size: 'sm', category: 'kpi'    },
-  { id: 'playbook_history', name: 'Playbook History',      description: 'Last 5 auto-remediation playbook executions',           icon: <PlayCircle size={16} />,   size: 'md', category: 'feed'   },
-  { id: 'slo_gauge',        name: 'SLO Compliance',        description: 'Current SLO health: error budget and burn rate',         icon: <CheckCircle2 size={16} />, size: 'sm', category: 'kpi'    },
+  { id: 'kpi_requests',           name: 'Total Requests',           description: 'Cumulative gateway request count from CloudWatch',                icon: <Activity size={16} />,     size: 'sm', category: 'kpi',    scope: 'gateway' },
+  { id: 'kpi_latency',            name: 'Avg Latency (p50)',         description: 'Average end-to-end gateway latency in milliseconds',            icon: <Clock size={16} />,        size: 'sm', category: 'kpi',    scope: 'gateway' },
+  { id: 'kpi_error_rate',         name: 'Error Rate',                description: 'Percentage of 4xx + 5xx responses',                             icon: <AlertTriangle size={16} />, size: 'sm', category: 'kpi',    scope: 'gateway' },
+  { id: 'kpi_cache_hit',          name: 'Cache Hit Rate',            description: 'Redis cache hit ratio across all cached API calls',              icon: <Zap size={16} />,          size: 'sm', category: 'kpi',    scope: 'gateway' },
+  { id: 'chart_throughput',       name: 'Request Throughput',        description: 'Time-series area chart of requests per minute',                  icon: <TrendingUp size={16} />,   size: 'lg', category: 'chart',  scope: 'gateway' },
+  { id: 'chart_latency',          name: 'Latency Trend',             description: 'Gateway vs Integration latency over time',                      icon: <BarChart3 size={16} />,    size: 'lg', category: 'chart',  scope: 'gateway' },
+  { id: 'chart_errors',           name: 'Error Distribution',        description: 'Donut chart: 2xx vs 4xx vs 5xx breakdown',                      icon: <AlertTriangle size={16} />, size: 'md', category: 'chart',  scope: 'gateway' },
+  { id: 'finops_costs',           name: 'FinOps Cost Breakdown',     description: 'Per-route AWS gateway + Lambda cost analysis',                  icon: <DollarSign size={16} />,   size: 'lg', category: 'feed',   scope: 'gateway' },
+  { id: 'anomaly_feed',           name: 'Live Anomaly Feed',         description: '3-sigma Z-score anomaly detector output',                       icon: <Zap size={16} />,          size: 'md', category: 'feed',   scope: 'gateway' },
+  { id: 'url_status',             name: 'URL Monitor Status',        description: 'Up/down status grid for all monitored endpoints',               icon: <Globe size={16} />,        size: 'md', category: 'status', scope: 'gateway' },
+  { id: 'system_health',          name: 'System Health',             description: 'DB, Redis, Kafka, and WebSocket connection status',             icon: <Server size={16} />,       size: 'md', category: 'status', scope: 'gateway' },
+  { id: 'alert_rules',            name: 'Active Alert Rules',        description: 'Count and list of enabled alert rules',                         icon: <Shield size={16} />,       size: 'sm', category: 'kpi',    scope: 'gateway' },
+  { id: 'playbook_history',       name: 'Playbook History',          description: 'Last 5 auto-remediation playbook executions',                  icon: <PlayCircle size={16} />,   size: 'md', category: 'feed',   scope: 'gateway' },
+  { id: 'slo_gauge',              name: 'SLO Compliance',            description: 'Current SLO health: error budget and burn rate',                icon: <CheckCircle2 size={16} />, size: 'sm', category: 'kpi',    scope: 'gateway' },
+  // ── Fleet-scoped widgets ─────────────────────────────────────────────────────
+  { id: 'fleet_health_grid',      name: 'Fleet Health Grid',         description: 'Health badge grid for all discovered gateways',                 icon: <Layers size={16} />,       size: 'lg', category: 'fleet',  scope: 'fleet'   },
+  { id: 'fleet_throughput_compare',name: 'Fleet Throughput Compare', description: 'Inline sparklines showing req/min per gateway side-by-side',   icon: <TrendingUp size={16} />,   size: 'lg', category: 'fleet',  scope: 'fleet'   },
+  { id: 'fleet_error_heatmap',    name: 'Fleet Error Heatmap',       description: 'Error rate intensity grid across all gateways',                 icon: <AlertTriangle size={16} />, size: 'lg', category: 'fleet',  scope: 'fleet'   },
+  { id: 'fleet_top_routes',       name: 'Fleet Top Routes',          description: 'Highest-traffic routes aggregated from all gateway log sources',icon: <ChevronRight size={16} />, size: 'md', category: 'fleet',  scope: 'fleet'   },
+  { id: 'fleet_slo_summary',      name: 'Fleet SLO Summary',         description: 'SLO compliance % per gateway side-by-side',                    icon: <CheckCircle2 size={16} />, size: 'md', category: 'fleet',  scope: 'fleet'   },
 ];
 
 // ─── localStorage persistence ─────────────────────────────────────────────────
@@ -477,22 +484,251 @@ const WidgetPlaybookHistory: React.FC = () => {
 
 // ─── Widget renderer router ───────────────────────────────────────────────────
 
-const WIDGET_RENDERERS: Record<string, React.FC> = {
-  kpi_requests:     WidgetKpiRequests,
-  kpi_latency:      WidgetKpiLatency,
-  kpi_error_rate:   WidgetKpiErrorRate,
-  kpi_cache_hit:    WidgetKpiCacheHit,
-  chart_throughput: WidgetChartThroughput,
-  chart_latency:    WidgetChartLatency,
-  chart_errors:     WidgetChartErrors,
-  finops_costs:     WidgetFinOps,
-  anomaly_feed:     WidgetAnomalyFeed,
-  url_status:       WidgetUrlStatus,
-  system_health:    WidgetSystemHealth,
-  alert_rules:      WidgetKpiAlertRules,
-  playbook_history: WidgetPlaybookHistory,
-  slo_gauge:        WidgetKpiSlo,
+// ─── Fleet-scoped Widget Renderers ───────────────────────────────────────────
+
+const WidgetFleetHealthGrid: React.FC = () => {
+  const { awsConfig, activeProfileId } = useMonitor() as any;
+  const [fleetData, setFleetData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch('/api/gateways/fleet-summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(activeProfileId ? { 'x-aws-profile-id': activeProfileId } : {}) },
+          body: JSON.stringify({ region: awsConfig?.region || 'us-east-1', accessKeyId: awsConfig?.accessKeyId, secretAccessKey: awsConfig?.secretAccessKey }),
+        });
+        if (res.ok && !cancelled) { const j = await res.json(); setFleetData(j); }
+      } catch {} finally { if (!cancelled) setLoading(false); }
+    };
+    load();
+    const t = setInterval(load, 20000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [awsConfig?.region]);
+
+  if (loading) return <LoadingShimmer />;
+  const gateways: any[] = fleetData?.gateways || [];
+  if (gateways.length === 0) return <EmptyState message="No gateways discovered in this region" />;
+  const healthColor = (s: string) => s === 'CRITICAL' ? 'var(--color-error)' : s === 'WARNING' ? 'var(--color-warning)' : s === 'UNKNOWN' ? 'var(--text-muted)' : 'var(--color-success)';
+  const healthBg = (s: string) => s === 'CRITICAL' ? 'rgba(239,68,68,0.1)' : s === 'WARNING' ? 'rgba(245,158,11,0.1)' : s === 'UNKNOWN' ? 'rgba(148,163,184,0.08)' : 'rgba(16,185,129,0.1)';
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 8 }}>
+      {gateways.map((gw: any) => (
+        <div key={gw.id} style={{
+          padding: '10px 12px', borderRadius: 10,
+          background: healthBg(gw.healthStatus),
+          border: `1px solid ${healthColor(gw.healthStatus)}33`,
+          display: 'flex', flexDirection: 'column', gap: 4,
+        }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: healthColor(gw.healthStatus) }}>{gw.healthStatus}</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={gw.name}>{gw.name}</div>
+          <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{gw.protocol} · {gw.stage}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-secondary)' }}>{gw.requestsPerMin} req/min</div>
+        </div>
+      ))}
+    </div>
+  );
 };
+
+const WidgetFleetThroughputCompare: React.FC = () => {
+  const { awsConfig, activeProfileId } = useMonitor() as any;
+  const [gateways, setGateways] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch('/api/gateways/fleet-summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(activeProfileId ? { 'x-aws-profile-id': activeProfileId } : {}) },
+          body: JSON.stringify({ region: awsConfig?.region || 'us-east-1', accessKeyId: awsConfig?.accessKeyId, secretAccessKey: awsConfig?.secretAccessKey }),
+        });
+        if (res.ok && !cancelled) { const j = await res.json(); setGateways(j.gateways || []); }
+      } catch {} finally { if (!cancelled) setLoading(false); }
+    };
+    load();
+    const t = setInterval(load, 20000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [awsConfig?.region]);
+
+  if (loading) return <LoadingShimmer />;
+  if (gateways.length === 0) return <EmptyState message="No gateways in this region" />;
+  const maxReq = Math.max(...gateways.map((g: any) => g.requestsPerMin), 1);
+  const BAR_COLORS = ['#00f2fe', '#a855f7', '#f59e0b', '#34d399', '#f87171', '#60a5fa'];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {gateways.slice(0, 6).map((gw: any, i: number) => {
+        const pct = maxReq > 0 ? (gw.requestsPerMin / maxReq) * 100 : 0;
+        return (
+          <div key={gw.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', minWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={gw.name}>{gw.name}</div>
+            <div style={{ flex: 1, height: 8, borderRadius: 4, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+              <div style={{ width: `${pct}%`, height: '100%', background: BAR_COLORS[i % BAR_COLORS.length], borderRadius: 4, transition: 'width 0.5s ease' }} />
+            </div>
+            <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--text-primary)', minWidth: 50, textAlign: 'right' }}>{gw.requestsPerMin}/min</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+const WidgetFleetErrorHeatmap: React.FC = () => {
+  const { awsConfig, activeProfileId } = useMonitor() as any;
+  const [gateways, setGateways] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch('/api/gateways/fleet-summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(activeProfileId ? { 'x-aws-profile-id': activeProfileId } : {}) },
+          body: JSON.stringify({ region: awsConfig?.region || 'us-east-1', accessKeyId: awsConfig?.accessKeyId, secretAccessKey: awsConfig?.secretAccessKey }),
+        });
+        if (res.ok && !cancelled) { const j = await res.json(); setGateways(j.gateways || []); }
+      } catch {} finally { if (!cancelled) setLoading(false); }
+    };
+    load();
+    const t = setInterval(load, 30000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [awsConfig?.region]);
+
+  if (loading) return <LoadingShimmer />;
+  if (gateways.length === 0) return <EmptyState message="No gateways in this region" />;
+  const maxErr = Math.max(...gateways.map((g: any) => g.errorRate5xxPct), 0.01);
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid var(--border-main)' }}>
+            {['Gateway', 'Stage', '5XX Rate', '4XX Rate', 'Avg Lat'].map((h, i) => (
+              <th key={i} style={{ padding: '4px 8px', textAlign: i === 0 ? 'left' : 'center', fontSize: 9, fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {gateways.map((gw: any) => {
+            const errPct = maxErr > 0 ? (gw.errorRate5xxPct / maxErr) : 0;
+            const errBg = `rgba(239,68,68,${errPct * 0.45})`;
+            return (
+              <tr key={gw.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                <td style={{ padding: '6px 8px', fontWeight: 700, color: 'var(--text-primary)', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{gw.name}</td>
+                <td style={{ padding: '6px 8px', textAlign: 'center', color: 'var(--color-success)', fontSize: 10 }}>{gw.stage}</td>
+                <td style={{ padding: '6px 8px', textAlign: 'center', background: errBg, fontWeight: 800, color: gw.errorRate5xxPct > 0 ? 'var(--color-error)' : 'var(--color-success)' }}>{gw.errorRate5xxPct}%</td>
+                <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 700, color: 'var(--text-secondary)' }}>{gw.errorRate4xxPct}%</td>
+                <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 700, color: gw.avgLatencyMs > 300 ? 'var(--color-warning)' : 'var(--text-primary)' }}>{gw.avgLatencyMs}ms</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+const WidgetFleetTopRoutes: React.FC = () => {
+  const { routes } = useMonitor() as any;
+  const list: any[] = routes || [];
+  if (list.length === 0) return <EmptyState message="Select a gateway to see routes, or use Compare Mode" />;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 700, marginBottom: 4 }}>
+        Routes from selected gateway · {list.length} total
+      </div>
+      {list.slice(0, 6).map((r: any, i: number) => (
+        <div key={i} style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '7px 10px', borderRadius: 8,
+          background: 'rgba(0,242,254,0.03)', border: '1px solid var(--border-main)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
+            <span style={{
+              fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 4,
+              color: r.method === 'GET' ? '#34d399' : r.method === 'POST' ? '#00f2fe' : r.method === 'DELETE' ? '#f87171' : '#f59e0b',
+              background: r.method === 'GET' ? 'rgba(52,211,153,0.1)' : r.method === 'POST' ? 'rgba(0,242,254,0.1)' : r.method === 'DELETE' ? 'rgba(248,113,113,0.1)' : 'rgba(245,158,11,0.1)',
+              border: '1px solid currentColor',
+            }}>{r.method}</span>
+            <span style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.path}</span>
+          </div>
+          {r.lambdaName && <span style={{ fontSize: 10, color: '#a855f7', fontFamily: 'monospace', flexShrink: 0 }}>λ {r.lambdaName}</span>}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const WidgetFleetSloSummary: React.FC = () => {
+  const { awsConfig } = useMonitor() as any;
+  const [slos, setSlos] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/slo/targets?apiId=*')
+      .then(r => r.ok ? r.json() : { targets: [] })
+      .then(d => { if (!cancelled) { setSlos(d.targets || []); setLoading(false); } })
+      .catch(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [awsConfig?.region]);
+
+  if (loading) return <LoadingShimmer />;
+  if (slos.length === 0) return <EmptyState message="No SLO targets defined yet — create them in SLO Manager" />;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {slos.slice(0, 5).map((s: any, i: number) => {
+        const compliance = s.currentSloPercent ?? 0;
+        const target = s.targetSloPercent ?? 99.9;
+        const ok = compliance >= target;
+        const pct = Math.min((compliance / target) * 100, 100);
+        return (
+          <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-primary)' }}>{s.name}</span>
+              <span style={{ fontSize: 10, fontWeight: 800, color: ok ? 'var(--color-success)' : 'var(--color-error)' }}>
+                {compliance.toFixed(2)}% / {target}%
+              </span>
+            </div>
+            <div style={{ height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+              <div style={{ width: `${pct}%`, height: '100%', borderRadius: 3, background: ok ? 'var(--color-success)' : 'var(--color-error)', transition: 'width 0.4s ease' }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+const WIDGET_RENDERERS: Record<string, React.FC> = {
+  kpi_requests:              WidgetKpiRequests,
+  kpi_latency:               WidgetKpiLatency,
+  kpi_error_rate:            WidgetKpiErrorRate,
+  kpi_cache_hit:             WidgetKpiCacheHit,
+  chart_throughput:          WidgetChartThroughput,
+  chart_latency:             WidgetChartLatency,
+  chart_errors:              WidgetChartErrors,
+  finops_costs:              WidgetFinOps,
+  anomaly_feed:              WidgetAnomalyFeed,
+  url_status:                WidgetUrlStatus,
+  system_health:             WidgetSystemHealth,
+  alert_rules:               WidgetKpiAlertRules,
+  playbook_history:          WidgetPlaybookHistory,
+  slo_gauge:                 WidgetKpiSlo,
+  // Fleet widgets
+  fleet_health_grid:         WidgetFleetHealthGrid,
+  fleet_throughput_compare:  WidgetFleetThroughputCompare,
+  fleet_error_heatmap:       WidgetFleetErrorHeatmap,
+  fleet_top_routes:          WidgetFleetTopRoutes,
+  fleet_slo_summary:         WidgetFleetSloSummary,
+};
+
 
 // ─── Utility sub-components ───────────────────────────────────────────────────
 
@@ -630,6 +866,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   chart: 'Charts',
   feed: 'Live Feeds',
   status: 'Status Panels',
+  fleet: '🛸 Fleet-Wide Widgets',
 };
 
 interface LibraryPanelProps {
@@ -639,7 +876,7 @@ interface LibraryPanelProps {
 }
 
 const LibraryPanel: React.FC<LibraryPanelProps> = ({ pinnedIds, onAdd, onClose }) => {
-  const categories = ['kpi', 'chart', 'feed', 'status'] as const;
+  const categories = ['fleet', 'kpi', 'chart', 'feed', 'status'] as const;
 
   return (
     <div
