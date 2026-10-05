@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, AlertTriangle, CheckCircle, Clock, Code, ExternalLink, Globe, Copy, CheckCheck, Settings, FileText, Eye, EyeOff, Server, Search } from 'lucide-react';
+import { ShieldCheck, AlertTriangle, CheckCircle, Clock, Code, ExternalLink, Globe, Copy, CheckCheck, Settings, FileText, Eye, EyeOff, Server, Search, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useMonitor } from '../context/MonitorContext';
 
 interface IncidentItem {
@@ -32,6 +32,12 @@ export const StatusPortal: React.FC = () => {
   const [visibleTargetIds, setVisibleTargetIds] = useState<string[] | null>(null);
   const [visibilityMode, setVisibilityMode] = useState<'all' | 'custom'>('all');
   const [serverSearchQuery, setServerSearchQuery] = useState('');
+
+  // Incidents Pagination & Show More State
+  const perIncidentPage = 5;
+  const [portalIncidentMode, setPortalIncidentMode] = useState<'loadMore' | 'pagination'>('loadMore');
+  const [portalIncidentsLimit, setPortalIncidentsLimit] = useState(5);
+  const [portalIncidentPage, setPortalIncidentPage] = useState(1);
 
   // RCA Post-Mortem State
   const [selectedRcaReport, setSelectedRcaReport] = useState<any>(null);
@@ -737,52 +743,192 @@ export const StatusPortal: React.FC = () => {
       </div>
 
       {/* Incident History Timeline */}
-      <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <h4 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-main)', paddingBottom: '12px' }}>
-          Past Incident History & Resolution Notes
-        </h4>
+      {(() => {
+        const totalIncidentPages = Math.max(1, Math.ceil(incidents.length / perIncidentPage));
+        const displayedIncidents = portalIncidentMode === 'pagination'
+          ? incidents.slice((portalIncidentPage - 1) * perIncidentPage, portalIncidentPage * perIncidentPage)
+          : incidents.slice(0, portalIncidentsLimit);
 
-        {incidents.length === 0 ? (
-          <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
-            No major incident outages recorded in the last 90 days.
-          </div>
-        ) : (
-          incidents.map(inc => (
-            <div key={inc.id} style={{ display: 'flex', gap: '16px', padding: '12px 0', borderBottom: '1px solid var(--border-main)' }}>
-              <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: 'rgba(239, 68, 68, 0.1)', height: 'fit-content' }}>
-                <Clock size={16} color="var(--color-error)" />
+        return (
+          <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-main)', paddingBottom: '12px', flexWrap: 'wrap', gap: 10 }}>
+              <div>
+                <h4 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                  Past Incident History & Resolution Notes
+                </h4>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                  {incidents.length === 0 ? 'No incidents logged' : `${incidents.length} recorded outages in last 90 days`}
+                </span>
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                    {inc.targetName} — {inc.errorReason}
-                  </span>
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                    {new Date(inc.startedAt).toLocaleString()}
-                  </span>
-                </div>
-                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px', lineHeight: 1.4 }}>
-                  Automated incident handler logged a HTTP {inc.statusCode || 500} surge. Resolved in {inc.durationSec || 120} seconds.
-                </p>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px' }}>
-                  <span style={{ fontSize: '10px', color: 'var(--color-success)', fontWeight: 700 }}>
-                    ✓ RESOLVED
-                  </span>
+
+              {incidents.length > perIncidentPage && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(255,255,255,0.03)', padding: 3, borderRadius: 8, border: '1px solid var(--border-main)' }}>
                   <button
                     type="button"
-                    onClick={() => handleOpenRca(inc.id)}
-                    className="btn btn-secondary"
-                    style={{ padding: '3px 8px', fontSize: '10px', gap: '4px', borderRadius: '4px' }}
+                    onClick={() => setPortalIncidentMode('loadMore')}
+                    style={{
+                      padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: 'none', cursor: 'pointer',
+                      background: portalIncidentMode === 'loadMore' ? 'var(--color-primary)' : 'transparent',
+                      color: portalIncidentMode === 'loadMore' ? '#000' : 'var(--text-secondary)',
+                      transition: 'all 0.15s ease'
+                    }}
                   >
-                    <FileText size={11} color="var(--color-primary)" />
-                    {loadingRcaId === inc.id ? 'Generating RCA…' : 'Post-Mortem RCA'}
+                    Show More
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPortalIncidentMode('pagination')}
+                    style={{
+                      padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: 'none', cursor: 'pointer',
+                      background: portalIncidentMode === 'pagination' ? 'var(--color-primary)' : 'transparent',
+                      color: portalIncidentMode === 'pagination' ? '#000' : 'var(--text-secondary)',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    Pagination
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {incidents.length === 0 ? (
+              <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+                No major incident outages recorded in the last 90 days.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {displayedIncidents.map(inc => (
+                  <div key={inc.id} style={{ display: 'flex', gap: '16px', padding: '12px 0', borderBottom: '1px solid var(--border-main)' }}>
+                    <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: 'rgba(239, 68, 68, 0.1)', height: 'fit-content' }}>
+                      <Clock size={16} color="var(--color-error)" />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                          {inc.targetName} — {inc.errorReason}
+                        </span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                          {new Date(inc.startedAt).toLocaleString()}
+                        </span>
+                      </div>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px', lineHeight: 1.4 }}>
+                        Automated incident handler logged a HTTP {inc.statusCode || 500} surge. Resolved in {inc.durationSec || 120} seconds.
+                      </p>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px' }}>
+                        <span style={{ fontSize: '10px', color: 'var(--color-success)', fontWeight: 700 }}>
+                          ✓ RESOLVED
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenRca(inc.id)}
+                          className="btn btn-secondary"
+                          style={{ padding: '3px 8px', fontSize: '10px', gap: '4px', borderRadius: '4px' }}
+                        >
+                          <FileText size={11} color="var(--color-primary)" />
+                          {loadingRcaId === inc.id ? 'Generating RCA…' : 'Post-Mortem RCA'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Show More Controls */}
+            {incidents.length > perIncidentPage && portalIncidentMode === 'loadMore' && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, paddingTop: 14, borderTop: '1px solid var(--border-main)' }}>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  Showing <strong>{displayedIncidents.length}</strong> of <strong>{incidents.length}</strong> past incidents
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {portalIncidentsLimit < incidents.length && (
+                    <button
+                      type="button"
+                      onClick={() => setPortalIncidentsLimit(prev => Math.min(incidents.length, prev + 5))}
+                      className="btn btn-primary"
+                      style={{ padding: '6px 14px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 8 }}
+                    >
+                      <ChevronDown size={14} /> Show More (+5)
+                    </button>
+                  )}
+                  {portalIncidentsLimit < incidents.length && (
+                    <button
+                      type="button"
+                      onClick={() => setPortalIncidentsLimit(incidents.length)}
+                      className="btn btn-secondary"
+                      style={{ padding: '6px 12px', fontSize: 12, borderRadius: 8 }}
+                    >
+                      Show All
+                    </button>
+                  )}
+                  {portalIncidentsLimit > perIncidentPage && (
+                    <button
+                      type="button"
+                      onClick={() => setPortalIncidentsLimit(perIncidentPage)}
+                      className="btn btn-secondary"
+                      style={{ padding: '6px 12px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 8 }}
+                    >
+                      <ChevronUp size={14} /> Show Less
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Pagination Controls */}
+            {incidents.length > perIncidentPage && portalIncidentMode === 'pagination' && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, paddingTop: 14, borderTop: '1px solid var(--border-main)' }}>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  Showing <strong>{(portalIncidentPage - 1) * perIncidentPage + 1}–{Math.min(portalIncidentPage * perIncidentPage, incidents.length)}</strong> of <strong>{incidents.length}</strong> incidents
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button
+                    type="button"
+                    disabled={portalIncidentPage === 1}
+                    onClick={() => setPortalIncidentPage(p => Math.max(1, p - 1))}
+                    className="btn btn-secondary"
+                    style={{ padding: '5px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, opacity: portalIncidentPage === 1 ? 0.4 : 1, cursor: portalIncidentPage === 1 ? 'not-allowed' : 'pointer' }}
+                  >
+                    <ChevronLeft size={13} /> Prev
+                  </button>
+
+                  {Array.from({ length: totalIncidentPages }).map((_, idx) => {
+                    const pageNum = idx + 1;
+                    const isActive = pageNum === portalIncidentPage;
+                    return (
+                      <button
+                        key={pageNum}
+                        type="button"
+                        onClick={() => setPortalIncidentPage(pageNum)}
+                        style={{
+                          minWidth: 28, height: 28, padding: '0 6px',
+                          borderRadius: 6, fontSize: 11, fontWeight: 700,
+                          border: isActive ? '1px solid var(--color-primary)' : '1px solid var(--border-main)',
+                          backgroundColor: isActive ? 'rgba(0, 242, 254, 0.15)' : 'rgba(255,255,255,0.03)',
+                          color: isActive ? 'var(--color-primary)' : 'var(--text-secondary)',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+
+                  <button
+                    type="button"
+                    disabled={portalIncidentPage === totalIncidentPages}
+                    onClick={() => setPortalIncidentPage(p => Math.min(totalIncidentPages, p + 1))}
+                    className="btn btn-secondary"
+                    style={{ padding: '5px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, opacity: portalIncidentPage === totalIncidentPages ? 0.4 : 1, cursor: portalIncidentPage === totalIncidentPages ? 'not-allowed' : 'pointer' }}
+                  >
+                    Next <ChevronRight size={13} />
                   </button>
                 </div>
               </div>
-            </div>
-          ))
-        )}
-      </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* RCA Post-Mortem Viewer Modal */}
       {selectedRcaReport && (

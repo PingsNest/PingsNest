@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, AlertTriangle, Clock, RefreshCw, Globe, Rss } from 'lucide-react';
+import { CheckCircle, AlertTriangle, Clock, RefreshCw, Globe, Rss, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface PublicTarget {
   id: string;
@@ -34,6 +34,12 @@ export const PublicStatusPage: React.FC = () => {
   const [supportEmail, setSupportEmail] = useState(() => localStorage.getItem('pingsnest_public_email') || '');
 
   const [isWsConnected, setIsWsConnected] = useState(false);
+
+  // Incidents Pagination & Show More State
+  const perPage = 4;
+  const [incidentNavMode, setIncidentNavMode] = useState<'loadMore' | 'pagination'>('loadMore');
+  const [visibleIncidentsCount, setVisibleIncidentsCount] = useState<number>(4);
+  const [incidentCurrentPage, setIncidentCurrentPage] = useState<number>(1);
 
   const fetchData = async () => {
     try {
@@ -299,39 +305,179 @@ export const PublicStatusPage: React.FC = () => {
         </div>
 
         {/* Incident History Timeline */}
-        <div className="glass-panel" style={{ padding: 24, borderRadius: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', margin: 0, borderBottom: '1px solid var(--border-main, rgba(255,255,255,0.08))', paddingBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            PAST INCIDENTS & RESOLUTIONS (LAST 90 DAYS)
-          </h3>
+        {(() => {
+          const totalIncidentPages = Math.max(1, Math.ceil(incidents.length / perPage));
+          const displayedIncidents = incidentNavMode === 'pagination'
+            ? incidents.slice((incidentCurrentPage - 1) * perPage, incidentCurrentPage * perPage)
+            : incidents.slice(0, visibleIncidentsCount);
 
-          {incidents.length === 0 ? (
-            <div style={{ padding: 20, textAlign: 'center', color: '#34d399', fontSize: 13, fontWeight: 600 }}>
-              ✓ 100% SLA Uptime — No major outages recorded in the last 90 days.
-            </div>
-          ) : (
-            incidents.map(inc => (
-              <div key={inc.id} style={{ display: 'flex', gap: 14, padding: '12px 0', borderBottom: '1px solid var(--border-main, rgba(255,255,255,0.05))' }}>
-                <div style={{ padding: 8, borderRadius: 8, backgroundColor: 'rgba(239,68,68,0.1)', height: 'fit-content' }}>
-                  <Clock size={16} color="#f87171" />
+          return (
+            <div className="glass-panel" style={{ padding: 24, borderRadius: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-main, rgba(255,255,255,0.08))', paddingBottom: 12, flexWrap: 'wrap', gap: 10 }}>
+                <div>
+                  <h3 style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    PAST INCIDENTS & RESOLUTIONS (LAST 90 DAYS)
+                  </h3>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    {incidents.length === 0 ? 'No incidents logged' : `${incidents.length} total logged incident${incidents.length > 1 ? 's' : ''}`}
+                  </span>
                 </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>
-                      {inc.targetName} — {inc.errorReason || 'Service Interruption'}
-                    </span>
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      {new Date(inc.startedAt).toLocaleString()}
-                    </span>
+
+                {incidents.length > perPage && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(255,255,255,0.03)', padding: 3, borderRadius: 8, border: '1px solid var(--border-main, rgba(255,255,255,0.08))' }}>
+                    <button
+                      type="button"
+                      onClick={() => setIncidentNavMode('loadMore')}
+                      style={{
+                        padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: 'none', cursor: 'pointer',
+                        background: incidentNavMode === 'loadMore' ? 'var(--color-primary, #00f2fe)' : 'transparent',
+                        color: incidentNavMode === 'loadMore' ? '#000' : 'var(--text-secondary)',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      Show More
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIncidentNavMode('pagination')}
+                      style={{
+                        padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: 'none', cursor: 'pointer',
+                        background: incidentNavMode === 'pagination' ? 'var(--color-primary, #00f2fe)' : 'transparent',
+                        color: incidentNavMode === 'pagination' ? '#000' : 'var(--text-secondary)',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      Pagination
+                    </button>
                   </div>
-                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, marginBottom: 4, lineHeight: 1.4 }}>
-                    Automated anomaly detection logged HTTP {inc.statusCode || 500} response spikes. Automatically recovered in {inc.durationSec || 120} seconds.
-                  </p>
-                  <span style={{ fontSize: 10, fontWeight: 800, color: '#34d399' }}>✓ RESOLVED</span>
-                </div>
+                )}
               </div>
-            ))
-          )}
-        </div>
+
+              {incidents.length === 0 ? (
+                <div style={{ padding: 20, textAlign: 'center', color: '#34d399', fontSize: 13, fontWeight: 600 }}>
+                  ✓ 100% SLA Uptime — No major outages recorded in the last 90 days.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {displayedIncidents.map(inc => (
+                    <div key={inc.id} style={{ display: 'flex', gap: 14, padding: '14px 0', borderBottom: '1px solid var(--border-main, rgba(255,255,255,0.05))' }}>
+                      <div style={{ padding: 8, borderRadius: 8, backgroundColor: 'rgba(239,68,68,0.1)', height: 'fit-content' }}>
+                        <Clock size={16} color="#f87171" />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                          <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>
+                            {inc.targetName} — {inc.errorReason || 'Service Interruption'}
+                          </span>
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                            {new Date(inc.startedAt).toLocaleString()}
+                          </span>
+                        </div>
+                        <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, marginBottom: 4, lineHeight: 1.4 }}>
+                          Automated anomaly detection logged HTTP {inc.statusCode || 500} response spikes. Automatically recovered in {inc.durationSec || 120} seconds.
+                        </p>
+                        <span style={{ fontSize: 10, fontWeight: 800, color: '#34d399' }}>✓ RESOLVED</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Show More Mode Controls */}
+              {incidents.length > perPage && incidentNavMode === 'loadMore' && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, paddingTop: 14, borderTop: '1px solid var(--border-main, rgba(255,255,255,0.06))' }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    Showing <strong>{displayedIncidents.length}</strong> of <strong>{incidents.length}</strong> past incidents
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {visibleIncidentsCount < incidents.length && (
+                      <button
+                        type="button"
+                        onClick={() => setVisibleIncidentsCount(prev => Math.min(incidents.length, prev + 4))}
+                        className="btn btn-primary"
+                        style={{ padding: '6px 14px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 8 }}
+                      >
+                        <ChevronDown size={14} /> Show More (+4)
+                      </button>
+                    )}
+                    {visibleIncidentsCount < incidents.length && (
+                      <button
+                        type="button"
+                        onClick={() => setVisibleIncidentsCount(incidents.length)}
+                        className="btn btn-secondary"
+                        style={{ padding: '6px 12px', fontSize: 12, borderRadius: 8 }}
+                      >
+                        Show All
+                      </button>
+                    )}
+                    {visibleIncidentsCount > perPage && (
+                      <button
+                        type="button"
+                        onClick={() => setVisibleIncidentsCount(perPage)}
+                        className="btn btn-secondary"
+                        style={{ padding: '6px 12px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 8 }}
+                      >
+                        <ChevronUp size={14} /> Show Less
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Pagination Mode Controls */}
+              {incidents.length > perPage && incidentNavMode === 'pagination' && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, paddingTop: 14, borderTop: '1px solid var(--border-main, rgba(255,255,255,0.06))' }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    Showing <strong>{(incidentCurrentPage - 1) * perPage + 1}–{Math.min(incidentCurrentPage * perPage, incidents.length)}</strong> of <strong>{incidents.length}</strong> incidents
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <button
+                      type="button"
+                      disabled={incidentCurrentPage === 1}
+                      onClick={() => setIncidentCurrentPage(p => Math.max(1, p - 1))}
+                      className="btn btn-secondary"
+                      style={{ padding: '5px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, opacity: incidentCurrentPage === 1 ? 0.4 : 1, cursor: incidentCurrentPage === 1 ? 'not-allowed' : 'pointer' }}
+                    >
+                      <ChevronLeft size={13} /> Prev
+                    </button>
+
+                    {Array.from({ length: totalIncidentPages }).map((_, idx) => {
+                      const pageNum = idx + 1;
+                      const isActive = pageNum === incidentCurrentPage;
+                      return (
+                        <button
+                          key={pageNum}
+                          type="button"
+                          onClick={() => setIncidentCurrentPage(pageNum)}
+                          style={{
+                            minWidth: 28, height: 28, padding: '0 6px',
+                            borderRadius: 6, fontSize: 11, fontWeight: 700,
+                            border: isActive ? '1px solid var(--color-primary, #00f2fe)' : '1px solid var(--border-main, rgba(255,255,255,0.1))',
+                            backgroundColor: isActive ? 'rgba(0, 242, 254, 0.15)' : 'rgba(255,255,255,0.03)',
+                            color: isActive ? 'var(--color-primary, #00f2fe)' : 'var(--text-secondary)',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+
+                    <button
+                      type="button"
+                      disabled={incidentCurrentPage === totalIncidentPages}
+                      onClick={() => setIncidentCurrentPage(p => Math.min(totalIncidentPages, p + 1))}
+                      className="btn btn-secondary"
+                      style={{ padding: '5px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, opacity: incidentCurrentPage === totalIncidentPages ? 0.4 : 1, cursor: incidentCurrentPage === totalIncidentPages ? 'not-allowed' : 'pointer' }}
+                    >
+                      Next <ChevronRight size={13} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Footer */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, fontSize: 11, color: 'var(--text-muted)', paddingTop: 12 }}>
