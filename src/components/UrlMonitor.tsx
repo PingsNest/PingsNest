@@ -3,7 +3,7 @@ import {
   Activity, Wifi, WifiOff, Trash2, Play, Pause, Plus, RefreshCw, 
   TrendingUp, Edit, Copy, ChevronDown, ChevronRight, Search, 
   ExternalLink, FileText, Clock, AlertTriangle, Award, Check,
-  Bell, Calendar, Zap, Folder
+  Bell, Calendar, Zap, Folder, Eye, EyeOff
 } from 'lucide-react';
 
 export interface SyntheticStep {
@@ -48,6 +48,7 @@ interface UrlTarget {
   tlsLatency?: number;
   ttfbLatency?: number;
   ignoredStatusCodes?: string;
+  showOnPublicStatus?: boolean;
 }
 
 export interface UrlIncident {
@@ -161,6 +162,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
   const [bodyEncoding, setBodyEncoding] = useState('JSON');
   const [ignoredStatusCodes, setIgnoredStatusCodes] = useState('');
   const [scenarioSteps, setScenarioSteps] = useState<SyntheticStep[]>([]);
+  const [showOnPublicStatus, setShowOnPublicStatus] = useState(true);
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -483,7 +485,8 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
       group: group.trim(),
       bodyEncoding,
       ignoredStatusCodes: ignoredStatusCodes.trim(),
-      steps: scenarioSteps
+      steps: scenarioSteps,
+      showOnPublicStatus
     };
 
     try {
@@ -521,6 +524,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
         setBodyEncoding('JSON');
         setIgnoredStatusCodes('');
         setScenarioSteps([]);
+        setShowOnPublicStatus(true);
         setEditingTargetId(null);
         setIsFormVisible(false);
 
@@ -621,6 +625,7 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
     setBodyEncoding(target.bodyEncoding || 'JSON');
     setIgnoredStatusCodes(target.ignoredStatusCodes || '');
     setScenarioSteps(target.steps || []);
+    setShowOnPublicStatus(target.showOnPublicStatus !== false);
     setFormTab('general');
     setIsFormVisible(true);
   };
@@ -1351,6 +1356,43 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
                         />
                       </div>
                     </div>
+
+                    {/* Public Status Portal Display Toggle */}
+                    <div style={{
+                      marginTop: 6,
+                      padding: '12px 16px',
+                      borderRadius: '8px',
+                      backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                      border: '1px solid var(--border-main)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 12
+                    }}>
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span>Show on Public Status Page</span>
+                          <span style={{
+                            fontSize: 10,
+                            padding: '1px 6px',
+                            borderRadius: 4,
+                            backgroundColor: showOnPublicStatus ? 'rgba(0, 242, 254, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                            color: showOnPublicStatus ? 'var(--color-primary)' : 'var(--text-muted)'
+                          }}>
+                            {showOnPublicStatus ? 'Visible' : 'Hidden'}
+                          </span>
+                        </div>
+                        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0 0' }}>
+                          Display this server's SLA health status on the unauthenticated public portal (<code style={{ color: 'var(--color-primary)' }}>/public-status</code>).
+                        </p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={showOnPublicStatus}
+                        onChange={(e) => setShowOnPublicStatus(e.target.checked)}
+                        style={{ width: 18, height: 18, cursor: 'pointer' }}
+                      />
+                    </div>
                   </div>
                 )}
 
@@ -1760,6 +1802,36 @@ export const UrlMonitor: React.FC<UrlMonitorProps> = ({ token, onLogout }) => {
                       title="Get live SVG status badges for GitHub README or Website embeds"
                     >
                       <Award size={13} /> Badges
+                    </button>
+
+                    <button
+                      onClick={async () => {
+                        try {
+                          const res = await authFetch(`/api/url-monitor/targets/${selectedTarget.id}/toggle-public`, {
+                            method: 'POST'
+                          });
+                          const data = await res.json();
+                          if (data.success && data.target) {
+                            setSelectedTarget(data.target);
+                            setTargets(targets.map(t => t.id === data.target.id ? data.target : t));
+                          }
+                        } catch {}
+                      }}
+                      className="btn btn-secondary"
+                      style={{ 
+                        padding: '8px 12px', 
+                        fontSize: '13px', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: '6px',
+                        background: selectedTarget.showOnPublicStatus !== false ? 'rgba(0, 242, 254, 0.08)' : 'rgba(255, 255, 255, 0.04)',
+                        borderColor: selectedTarget.showOnPublicStatus !== false ? 'rgba(0, 242, 254, 0.25)' : 'var(--border-main)',
+                        color: selectedTarget.showOnPublicStatus !== false ? 'var(--color-primary)' : 'var(--text-muted)'
+                      }}
+                      title="Toggle visibility on /public-status page"
+                    >
+                      {selectedTarget.showOnPublicStatus !== false ? <Eye size={13} /> : <EyeOff size={13} />}
+                      {selectedTarget.showOnPublicStatus !== false ? 'Public Status: ON' : 'Public Status: OFF'}
                     </button>
 
                     <button

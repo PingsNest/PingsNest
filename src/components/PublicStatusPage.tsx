@@ -86,15 +86,7 @@ export const PublicStatusPage: React.FC = () => {
                 };
                 return next;
               }
-              return [...prev, {
-                id: updated.id,
-                name: updated.name,
-                url: updated.url,
-                method: updated.method,
-                isUp: updated.isUp !== false,
-                lastLatency: updated.lastLatency,
-                recentPings: updated.recentPings || []
-              }];
+              return prev;
             });
             setLastRefreshed(new Date().toLocaleTimeString());
           }
@@ -235,7 +227,11 @@ export const PublicStatusPage: React.FC = () => {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {targets.map(t => {
+            {targets.length === 0 ? (
+              <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, background: 'rgba(255,255,255,0.02)', borderRadius: 10, border: '1px dashed var(--border-main, rgba(255,255,255,0.08))' }}>
+                No monitored component services are currently configured for public display.
+              </div>
+            ) : targets.map(t => {
               const pings = t.recentPings || [];
               const totalBars = 30;
               const bars = Array.from({ length: totalBars }).map((_, i) => {

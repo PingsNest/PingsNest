@@ -95,6 +95,7 @@ export async function initDb(): Promise<void> {
   await query(`ALTER TABLE targets ADD COLUMN IF NOT EXISTS "suppressAlertsUntil" TIMESTAMPTZ;`).catch(() => {});
   await query(`ALTER TABLE targets ADD COLUMN IF NOT EXISTS "assertions" JSONB DEFAULT '[]';`).catch(() => {});
   await query(`ALTER TABLE targets ADD COLUMN IF NOT EXISTS "ignoredStatusCodes" TEXT;`).catch(() => {});
+  await query(`ALTER TABLE targets ADD COLUMN IF NOT EXISTS "showOnPublicStatus" BOOLEAN DEFAULT true;`).catch(() => {});
 
   await query(`ALTER TABLE pings ADD COLUMN IF NOT EXISTS "dnsLatency" INTEGER;`).catch(() => {});
   await query(`ALTER TABLE pings ADD COLUMN IF NOT EXISTS "tcpLatency" INTEGER;`).catch(() => {});
@@ -167,9 +168,12 @@ export async function initDb(): Promise<void> {
       "accentColor" TEXT DEFAULT '#00f2fe',
       "supportEmail" TEXT DEFAULT '',
       "customDomain" TEXT DEFAULT '',
+      "visibleTargetIds" JSONB DEFAULT NULL,
       "updatedAt"   TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `).catch(() => {});
+
+  await query(`ALTER TABLE status_portal_settings ADD COLUMN IF NOT EXISTS "visibleTargetIds" JSONB DEFAULT NULL;`).catch(() => {});
 
   // ── AWS SES Configuration Table ─────────────────────────────────────────────
   await query(`

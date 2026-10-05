@@ -47,10 +47,12 @@ export interface UrlTargetSummary {
   name: string;
   url: string;
   method: string;
+  group?: string;
   isUp?: boolean;
   lastStatusCode?: number;
   lastLatency?: number;
   recentPings?: { isUp: boolean; latency: number; timestamp: string }[];
+  showOnPublicStatus?: boolean;
 }
 
 export interface AWSAccountProfile {
@@ -902,7 +904,8 @@ export const MonitorProvider: React.FC<{ children: React.ReactNode }> = ({ child
           lastCheck: t.lastCheck,
           certExpDays: t.certExpDays,
           // recentPings is required for the heartbeat bars on StatusPortal
-          recentPings: Array.isArray(t.recentPings) ? t.recentPings : []
+          recentPings: Array.isArray(t.recentPings) ? t.recentPings : [],
+          showOnPublicStatus: t.showOnPublicStatus !== false
         }));
         setUrlTargets(list);
         if (list.length > 0 && !selectedUrlTarget) {

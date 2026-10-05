@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, AlertTriangle, CheckCircle, Clock, Code, ExternalLink, Globe, Copy, CheckCheck, Settings, FileText } from 'lucide-react';
+import { ShieldCheck, AlertTriangle, CheckCircle, Clock, Code, ExternalLink, Globe, Copy, CheckCheck, Settings, FileText, Eye, EyeOff, Server, Search } from 'lucide-react';
 import { useMonitor } from '../context/MonitorContext';
 
 interface IncidentItem {
@@ -28,6 +28,11 @@ export const StatusPortal: React.FC = () => {
   const [publicBaseUrl, setPublicBaseUrl] = useState(() => localStorage.getItem('nova_public_base_url') || window.location.origin);
   const [savedSettingsMsg, setSavedSettingsMsg] = useState(false);
 
+  // Public Server Visibility Configuration
+  const [visibleTargetIds, setVisibleTargetIds] = useState<string[] | null>(null);
+  const [visibilityMode, setVisibilityMode] = useState<'all' | 'custom'>('all');
+  const [serverSearchQuery, setServerSearchQuery] = useState('');
+
   // RCA Post-Mortem State
   const [selectedRcaReport, setSelectedRcaReport] = useState<any>(null);
   const [loadingRcaId, setLoadingRcaId] = useState<string | null>(null);
@@ -47,6 +52,15 @@ export const StatusPortal: React.FC = () => {
           if (data.settings.notice !== undefined) setPublicNotice(data.settings.notice);
           if (data.settings.logoUrl !== undefined) setLogoUrl(data.settings.logoUrl);
           if (data.settings.supportEmail !== undefined) setSupportEmail(data.settings.supportEmail);
+          if (data.settings.customDomain !== undefined) setPublicBaseUrl(data.settings.customDomain || window.location.origin);
+          if (data.settings.visibleTargetIds !== undefined && data.settings.visibleTargetIds !== null) {
+            const ids = Array.isArray(data.settings.visibleTargetIds) ? data.settings.visibleTargetIds : [];
+            setVisibleTargetIds(ids);
+            setVisibilityMode('custom');
+          } else {
+            setVisibleTargetIds(null);
+            setVisibilityMode('all');
+          }
         }
       }
     } catch {}
@@ -85,6 +99,46 @@ export const StatusPortal: React.FC = () => {
   const isAllUp = totalCount === 0 || upCount === totalCount;
   const isPartial = totalCount > 0 && upCount > 0 && upCount < totalCount;
 
+  // Check if a target/server is visible on the public page
+  const isTargetPublic = (targetId: string, showFlag?: boolean) => {
+    if (showFlag === false) return false;
+    if (visibilityMode === 'custom') {
+      return Array.isArray(visibleTargetIds) ? visibleTargetIds.includes(targetId) : false;
+    }
+    return true;
+  };
+
+  const handleToggleTargetVisibility = (targetId: string) => {
+    if (visibilityMode === 'all') {
+      const allOtherIds = targets.map(t => t.id).filter(id => id !== targetId);
+      setVisibleTargetIds(allOtherIds);
+      setVisibilityMode('custom');
+    } else {
+      const current = visibleTargetIds || [];
+      if (current.includes(targetId)) {
+        setVisibleTargetIds(current.filter(id => id !== targetId));
+      } else {
+        setVisibleTargetIds([...current, targetId]);
+      }
+    }
+  };
+
+  const handleSelectAllTargets = () => {
+    setVisibleTargetIds(targets.map(t => t.id));
+  };
+
+  const handleDeselectAllTargets = () => {
+    setVisibleTargetIds([]);
+  };
+
+  const publicTargetsCount = targets.filter(t => isTargetPublic(t.id, t.showOnPublicStatus)).length;
+
+  const filteredServerList = targets.filter(t => {
+    if (!serverSearchQuery.trim()) return true;
+    const q = serverSearchQuery.toLowerCase();
+    return t.name.toLowerCase().includes(q) || t.url.toLowerCase().includes(q);
+  });
+
   const effectiveBaseUrl = (publicBaseUrl && publicBaseUrl.trim())
     ? publicBaseUrl.trim().replace(/\/+$/, '')
     : window.location.origin;
@@ -119,7 +173,8 @@ export const StatusPortal: React.FC = () => {
           notice: publicNotice,
           logoUrl,
           supportEmail,
-          customDomain: publicBaseUrl.trim()
+          customDomain: publicBaseUrl.trim(),
+          visibleTargetIds: visibilityMode === 'all' ? null : (visibleTargetIds || [])
         })
       });
     } catch {}
@@ -309,6 +364,187 @@ export const StatusPortal: React.FC = () => {
               </div>
             </div>
 
+            {/* Server / Service Visibility Section */}
+            <div style={{
+              marginTop: 6,
+              padding: 16,
+              borderRadius: 12,
+              backgroundColor: 'rgba(255, 255, 255, 0.02)',
+              border: '1px solid var(--border-main)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                <div>
+                  <h4 style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Server size={14} color="var(--color-primary)" /> Server & Service Visibility on Public Page
+                  </h4>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0 0' }}>
+                    Select which monitored servers / endpoints appear on the unauthenticated <code style={{ color: 'var(--color-primary)' }}>/public-status</code> portal.
+                  </p>
+                </div>
+
+                {/* Mode Selector Buttons */}
+                <div style={{ display: 'flex', gap: 6, background: 'rgba(0,0,0,0.2)', padding: 3, borderRadius: 8, border: '1px solid var(--border-main)' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVisibilityMode('all');
+                      setVisibleTargetIds(null);
+                    }}
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      borderRadius: 6,
+                      border: 'none',
+                      cursor: 'pointer',
+                      background: visibilityMode === 'all' ? 'var(--color-primary)' : 'transparent',
+                      color: visibilityMode === 'all' ? '#000' : 'var(--text-secondary)',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    Show All Servers ({targets.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVisibilityMode('custom');
+                      if (visibleTargetIds === null) {
+                        setVisibleTargetIds(targets.map(t => t.id));
+                      }
+                    }}
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      borderRadius: 6,
+                      border: 'none',
+                      cursor: 'pointer',
+                      background: visibilityMode === 'custom' ? 'var(--color-primary)' : 'transparent',
+                      color: visibilityMode === 'custom' ? '#000' : 'var(--text-secondary)',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    Select Specific ({visibilityMode === 'custom' && Array.isArray(visibleTargetIds) ? visibleTargetIds.length : targets.length}/{targets.length})
+                  </button>
+                </div>
+              </div>
+
+              {visibilityMode === 'custom' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <div style={{ position: 'relative', flex: 1, minWidth: 200, maxWidth: 360 }}>
+                      <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                      <input
+                        type="text"
+                        className="input-field"
+                        placeholder="Search servers by name or URL..."
+                        value={serverSearchQuery}
+                        onChange={e => setServerSearchQuery(e.target.value)}
+                        style={{ paddingLeft: 30, fontSize: 11, height: 32 }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        type="button"
+                        onClick={handleSelectAllTargets}
+                        className="btn btn-secondary"
+                        style={{ fontSize: 10, padding: '4px 8px' }}
+                      >
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDeselectAllTargets}
+                        className="btn btn-secondary"
+                        style={{ fontSize: 10, padding: '4px 8px' }}
+                      >
+                        Deselect All
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Checklist of servers */}
+                  <div style={{
+                    maxHeight: 220,
+                    overflowY: 'auto',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                    padding: 8,
+                    borderRadius: 8,
+                    backgroundColor: 'var(--bg-input)',
+                    border: '1px solid var(--border-main)'
+                  }}>
+                    {filteredServerList.length === 0 ? (
+                      <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>
+                        No servers found matching query.
+                      </div>
+                    ) : filteredServerList.map(t => {
+                      const isSelected = (visibleTargetIds || []).includes(t.id);
+                      return (
+                        <div
+                          key={t.id}
+                          onClick={() => handleToggleTargetVisibility(t.id)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '8px 12px',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                            backgroundColor: isSelected ? 'rgba(0, 242, 254, 0.08)' : 'rgba(255,255,255,0.02)',
+                            border: `1px solid ${isSelected ? 'rgba(0, 242, 254, 0.25)' : 'rgba(255,255,255,0.04)'}`,
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => {}} // handled by parent div onClick
+                              style={{ cursor: 'pointer' }}
+                            />
+                            <div>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span>{t.name}</span>
+                                <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 4, background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)' }}>
+                                  {t.method}
+                                </span>
+                              </div>
+                              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{t.url}</span>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              padding: '2px 6px',
+                              borderRadius: 4,
+                              backgroundColor: t.isUp !== false ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                              color: t.isUp !== false ? '#34d399' : '#f87171'
+                            }}>
+                              {t.isUp !== false ? 'UP' : 'DOWN'}
+                            </span>
+                            <span style={{
+                              fontSize: 10,
+                              fontWeight: 600,
+                              color: isSelected ? 'var(--color-primary)' : 'var(--text-muted)'
+                            }}>
+                              {isSelected ? '✓ Public' : '✕ Hidden'}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <button
                 onClick={handleSavePublicSettings}
@@ -355,13 +591,47 @@ export const StatusPortal: React.FC = () => {
 
       {/* Component Uptime Grid */}
       <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <h4 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-main)', paddingBottom: '12px' }}>
-          Monitored Component Services & Endpoints
-        </h4>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-main)', paddingBottom: '12px', flexWrap: 'wrap', gap: 10 }}>
+          <div>
+            <h4 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+              Monitored Component Services & Endpoints
+            </h4>
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+              Live real-time operational status for all configured targets
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{
+              fontSize: '11px',
+              fontWeight: 700,
+              padding: '3px 10px',
+              borderRadius: 6,
+              backgroundColor: 'rgba(0, 242, 254, 0.08)',
+              border: '1px solid rgba(0, 242, 254, 0.2)',
+              color: 'var(--color-primary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5
+            }}>
+              <Globe size={12} />
+              {publicTargetsCount} of {totalCount} on Public Status Page
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowSettings(true)}
+              className="btn btn-secondary"
+              style={{ fontSize: '11px', padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4 }}
+            >
+              <Settings size={12} /> Config Visibility
+            </button>
+          </div>
+        </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {targets.map(t => {
             const isUp = t.isUp !== false;
+            const isPublic = isTargetPublic(t.id, t.showOnPublicStatus);
             const pings = t.recentPings || [];
             const totalBars = 30;
             const bars = Array.from({ length: totalBars }).map((_, i) => {
@@ -398,7 +668,7 @@ export const StatusPortal: React.FC = () => {
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{t.url}</div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                   {t.lastLatency !== undefined && (
                     <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
                       {t.lastLatency}ms
@@ -421,6 +691,33 @@ export const StatusPortal: React.FC = () => {
                       />
                     ))}
                   </div>
+
+                  {/* Public visibility toggle button */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleToggleTargetVisibility(t.id);
+                    }}
+                    title={isPublic ? "Visible on /public-status (Click to toggle)" : "Hidden from /public-status (Click to show)"}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      padding: '3px 8px',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      border: `1px solid ${isPublic ? 'rgba(0, 242, 254, 0.3)' : 'rgba(255, 255, 255, 0.1)'}`,
+                      background: isPublic ? 'rgba(0, 242, 254, 0.1)' : 'rgba(255, 255, 255, 0.04)',
+                      color: isPublic ? 'var(--color-primary)' : 'var(--text-muted)',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    {isPublic ? <Eye size={11} /> : <EyeOff size={11} />}
+                    <span>{isPublic ? 'Public' : 'Hidden'}</span>
+                  </button>
 
                   <span style={{ 
                     padding: '4px 10px', 

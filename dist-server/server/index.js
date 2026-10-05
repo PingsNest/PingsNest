@@ -3302,7 +3302,8 @@ async function loadTargets(forceRefresh = false) {
             steps: Array.isArray(r.steps) ? r.steps : [],
             assertions: Array.isArray(r.assertions) ? r.assertions : [],
             suppressAlertsUntil: r.suppressAlertsUntil || undefined,
-            ignoredStatusCodes: r.ignoredStatusCodes || undefined
+            ignoredStatusCodes: r.ignoredStatusCodes || undefined,
+            showOnPublicStatus: r.showOnPublicStatus !== false
         }));
         _targetsCacheData = mapped;
         _targetsCacheAt = now;
@@ -3316,8 +3317,8 @@ async function loadTargets(forceRefresh = false) {
 // Helper: Upsert single target (also invalidates in-memory targets cache)
 async function saveTarget(t) {
     invalidateTargetsCache();
-    await query(`INSERT INTO targets (id, name, url, interval, method, headers, body, "bodyEncoding", status, timeout, retries, "retryInterval", "groupName", "certExpiryDate", "certExpDays", "lastCheck", "lastStatusCode", "lastStatusText", "lastLatency", "isUp", "recentPings", steps, "ignoredStatusCodes", assertions, "suppressAlertsUntil")
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+    await query(`INSERT INTO targets (id, name, url, interval, method, headers, body, "bodyEncoding", status, timeout, retries, "retryInterval", "groupName", "certExpiryDate", "certExpDays", "lastCheck", "lastStatusCode", "lastStatusText", "lastLatency", "isUp", "recentPings", steps, "ignoredStatusCodes", assertions, "suppressAlertsUntil", "showOnPublicStatus")
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
      ON CONFLICT (id) DO UPDATE SET
        name=EXCLUDED.name, url=EXCLUDED.url, interval=EXCLUDED.interval, method=EXCLUDED.method,
        headers=EXCLUDED.headers, body=EXCLUDED.body, "bodyEncoding"=EXCLUDED."bodyEncoding",
@@ -3329,7 +3330,8 @@ async function saveTarget(t) {
        "isUp"=EXCLUDED."isUp", "recentPings"=EXCLUDED."recentPings", steps=EXCLUDED.steps,
        "ignoredStatusCodes"=EXCLUDED."ignoredStatusCodes",
        assertions=EXCLUDED.assertions,
-       "suppressAlertsUntil"=EXCLUDED."suppressAlertsUntil"`, [t.id, t.name, t.url, t.interval, t.method, t.headers || null, t.body || null,
+       "suppressAlertsUntil"=EXCLUDED."suppressAlertsUntil",
+       "showOnPublicStatus"=EXCLUDED."showOnPublicStatus"`, [t.id, t.name, t.url, t.interval, t.method, t.headers || null, t.body || null,
         t.bodyEncoding || 'JSON', t.status, t.timeout || 48, t.retries || 0, t.retryInterval || 60,
         t.group || null, t.certExpiryDate || null, t.certExpDays ?? null, t.lastCheck || null,
         t.lastStatusCode ?? null, t.lastStatusText || null, t.lastLatency ?? null,
@@ -3338,7 +3340,8 @@ async function saveTarget(t) {
         JSON.stringify(t.steps || []),
         t.ignoredStatusCodes || null,
         JSON.stringify(t.assertions || []),
-        t.suppressAlertsUntil || null]);
+        t.suppressAlertsUntil || null,
+        t.showOnPublicStatus !== false]);
 }
 // Helper: save entire list (delete removed, upsert existing)
 async function saveTargets(targets) {
@@ -3947,7 +3950,7 @@ app.get('/api/url-monitor/targets', requireAuth, async (_req, res) => {
     res.json({ targets: await loadTargets() });
 });
 app.post('/api/url-monitor/targets', requireAuth, async (req, res) => {
-    const { name, url, interval, method, headers, body, timeout, retries, retryInterval, group, bodyEncoding, ignoredStatusCodes, steps, assertions, suppressAlertsUntil } = req.body;
+    const { name, url, interval, method, headers, body, timeout, retries, retryInterval, group, bodyEncoding, ignoredStatusCodes, steps, assertions, suppressAlertsUntil, showOnPublicStatus } = req.body;
     if (!name || !url)
         return res.status(400).json({ error: 'Missing target parameters' });
     let newTarget = {
@@ -3967,7 +3970,8 @@ app.post('/api/url-monitor/targets', requireAuth, async (req, res) => {
         ignoredStatusCodes: ignoredStatusCodes || '',
         steps: Array.isArray(steps) ? steps : [],
         assertions: Array.isArray(assertions) ? assertions : [],
-        suppressAlertsUntil
+        suppressAlertsUntil,
+        showOnPublicStatus: typeof showOnPublicStatus !== 'undefined' ? Boolean(showOnPublicStatus) : true
     };
     newTarget = await pingTarget(newTarget);
     await saveTarget(newTarget);
@@ -3975,7 +3979,7 @@ app.post('/api/url-monitor/targets', requireAuth, async (req, res) => {
 });
 app.put('/api/url-monitor/targets/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
-    const { name, url, interval, method, headers, body, timeout, retries, retryInterval, group, bodyEncoding, ignoredStatusCodes, steps, assertions, suppressAlertsUntil } = req.body;
+    const { name, url, interval, method, headers, body, timeout, retries, retryInterval, group, bodyEncoding, ignoredStatusCodes, steps, assertions, suppressAlertsUntil, showOnPublicStatus } = req.body;
     const targets = await loadTargets();
     const idx = targets.findIndex(t => t.id === id);
     if (idx === -1)
@@ -3996,7 +4000,8 @@ app.put('/api/url-monitor/targets/:id', requireAuth, async (req, res) => {
         ignoredStatusCodes: typeof ignoredStatusCodes !== 'undefined' ? ignoredStatusCodes : targets[idx].ignoredStatusCodes,
         steps: typeof steps !== 'undefined' ? (Array.isArray(steps) ? steps : []) : targets[idx].steps,
         assertions: typeof assertions !== 'undefined' ? (Array.isArray(assertions) ? assertions : []) : targets[idx].assertions,
-        suppressAlertsUntil: typeof suppressAlertsUntil !== 'undefined' ? suppressAlertsUntil : targets[idx].suppressAlertsUntil
+        suppressAlertsUntil: typeof suppressAlertsUntil !== 'undefined' ? suppressAlertsUntil : targets[idx].suppressAlertsUntil,
+        showOnPublicStatus: typeof showOnPublicStatus !== 'undefined' ? Boolean(showOnPublicStatus) : (targets[idx].showOnPublicStatus !== false)
     };
     const checked = await pingTarget(updatedTarget);
     await saveTarget(checked);
@@ -4024,6 +4029,16 @@ app.post('/api/url-monitor/targets/toggle', requireAuth, async (req, res) => {
     if (!target)
         return res.status(404).json({ error: 'Target not found' });
     target.status = target.status === 'active' ? 'paused' : 'active';
+    await saveTarget(target);
+    res.json({ success: true, target });
+});
+app.post('/api/url-monitor/targets/:id/toggle-public', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const targets = await loadTargets();
+    const target = targets.find(t => t.id === id);
+    if (!target)
+        return res.status(404).json({ error: 'Target not found' });
+    target.showOnPublicStatus = target.showOnPublicStatus === false ? true : false;
     await saveTarget(target);
     res.json({ success: true, target });
 });
@@ -4068,11 +4083,42 @@ app.get('/api/url-monitor/incidents/all', requireAuth, async (_req, res) => {
 app.get('/api/status/public', async (_req, res) => {
     try {
         const targets = await loadTargets();
+        let settings = { title: 'PingsNest System Status', notice: '', logoUrl: '', accentColor: '#00f2fe', visibleTargetIds: null };
+        try {
+            const { rows: setRows } = await query('SELECT * FROM status_portal_settings WHERE id = $1', ['default']);
+            if (setRows.length > 0)
+                settings = setRows[0];
+        }
+        catch { }
+        let allowedIds = null;
+        if (settings.visibleTargetIds) {
+            let parsed = settings.visibleTargetIds;
+            if (typeof parsed === 'string') {
+                try {
+                    parsed = JSON.parse(parsed);
+                }
+                catch { }
+            }
+            if (Array.isArray(parsed)) {
+                allowedIds = new Set(parsed);
+            }
+        }
+        const filteredTargets = targets.filter(t => {
+            if (t.showOnPublicStatus === false)
+                return false;
+            if (allowedIds !== null)
+                return allowedIds.has(t.id);
+            return true;
+        });
+        const visibleTargetIds = new Set(filteredTargets.map(t => t.id));
         let incidents = [];
         try {
             const { rows } = await query(`SELECT id, "targetId", "targetName", "targetUrl", "startedAt", "endedAt", "durationSec", "statusCode", "errorReason", "isResolved"
-         FROM url_incidents ORDER BY "startedAt" DESC LIMIT 30`);
-            incidents = rows.map(r => ({
+         FROM url_incidents ORDER BY "startedAt" DESC LIMIT 50`);
+            incidents = rows
+                .filter(r => !r.targetId || visibleTargetIds.has(r.targetId))
+                .slice(0, 30)
+                .map(r => ({
                 id: r.id,
                 targetId: r.targetId,
                 targetName: r.targetName,
@@ -4086,7 +4132,7 @@ app.get('/api/status/public', async (_req, res) => {
             }));
         }
         catch { }
-        const sanitizedTargets = targets.map(t => ({
+        const sanitizedTargets = filteredTargets.map(t => ({
             id: t.id,
             name: t.name,
             url: t.url,
@@ -4099,13 +4145,6 @@ app.get('/api/status/public', async (_req, res) => {
             certExpDays: t.certExpDays,
             recentPings: t.recentPings || []
         }));
-        let settings = { title: 'PingsNest System Status', notice: '', logoUrl: '', accentColor: '#00f2fe' };
-        try {
-            const { rows: setRows } = await query('SELECT * FROM status_portal_settings WHERE id = $1', ['default']);
-            if (setRows.length > 0)
-                settings = setRows[0];
-        }
-        catch { }
         res.json({
             success: true,
             targets: sanitizedTargets,
@@ -4123,12 +4162,19 @@ app.get('/api/status/public', async (_req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// â”€â”€â”€ Status Portal Settings (Custom Branding & Logo) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Status Portal Settings (Custom Branding & Logo) ──────────────────────────
 app.get('/api/status/settings', async (_req, res) => {
     try {
         const { rows } = await query('SELECT * FROM status_portal_settings WHERE id = $1', ['default']);
         if (rows.length > 0) {
-            res.json({ settings: rows[0] });
+            let visibleTargetIds = rows[0].visibleTargetIds;
+            if (typeof visibleTargetIds === 'string') {
+                try {
+                    visibleTargetIds = JSON.parse(visibleTargetIds);
+                }
+                catch { }
+            }
+            res.json({ settings: { ...rows[0], visibleTargetIds: Array.isArray(visibleTargetIds) ? visibleTargetIds : null } });
         }
         else {
             res.json({
@@ -4138,20 +4184,24 @@ app.get('/api/status/settings', async (_req, res) => {
                     logoUrl: '',
                     accentColor: '#00f2fe',
                     supportEmail: '',
-                    customDomain: ''
+                    customDomain: '',
+                    visibleTargetIds: null
                 }
             });
         }
     }
     catch {
-        res.json({ settings: { title: 'PingsNest System Status', notice: '', logoUrl: '', accentColor: '#00f2fe' } });
+        res.json({ settings: { title: 'PingsNest System Status', notice: '', logoUrl: '', accentColor: '#00f2fe', visibleTargetIds: null } });
     }
 });
 app.post('/api/status/settings', requireAuth, async (req, res) => {
-    const { title, notice, logoUrl, accentColor, supportEmail, customDomain } = req.body;
+    const { title, notice, logoUrl, accentColor, supportEmail, customDomain, visibleTargetIds } = req.body;
     try {
-        await query(`INSERT INTO status_portal_settings (id, title, notice, "logoUrl", "accentColor", "supportEmail", "customDomain", "updatedAt")
-       VALUES ('default', $1, $2, $3, $4, $5, $6, NOW())
+        const visibleJson = visibleTargetIds === null || typeof visibleTargetIds === 'undefined'
+            ? null
+            : JSON.stringify(Array.isArray(visibleTargetIds) ? visibleTargetIds : []);
+        await query(`INSERT INTO status_portal_settings (id, title, notice, "logoUrl", "accentColor", "supportEmail", "customDomain", "visibleTargetIds", "updatedAt")
+       VALUES ('default', $1, $2, $3, $4, $5, $6, $7, NOW())
        ON CONFLICT (id) DO UPDATE SET
          title = EXCLUDED.title,
          notice = EXCLUDED.notice,
@@ -4159,13 +4209,15 @@ app.post('/api/status/settings', requireAuth, async (req, res) => {
          "accentColor" = EXCLUDED."accentColor",
          "supportEmail" = EXCLUDED."supportEmail",
          "customDomain" = EXCLUDED."customDomain",
+         "visibleTargetIds" = EXCLUDED."visibleTargetIds",
          "updatedAt" = NOW()`, [
             title || 'PingsNest System Status',
             notice || '',
             logoUrl || '',
             accentColor || '#00f2fe',
             supportEmail || '',
-            customDomain || ''
+            customDomain || '',
+            visibleJson
         ]);
         res.json({ success: true });
     }
@@ -4173,10 +4225,32 @@ app.post('/api/status/settings', requireAuth, async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// â”€â”€â”€ RSS 2.0 XML Status Feed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── RSS 2.0 XML Status Feed ──────────────────────────────────────────────────
 app.get(['/public-status/rss.xml', '/api/status/rss.xml'], async (req, res) => {
     try {
-        const { rows: incidents } = await query(`SELECT * FROM url_incidents ORDER BY "startedAt" DESC LIMIT 20`);
+        const targets = await loadTargets();
+        let settings = { visibleTargetIds: null };
+        try {
+            const { rows: setRows } = await query('SELECT * FROM status_portal_settings WHERE id = $1', ['default']);
+            if (setRows.length > 0)
+                settings = setRows[0];
+        }
+        catch { }
+        let allowedIds = null;
+        if (settings.visibleTargetIds) {
+            let parsed = settings.visibleTargetIds;
+            if (typeof parsed === 'string') {
+                try {
+                    parsed = JSON.parse(parsed);
+                }
+                catch { }
+            }
+            if (Array.isArray(parsed))
+                allowedIds = new Set(parsed);
+        }
+        const publicTargetIds = new Set(targets.filter(t => t.showOnPublicStatus !== false && (allowedIds === null || allowedIds.has(t.id))).map(t => t.id));
+        const { rows: allIncidents } = await query(`SELECT * FROM url_incidents ORDER BY "startedAt" DESC LIMIT 50`);
+        const incidents = allIncidents.filter((inc) => !inc.targetId || publicTargetIds.has(inc.targetId)).slice(0, 20);
         const host = `${req.protocol}://${req.get('host')}`;
         const pubDate = new Date().toUTCString();
         let itemsXml = '';
@@ -5241,7 +5315,27 @@ app.get('/api/status/badge/:id.svg', async (req, res) => {
                 isUp = match.isUp !== false;
         }
         else {
-            isUp = targets.every(t => t.isUp !== false);
+            let settings = { visibleTargetIds: null };
+            try {
+                const { rows: setRows } = await query('SELECT * FROM status_portal_settings WHERE id = $1', ['default']);
+                if (setRows.length > 0)
+                    settings = setRows[0];
+            }
+            catch { }
+            let allowedIds = null;
+            if (settings.visibleTargetIds) {
+                let parsed = settings.visibleTargetIds;
+                if (typeof parsed === 'string') {
+                    try {
+                        parsed = JSON.parse(parsed);
+                    }
+                    catch { }
+                }
+                if (Array.isArray(parsed))
+                    allowedIds = new Set(parsed);
+            }
+            const publicTargets = targets.filter(t => t.showOnPublicStatus !== false && (allowedIds === null || allowedIds.has(t.id)));
+            isUp = publicTargets.length === 0 || publicTargets.every(t => t.isUp !== false);
         }
         if (!isUp) {
             labelText = 'outage';
