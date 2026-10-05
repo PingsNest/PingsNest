@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, AlertTriangle, Clock, RefreshCw, Globe, Rss, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CheckCircle, AlertTriangle, Clock, RefreshCw, Globe, Rss, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface PublicTarget {
   id: string;
@@ -35,11 +35,9 @@ export const PublicStatusPage: React.FC = () => {
 
   const [isWsConnected, setIsWsConnected] = useState(false);
 
-  // Incidents Pagination & Show More State
+  // Incidents Show More State
   const perPage = 4;
-  const [incidentNavMode, setIncidentNavMode] = useState<'loadMore' | 'pagination'>('loadMore');
   const [visibleIncidentsCount, setVisibleIncidentsCount] = useState<number>(4);
-  const [incidentCurrentPage, setIncidentCurrentPage] = useState<number>(1);
 
   const fetchData = async () => {
     try {
@@ -306,10 +304,7 @@ export const PublicStatusPage: React.FC = () => {
 
         {/* Incident History Timeline */}
         {(() => {
-          const totalIncidentPages = Math.max(1, Math.ceil(incidents.length / perPage));
-          const displayedIncidents = incidentNavMode === 'pagination'
-            ? incidents.slice((incidentCurrentPage - 1) * perPage, incidentCurrentPage * perPage)
-            : incidents.slice(0, visibleIncidentsCount);
+          const displayedIncidents = incidents.slice(0, visibleIncidentsCount);
 
           return (
             <div className="glass-panel" style={{ padding: 24, borderRadius: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -322,35 +317,6 @@ export const PublicStatusPage: React.FC = () => {
                     {incidents.length === 0 ? 'No incidents logged' : `${incidents.length} total logged incident${incidents.length > 1 ? 's' : ''}`}
                   </span>
                 </div>
-
-                {incidents.length > perPage && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(255,255,255,0.03)', padding: 3, borderRadius: 8, border: '1px solid var(--border-main, rgba(255,255,255,0.08))' }}>
-                    <button
-                      type="button"
-                      onClick={() => setIncidentNavMode('loadMore')}
-                      style={{
-                        padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: 'none', cursor: 'pointer',
-                        background: incidentNavMode === 'loadMore' ? 'var(--color-primary, #00f2fe)' : 'transparent',
-                        color: incidentNavMode === 'loadMore' ? '#000' : 'var(--text-secondary)',
-                        transition: 'all 0.15s ease'
-                      }}
-                    >
-                      Show More
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIncidentNavMode('pagination')}
-                      style={{
-                        padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: 'none', cursor: 'pointer',
-                        background: incidentNavMode === 'pagination' ? 'var(--color-primary, #00f2fe)' : 'transparent',
-                        color: incidentNavMode === 'pagination' ? '#000' : 'var(--text-secondary)',
-                        transition: 'all 0.15s ease'
-                      }}
-                    >
-                      Pagination
-                    </button>
-                  </div>
-                )}
               </div>
 
               {incidents.length === 0 ? (
@@ -383,8 +349,8 @@ export const PublicStatusPage: React.FC = () => {
                 </div>
               )}
 
-              {/* Show More Mode Controls */}
-              {incidents.length > perPage && incidentNavMode === 'loadMore' && (
+              {/* Show More Controls */}
+              {incidents.length > perPage && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, paddingTop: 14, borderTop: '1px solid var(--border-main, rgba(255,255,255,0.06))' }}>
                   <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                     Showing <strong>{displayedIncidents.length}</strong> of <strong>{incidents.length}</strong> past incidents
@@ -420,58 +386,6 @@ export const PublicStatusPage: React.FC = () => {
                         <ChevronUp size={14} /> Show Less
                       </button>
                     )}
-                  </div>
-                </div>
-              )}
-
-              {/* Pagination Mode Controls */}
-              {incidents.length > perPage && incidentNavMode === 'pagination' && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, paddingTop: 14, borderTop: '1px solid var(--border-main, rgba(255,255,255,0.06))' }}>
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                    Showing <strong>{(incidentCurrentPage - 1) * perPage + 1}–{Math.min(incidentCurrentPage * perPage, incidents.length)}</strong> of <strong>{incidents.length}</strong> incidents
-                  </span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <button
-                      type="button"
-                      disabled={incidentCurrentPage === 1}
-                      onClick={() => setIncidentCurrentPage(p => Math.max(1, p - 1))}
-                      className="btn btn-secondary"
-                      style={{ padding: '5px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, opacity: incidentCurrentPage === 1 ? 0.4 : 1, cursor: incidentCurrentPage === 1 ? 'not-allowed' : 'pointer' }}
-                    >
-                      <ChevronLeft size={13} /> Prev
-                    </button>
-
-                    {Array.from({ length: totalIncidentPages }).map((_, idx) => {
-                      const pageNum = idx + 1;
-                      const isActive = pageNum === incidentCurrentPage;
-                      return (
-                        <button
-                          key={pageNum}
-                          type="button"
-                          onClick={() => setIncidentCurrentPage(pageNum)}
-                          style={{
-                            minWidth: 28, height: 28, padding: '0 6px',
-                            borderRadius: 6, fontSize: 11, fontWeight: 700,
-                            border: isActive ? '1px solid var(--color-primary, #00f2fe)' : '1px solid var(--border-main, rgba(255,255,255,0.1))',
-                            backgroundColor: isActive ? 'rgba(0, 242, 254, 0.15)' : 'rgba(255,255,255,0.03)',
-                            color: isActive ? 'var(--color-primary, #00f2fe)' : 'var(--text-secondary)',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          {pageNum}
-                        </button>
-                      );
-                    })}
-
-                    <button
-                      type="button"
-                      disabled={incidentCurrentPage === totalIncidentPages}
-                      onClick={() => setIncidentCurrentPage(p => Math.min(totalIncidentPages, p + 1))}
-                      className="btn btn-secondary"
-                      style={{ padding: '5px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, opacity: incidentCurrentPage === totalIncidentPages ? 0.4 : 1, cursor: incidentCurrentPage === totalIncidentPages ? 'not-allowed' : 'pointer' }}
-                    >
-                      Next <ChevronRight size={13} />
-                    </button>
                   </div>
                 </div>
               )}

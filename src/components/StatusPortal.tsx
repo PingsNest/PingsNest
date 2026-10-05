@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, AlertTriangle, CheckCircle, Clock, Code, ExternalLink, Globe, Copy, CheckCheck, Settings, FileText, Eye, EyeOff, Server, Search, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ShieldCheck, AlertTriangle, CheckCircle, Clock, Code, ExternalLink, Globe, Copy, CheckCheck, Settings, FileText, Eye, EyeOff, Server, Search, ChevronDown, ChevronUp } from 'lucide-react';
 import { useMonitor } from '../context/MonitorContext';
 
 interface IncidentItem {
@@ -33,11 +33,9 @@ export const StatusPortal: React.FC = () => {
   const [visibilityMode, setVisibilityMode] = useState<'all' | 'custom'>('all');
   const [serverSearchQuery, setServerSearchQuery] = useState('');
 
-  // Incidents Pagination & Show More State
+  // Incidents Show More State
   const perIncidentPage = 5;
-  const [portalIncidentMode, setPortalIncidentMode] = useState<'loadMore' | 'pagination'>('loadMore');
   const [portalIncidentsLimit, setPortalIncidentsLimit] = useState(5);
-  const [portalIncidentPage, setPortalIncidentPage] = useState(1);
 
   // RCA Post-Mortem State
   const [selectedRcaReport, setSelectedRcaReport] = useState<any>(null);
@@ -744,10 +742,7 @@ export const StatusPortal: React.FC = () => {
 
       {/* Incident History Timeline */}
       {(() => {
-        const totalIncidentPages = Math.max(1, Math.ceil(incidents.length / perIncidentPage));
-        const displayedIncidents = portalIncidentMode === 'pagination'
-          ? incidents.slice((portalIncidentPage - 1) * perIncidentPage, portalIncidentPage * perIncidentPage)
-          : incidents.slice(0, portalIncidentsLimit);
+        const displayedIncidents = incidents.slice(0, portalIncidentsLimit);
 
         return (
           <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -760,35 +755,6 @@ export const StatusPortal: React.FC = () => {
                   {incidents.length === 0 ? 'No incidents logged' : `${incidents.length} recorded outages in last 90 days`}
                 </span>
               </div>
-
-              {incidents.length > perIncidentPage && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(255,255,255,0.03)', padding: 3, borderRadius: 8, border: '1px solid var(--border-main)' }}>
-                  <button
-                    type="button"
-                    onClick={() => setPortalIncidentMode('loadMore')}
-                    style={{
-                      padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: 'none', cursor: 'pointer',
-                      background: portalIncidentMode === 'loadMore' ? 'var(--color-primary)' : 'transparent',
-                      color: portalIncidentMode === 'loadMore' ? '#000' : 'var(--text-secondary)',
-                      transition: 'all 0.15s ease'
-                    }}
-                  >
-                    Show More
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPortalIncidentMode('pagination')}
-                    style={{
-                      padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: 'none', cursor: 'pointer',
-                      background: portalIncidentMode === 'pagination' ? 'var(--color-primary)' : 'transparent',
-                      color: portalIncidentMode === 'pagination' ? '#000' : 'var(--text-secondary)',
-                      transition: 'all 0.15s ease'
-                    }}
-                  >
-                    Pagination
-                  </button>
-                </div>
-              )}
             </div>
 
             {incidents.length === 0 ? (
@@ -835,7 +801,7 @@ export const StatusPortal: React.FC = () => {
             )}
 
             {/* Show More Controls */}
-            {incidents.length > perIncidentPage && portalIncidentMode === 'loadMore' && (
+            {incidents.length > perIncidentPage && (
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, paddingTop: 14, borderTop: '1px solid var(--border-main)' }}>
                 <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                   Showing <strong>{displayedIncidents.length}</strong> of <strong>{incidents.length}</strong> past incidents
@@ -871,58 +837,6 @@ export const StatusPortal: React.FC = () => {
                       <ChevronUp size={14} /> Show Less
                     </button>
                   )}
-                </div>
-              </div>
-            )}
-
-            {/* Pagination Controls */}
-            {incidents.length > perIncidentPage && portalIncidentMode === 'pagination' && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, paddingTop: 14, borderTop: '1px solid var(--border-main)' }}>
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  Showing <strong>{(portalIncidentPage - 1) * perIncidentPage + 1}–{Math.min(portalIncidentPage * perIncidentPage, incidents.length)}</strong> of <strong>{incidents.length}</strong> incidents
-                </span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <button
-                    type="button"
-                    disabled={portalIncidentPage === 1}
-                    onClick={() => setPortalIncidentPage(p => Math.max(1, p - 1))}
-                    className="btn btn-secondary"
-                    style={{ padding: '5px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, opacity: portalIncidentPage === 1 ? 0.4 : 1, cursor: portalIncidentPage === 1 ? 'not-allowed' : 'pointer' }}
-                  >
-                    <ChevronLeft size={13} /> Prev
-                  </button>
-
-                  {Array.from({ length: totalIncidentPages }).map((_, idx) => {
-                    const pageNum = idx + 1;
-                    const isActive = pageNum === portalIncidentPage;
-                    return (
-                      <button
-                        key={pageNum}
-                        type="button"
-                        onClick={() => setPortalIncidentPage(pageNum)}
-                        style={{
-                          minWidth: 28, height: 28, padding: '0 6px',
-                          borderRadius: 6, fontSize: 11, fontWeight: 700,
-                          border: isActive ? '1px solid var(--color-primary)' : '1px solid var(--border-main)',
-                          backgroundColor: isActive ? 'rgba(0, 242, 254, 0.15)' : 'rgba(255,255,255,0.03)',
-                          color: isActive ? 'var(--color-primary)' : 'var(--text-secondary)',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        {pageNum}
-                      </button>
-                    );
-                  })}
-
-                  <button
-                    type="button"
-                    disabled={portalIncidentPage === totalIncidentPages}
-                    onClick={() => setPortalIncidentPage(p => Math.min(totalIncidentPages, p + 1))}
-                    className="btn btn-secondary"
-                    style={{ padding: '5px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, opacity: portalIncidentPage === totalIncidentPages ? 0.4 : 1, cursor: portalIncidentPage === totalIncidentPages ? 'not-allowed' : 'pointer' }}
-                  >
-                    Next <ChevronRight size={13} />
-                  </button>
                 </div>
               </div>
             )}
