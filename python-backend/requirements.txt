@@ -1,0 +1,39 @@
+# Web framework + ASGI server
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# Database (asyncpg for async PostgreSQL)
+asyncpg==0.30.0
+
+# Redis (async)
+redis[asyncio]==5.2.0
+
+# AWS SDK
+boto3==1.35.72
+aioboto3==13.2.0
+
+# Config / environment
+pydantic==2.10.2
+pydantic-settings==2.6.1
+
+# Auth (JWT validation)
+python-jose[cryptography]==3.3.0
+
+# HTTP client (for internal Node proxy calls, OTLP forwarding)
+httpx==0.28.0
+
+# PDF generation (SLA compliance report)
+reportlab==4.2.5
+
+# Prometheus metrics
+prometheus-client==0.21.0
+
+# Cryptography (AES-256-GCM — matches Node db.ts encryption)
+cryptography==43.0.3
+
+# Compression
+brotli==1.1.0
+
+# Utilities
+python-multipart==0.0.17
+anyio==4.7.0
