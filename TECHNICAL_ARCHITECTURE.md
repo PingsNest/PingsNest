@@ -38,9 +38,9 @@
 
 ## 1. System Overview
 
-API Gateway Monitor is a full-stack, open-source (Apache-2.0) observability platform for AWS API Gateway, AWS Lambda, and OTLP-emitting microservices. It is built on a Node.js/Express backend with TypeScript and a React 19/Vite frontend.
+API Gateway Monitor is a full-stack observability platform for AWS API Gateway, AWS Lambda, and OTLP-emitting microservices. It is built as a microservices architecture pairing a high-performance **Python FastAPI backend** (`python-backend/`, port 8000) for API Gateway telemetry with a **Node.js/Express backend** (`server/`, port 3001) for Lambda monitoring, synthetic URL pinging, authentication, and WebSocket streaming, orchestrated behind **Nginx** (port 80).
 
-**Architecture pattern:** A single `server/index.ts` acts as the application kernel (3,111 lines). It wires together modular engines — finops, anomaly detection, remediation, circuit breaker, Kafka consumer, WebSocket server — and exposes 60+ REST endpoints.
+**Architecture pattern:** Dual-service microservice with shared persistence (TimescaleDB) and horizontal Redis Pub/Sub coordination. Node.js kernel wires Lambda & URL synthetic engines; Python microservice handles AWS API Gateway discovery, CloudWatch metrics, log analysis, FinOps, Z-score anomalies, and ReportLab SLA PDF certification.
 
 ```
                      ┌──────────────────────────────────────┐

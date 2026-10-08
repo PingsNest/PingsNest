@@ -54,18 +54,28 @@
 ## 🏗️ Architecture Overview
 
 ```
-                      ┌─────────────────────────────────────────┐
-   CloudWatch / AWS ─►│                                         │
-   OTLP Telemetry   ─►│  PingsNest Express Engine (Port 3001)   │──► TimescaleDB / PostgreSQL
-   Synthetic Pings  ─►│  server/index.ts (Node.js + TS)         │──► Redis (Caching)
-   Webhooks Ingest  ─►│                                         │──► Kafka (Log Stream Bus)
-                      └────────────────────┬────────────────────┘
-                                           │ WebSocket / REST
-                                           ▼
-                      ┌─────────────────────────────────────────┐
-                      │    PingsNest React 19 Frontend          │
-                      │    (Vite + Tailwind CSS + Lucide)       │
-                      └─────────────────────────────────────────┘
+                       ┌─────────────────────────────────────────┐
+                       │       Nginx Reverse Proxy (Port 80)     │
+                       └────────────────────┬────────────────────┘
+                                            │
+                    ┌───────────────────────┴───────────────────────┐
+                    │ /api/aws/*, /api/gateways/*                   │ /api/lambda/*
+                    │ /api/anomalies, /api/finops/*                 │ /api/url-monitor/*
+                    │ /api/reports/sla-compliance, /api/alerts/*    │ /api/auth/*, /ws
+                    ▼                                               ▼
+     ┌─────────────────────────────┐                 ┌─────────────────────────────┐
+     │  Python FastAPI (Port 8000) │                 │  Node.js Engine (Port 3001) │
+     │  API Gateway Telemetry & ML │                 │  Lambda, URL Synthetic & WS │
+     └──────────────┬──────────────┘                 └──────────────┬──────────────┘
+                    │                                               │
+                    └───────────────────────┬───────────────────────┘
+                                            ▼
+                       ┌─────────────────────────────────────────┐
+                       │  Shared Infrastructure:                 │
+                       │  • TimescaleDB (gateway_logs, metrics)  │
+                       │  • Redis (cache & horizontal WS bridge) │
+                       │  • Kafka KRaft (log stream event bus)   │
+                       └─────────────────────────────────────────┘
 ```
 
 For full technical specifications, database schemas, and API documentation, inspect [`TECHNICAL_ARCHITECTURE.md`](./TECHNICAL_ARCHITECTURE.md).

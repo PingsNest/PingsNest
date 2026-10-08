@@ -7,12 +7,21 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // In dev mode: proxy all /api/* calls to the standalone Express server
+      // Python FastAPI microservice (:8000) for API Gateway monitoring module
+      '^/api/(aws/(apis|stages|routes|throttle-stage|test-request|metrics|logs|log-groups|traces)|gateways|anomalies|finops|reports/sla-compliance|alerts/(rules|monitored-gateways|history|test)|diagnostics|ingest)': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '^/v1/(traces|metrics)': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      // Node.js Express server (:3001) for Lambda, URL monitoring, Auth, Users, etc.
       '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
       },
-      // Proxy WebSocket upgrade connections
+      // Proxy WebSocket upgrade connections to Node.js
       '/ws': {
         target: 'http://localhost:3001',
         ws: true,
