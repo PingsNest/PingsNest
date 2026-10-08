@@ -92,8 +92,10 @@ app.include_router(traces.router,     prefix="/api")
 from routers import alerts  # noqa: E402
 app.include_router(alerts.router, prefix="/api")
 
-# TODO Phase 6+: add routers as they are implemented
-# from routers import sla, ingest
+# Phase 6 — Ingestion & SLA Reports
+from routers import sla, ingest  # noqa: E402
+app.include_router(sla.router, prefix="/api")
+app.include_router(ingest.router)
 
 
 # ── Dev entry point ────────────────────────────────────────────────────────────
