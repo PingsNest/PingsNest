@@ -75,9 +75,13 @@ app.include_router(health.router)
 from routers import apis  # noqa: E402
 app.include_router(apis.router, prefix="/api")
 
-# TODO Phase 3+: add routers as they are implemented
-# from routers import metrics, logs, traces, gateways, anomalies, finops
-# from routers import sla, alerts, diagnostics, ingest
+# Phase 3 — CloudWatch metrics & logs
+from routers import metrics, logs  # noqa: E402
+app.include_router(metrics.router, prefix="/api")
+app.include_router(logs.router,    prefix="/api")
+
+# TODO Phase 4+: add routers as they are implemented
+# from routers import traces, gateways, anomalies, finops, sla, alerts, diagnostics, ingest
 
 
 # ── Dev entry point ────────────────────────────────────────────────────────────
