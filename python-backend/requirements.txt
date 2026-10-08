@@ -2,37 +2,33 @@
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
 
-# Database (asyncpg for async PostgreSQL)
-asyncpg==0.30.0
+# Database — psycopg3 binary (async support, pre-built wheels for Py3.14)
+# Replaces asyncpg which has no Py3.14 pre-built wheel
+psycopg[binary,pool]==3.3.6
 
 # Redis (async)
 redis[asyncio]==5.2.0
 
-# AWS SDK
+# AWS SDK (boto3 — wrap sync calls in asyncio.to_thread())
 boto3==1.35.72
-aioboto3==13.2.0
 
-# Config / environment
-pydantic==2.10.2
-pydantic-settings==2.6.1
+# Config / environment — let pip pick a version with Py3.14 wheels
+pydantic>=2.10.0
+pydantic-settings>=2.6.0
 
-# Auth (JWT validation)
-python-jose[cryptography]==3.3.0
+# Auth (JWT validation — pure Python)
+python-jose==3.3.0
+# cryptography is a dep of python-jose; use --only-binary to get pre-built wheel
+cryptography>=43.0.0
 
-# HTTP client (for internal Node proxy calls, OTLP forwarding)
+# HTTP client (for internal Node proxy calls)
 httpx==0.28.0
 
 # PDF generation (SLA compliance report)
 reportlab==4.2.5
 
-# Prometheus metrics
+# Prometheus metrics (pure Python)
 prometheus-client==0.21.0
-
-# Cryptography (AES-256-GCM — matches Node db.ts encryption)
-cryptography==43.0.3
-
-# Compression
-brotli==1.1.0
 
 # Utilities
 python-multipart==0.0.17
