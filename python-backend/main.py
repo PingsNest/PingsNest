@@ -68,24 +68,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Routers (Phase 1 — foundation) ───────────────────────────────────────────
+# ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(health.router)
 
-# TODO Phase 2+: add routers as they are implemented
-# from routers import apis, metrics, logs, traces, gateways, anomalies, finops
-# from routers import sla, alerts, diagnostics, throttle, ingest
-# app.include_router(apis.router,         prefix="/api")
-# app.include_router(metrics.router,      prefix="/api")
-# app.include_router(logs.router,         prefix="/api")
-# app.include_router(traces.router,       prefix="/api")
-# app.include_router(gateways.router,     prefix="/api")
-# app.include_router(anomalies.router,    prefix="/api")
-# app.include_router(finops.router,       prefix="/api")
-# app.include_router(sla.router,          prefix="/api")
-# app.include_router(alerts.router,       prefix="/api")
-# app.include_router(diagnostics.router,  prefix="/api")
-# app.include_router(throttle.router,     prefix="/api")
-# app.include_router(ingest.router)
+# Phase 2 — AWS API Gateway core routes
+from routers import apis  # noqa: E402
+app.include_router(apis.router, prefix="/api")
+
+# TODO Phase 3+: add routers as they are implemented
+# from routers import metrics, logs, traces, gateways, anomalies, finops
+# from routers import sla, alerts, diagnostics, ingest
 
 
 # ── Dev entry point ────────────────────────────────────────────────────────────
