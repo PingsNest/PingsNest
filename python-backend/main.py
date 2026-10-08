@@ -80,8 +80,16 @@ from routers import metrics, logs  # noqa: E402
 app.include_router(metrics.router, prefix="/api")
 app.include_router(logs.router,    prefix="/api")
 
-# TODO Phase 4+: add routers as they are implemented
-# from routers import traces, gateways, anomalies, finops, sla, alerts, diagnostics, ingest
+# Phase 4 — Analytics, Intelligence & Diagnostics
+from routers import anomalies, finops, gateways, diagnostics, traces  # noqa: E402
+app.include_router(anomalies.router,   prefix="/api")
+app.include_router(finops.router,      prefix="/api")
+app.include_router(gateways.router,    prefix="/api")
+app.include_router(diagnostics.router, prefix="/api")
+app.include_router(traces.router,     prefix="/api")
+
+# TODO Phase 5+: add routers as they are implemented
+# from routers import alerts, sla, ingest
 
 
 # ── Dev entry point ────────────────────────────────────────────────────────────

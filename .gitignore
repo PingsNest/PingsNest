@@ -43,3 +43,10 @@ pnpm-debug.log*
 # Agent Brain / Temporary IDE State
 .gemini/
 .kilo/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+*.egg-info/

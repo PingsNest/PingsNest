@@ -124,3 +124,19 @@ async def cache_get_or_set(
     value = await fn()
     await cache_set(key, value, ttl_seconds)
     return value
+
+
+async def publish(channel: str, payload: Any) -> None:
+    """
+    Publish a JSON payload to a Redis channel without prefix
+    (e.g. 'ws:fanout:alert' for WebSocket fanout bridge).
+    """
+    if not _connected or _client is None:
+        return
+    try:
+        data = payload if isinstance(payload, str) else json.dumps(payload)
+        await _client.publish(channel, data)
+        logger.debug(f"[Cache] PUBLISH {channel}")
+    except Exception as exc:
+        logger.debug(f"[Cache] Publish error to {channel}: {exc}")
+

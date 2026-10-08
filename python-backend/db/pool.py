@@ -45,6 +45,13 @@ def get_pool() -> AsyncConnectionPool:
     return _pool
 
 
+import re
+
+def _normalize_sql(sql: str) -> str:
+    """Convert PostgreSQL $1, $2 style placeholders (Node pg) to %s (psycopg3)."""
+    return re.sub(r"\$\d+", "%s", sql)
+
+
 async def query(sql: str, *args) -> list[dict]:
     """
     Thin helper — acquire a connection from the pool, execute the query,
@@ -54,24 +61,27 @@ async def query(sql: str, *args) -> list[dict]:
         rows = await query("SELECT * FROM monitored_gateways WHERE id = $1", gw_id)
     """
     pool = get_pool()
+    sql_norm = _normalize_sql(sql)
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(sql, args if args else None)
+            await cur.execute(sql_norm, args if args else None)
             return await cur.fetchall()
 
 
 async def execute(sql: str, *args) -> None:
     """Execute a DML statement (INSERT/UPDATE/DELETE)."""
     pool = get_pool()
+    sql_norm = _normalize_sql(sql)
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
-            await cur.execute(sql, args if args else None)
+            await cur.execute(sql_norm, args if args else None)
 
 
 async def query_one(sql: str, *args) -> dict | None:
     """Return a single row as a dict, or None."""
     pool = get_pool()
+    sql_norm = _normalize_sql(sql)
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(sql, args if args else None)
+            await cur.execute(sql_norm, args if args else None)
             return await cur.fetchone()
