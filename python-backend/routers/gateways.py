@@ -364,18 +364,20 @@ def _fetch_cw_comparison(
     requests_per_min = round(total_req / len(sparkline)) if sparkline else 0
     avg_latency_ms = round(sum(latency_line) / len(latency_line)) if latency_line else 0
     p99_vals = by_id.get("lat_p99", [])
+    has_real_p99 = bool(p99_vals and len(p99_vals) > 0)
     p99_latency_ms = (
-        round(sum(p99_vals) / len(p99_vals)) if p99_vals else round(avg_latency_ms * 2.5)
+        round(sum(p99_vals) / len(p99_vals)) if has_real_p99 else round(avg_latency_ms * 2.5)
     )
     total_5xx = sum(error_line)
     total_4xx = sum(by_id.get("e4", []))
-    error_rate_5xx_pct = round((total_5xx / total_req) * 100) if total_req > 0 else 0
-    error_rate_4xx_pct = round((total_4xx / total_req) * 100) if total_req > 0 else 0
+    error_rate_5xx_pct = round((total_5xx / total_req) * 100, 2) if total_req > 0 else 0.0
+    error_rate_4xx_pct = round((total_4xx / total_req) * 100, 2) if total_req > 0 else 0.0
 
     return {
         "requestsPerMin": requests_per_min,
         "avgLatencyMs": avg_latency_ms,
         "p99LatencyMs": p99_latency_ms,
+        "p99Measured": has_real_p99,
         "errorRate5xxPct": error_rate_5xx_pct,
         "errorRate4xxPct": error_rate_4xx_pct,
         "sparkline": sparkline,

@@ -151,7 +151,7 @@ async def _evaluate_alerts(api_id: str, stage: str, data_points: list, region: s
         total_4xx  = sum(dp["values"][3] for dp in data_points)
         total_5xx  = sum(dp["values"][4] for dp in data_points)
         avg_lat    = sum(dp["values"][1] for dp in data_points) / max(len(data_points), 1)
-        err_rate   = round(((total_4xx + total_5xx) / total_reqs) * 100) if total_reqs > 0 else 0
+        err_rate   = round(((total_4xx + total_5xx) / total_reqs) * 100, 2) if total_reqs > 0 else 0.0
 
         metrics_snapshot = {
             "errorRate": err_rate,

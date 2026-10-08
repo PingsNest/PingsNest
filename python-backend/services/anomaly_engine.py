@@ -76,18 +76,20 @@ async def detect_latency_anomalies(
             # Compute Mean
             mean = sum(historical) / len(historical)
 
-            # Compute Standard Deviation
-            variance = sum((v - mean) ** 2 for v in historical) / len(historical)
+            # Compute Sample Variance (Bessel's correction N - 1)
+            deg_free = max(1, len(historical) - 1)
+            variance = sum((v - mean) ** 2 for v in historical) / deg_free
             std_dev = math.sqrt(variance)
 
             # BUG-06 FIX: When stdDev == 0, historical samples were identical.
-            # Avoid division by zero, use absolute deviation guard instead.
+            # Avoid division by zero, use relative deviation guard
             if std_dev == 0:
                 z_score = 3.0 if latest_latency > mean else 0.0
-                is_anomaly = (latest_latency - mean > 100) and (latest_latency > 150)
+                is_anomaly = (latest_latency - mean > 50) and (latest_latency > mean * 1.5)
             else:
                 z_score = (latest_latency - mean) / std_dev
-                is_anomaly = (z_score >= 3.0) and (latest_latency > 150)
+                # Dynamic guard: 3-Sigma breach, at least 1.5x baseline jump, and minimum 50ms floor
+                is_anomaly = (z_score >= 3.0) and (latest_latency > mean * 1.5) and (latest_latency > 50)
 
             result: AnomalyResult = {
                 "route": route,

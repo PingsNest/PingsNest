@@ -50,3 +50,4 @@ __pycache__/
 *$py.class
 .venv/
 *.egg-info/
+FORMULAS_AND_COMMANDS.md

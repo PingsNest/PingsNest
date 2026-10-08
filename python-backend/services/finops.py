@@ -32,19 +32,22 @@ class RouteCostSummary(TypedDict):
 class MemoryRightSizingRecommendation(TypedDict):
     functionName: str
     allocatedMemoryMb: int
-    peakMemoryUsedMb: int
+    peakMemoryUsedMb: int | None
     recommendedMemoryMb: int
     overProvisionedRatio: float
     monthlyCurrentCostUsd: float
     monthlyOptimizedCostUsd: float
     monthlySavingsUsd: float
-    recommendationLevel: Literal["HIGH_SAVINGS", "MODERATE_SAVINGS", "OPTIMAL"]
+    recommendationLevel: Literal["HIGH_SAVINGS", "MODERATE_SAVINGS", "OPTIMAL", "INSUFFICIENT_DATA"]
+    isMeasured: bool
+    warning: str | None
 
 
 async def calculate_route_finops_costs(
     api_id: str,
     stage: str,
     protocol: str = "REST",
+    default_memory_mb: float = 1024.0,
 ) -> list[RouteCostSummary]:
     """
     Calculates cost per route over the past 30 days based on gateway_logs in TimescaleDB.
@@ -63,7 +66,7 @@ async def calculate_route_finops_costs(
         )
 
         api_rate_per_million = 1.00 if protocol.upper() == "HTTP" else 3.50
-        lambda_memory_gb = 1.0  # Standard 1GB Lambda memory allocation
+        lambda_memory_gb = default_memory_mb / 1024.0
 
         for r in rows:
             calls = int(r.get("totalCalls") or 0)
@@ -104,19 +107,29 @@ def calculate_lambda_memory_right_sizing(
 ) -> list[MemoryRightSizingRecommendation]:
     """
     Determines memory right-sizing recommendations.
-    BUG-03 FIX preserved: uses actual peakMemoryUsedMb if available,
-    otherwise a conservative 40% utilization assumption, instead of string hash heuristics.
+    Differentiates between verified CloudWatch measurements and unverified estimates.
+    Warns that downscaling Lambda memory also downscales vCPU linearly.
     """
     results: list[MemoryRightSizingRecommendation] = []
 
     for fn in functions:
         allocated = int(fn.get("memorySize") or 1024)
         peak_used_raw = fn.get("peakMemoryUsedMb")
+        is_measured = peak_used_raw is not None
 
-        if peak_used_raw is not None:
+        if is_measured:
             peak_used = min(allocated, int(peak_used_raw))
+            warning_text = (
+                "Verified via CloudWatch REPORT log. Note: Lambda vCPU scales linearly with memory "
+                "(1,769 MB = 1 vCPU). For CPU-bound tasks, lower memory may increase execution duration."
+            )
         else:
+            # Conservative baseline estimate when CloudWatch REPORT metrics are unavailable
             peak_used = min(allocated, max(64, int(allocated * 0.40)))
+            warning_text = (
+                "ESTIMATED: Peak memory not directly observed in CloudWatch logs. "
+                "Do not downsize without benchmarking duration impact on CPU-bound workloads."
+            )
 
         target_optimal = max(128, math.ceil((peak_used * 1.25) / 64) * 64)
         recommended_mb = target_optimal if target_optimal < allocated else allocated
@@ -127,21 +140,26 @@ def calculate_lambda_memory_right_sizing(
         optimized_cost = round(current_cost * (0.3 + 0.7 * ratio), 2)
         savings = max(0.0, round(current_cost - optimized_cost, 2))
 
-        level: Literal["HIGH_SAVINGS", "MODERATE_SAVINGS", "OPTIMAL"] = (
-            "HIGH_SAVINGS" if savings > 15 else ("MODERATE_SAVINGS" if savings > 5 else "OPTIMAL")
-        )
+        if not is_measured:
+            level = "INSUFFICIENT_DATA" if savings > 0 else "OPTIMAL"
+        else:
+            level = (
+                "HIGH_SAVINGS" if savings > 15 else ("MODERATE_SAVINGS" if savings > 5 else "OPTIMAL")
+            )
 
         results.append(
             {
                 "functionName": fn.get("functionName", "unknown"),
                 "allocatedMemoryMb": allocated,
-                "peakMemoryUsedMb": peak_used,
+                "peakMemoryUsedMb": peak_used_raw if is_measured else None,
                 "recommendedMemoryMb": recommended_mb,
                 "overProvisionedRatio": over_ratio,
                 "monthlyCurrentCostUsd": current_cost,
                 "monthlyOptimizedCostUsd": optimized_cost,
                 "monthlySavingsUsd": savings,
                 "recommendationLevel": level,
+                "isMeasured": is_measured,
+                "warning": warning_text,
             }
         )
 

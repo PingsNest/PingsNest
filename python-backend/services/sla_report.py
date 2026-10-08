@@ -106,7 +106,7 @@ async def generate_sla_pdf() -> bytes:
     story = []
 
     # Title & Metadata
-    story.append(Paragraph("API SLA Compliance &amp; Uptime Certificate", title_style))
+    story.append(Paragraph("Operational Uptime &amp; SLA Compliance Report", title_style))
     now_str = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
     story.append(
         Paragraph(f"Generated On: {now_str} &nbsp;|&nbsp; System: API Gateway Monitor", subtitle_style)
@@ -117,8 +117,9 @@ async def generate_sla_pdf() -> bytes:
     story.append(Paragraph("Executive Summary", section_heading))
     story.append(
         Paragraph(
-            "This certificate verifies system operational availability against target Service Level Objectives (SLOs) "
-            "over a 30-day evaluation window.",
+            "This report summarizes system operational uptime against Service Level Objectives (SLOs) "
+            "over a 30-day rolling evaluation window. Downtime is aggregated from recorded synthetic probe "
+            "failures and gateway unavailability incidents without duplicate double-counting.",
             body_style,
         )
     )
@@ -127,8 +128,8 @@ async def generate_sla_pdf() -> bytes:
     mttr_text = f"{mttr_minutes} minutes" if mttr_minutes > 0 else "N/A (0 incidents)"
     metrics_data = [
         [Paragraph("<b>Metric Parameter</b>", body_style), Paragraph("<b>Target / Achieved Value</b>", body_style)],
-        [Paragraph("SLO Compliance Target", body_style), Paragraph("99.90%", body_style)],
-        [Paragraph("Actual Achieved Availability", body_style), Paragraph(f"<b>{availability_pct:.2f}%</b>", body_style)],
+        [Paragraph("SLO Availability Target", body_style), Paragraph("99.90%", body_style)],
+        [Paragraph("Actual Measured Availability", body_style), Paragraph(f"<b>{availability_pct:.2f}%</b>", body_style)],
         [Paragraph("Total Measured Requests", body_style), Paragraph(f"{total_requests:,}", body_style)],
         [Paragraph("Mean Time To Resolution (MTTR)", body_style), Paragraph(mttr_text, body_style)],
     ]
@@ -147,12 +148,12 @@ async def generate_sla_pdf() -> bytes:
     story.append(t)
     story.append(Spacer(1, 20))
 
-    # Certification Authorization
-    story.append(Paragraph("Certification Authorization", section_heading))
+    # Verification Methodology
+    story.append(Paragraph("Observability Audit &amp; Verification", section_heading))
     story.append(
         Paragraph(
-            "Verified by Automated SRE Observability Engine &amp; TimescaleDB Telemetry Audit.<br/>"
-            "This certificate is cryptographically signed and stored in continuous compliance audit logs.",
+            "Telemetry aggregated continuously via automated SRE probes and TimescaleDB time-series logs.<br/>"
+            "Evaluated per RFC 9110 status classifications and scheduled health check intervals.",
             body_style,
         )
     )
