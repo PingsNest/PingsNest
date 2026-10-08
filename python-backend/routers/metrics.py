@@ -145,7 +145,7 @@ async def get_metrics(body: MetricsRequest) -> JSONResponse:
 
 
 async def _evaluate_alerts(api_id: str, stage: str, data_points: list, region: str) -> None:
-    """Post a metrics snapshot to Node's internal alert evaluator (non-blocking)."""
+    """Evaluate metric snapshot against alert rules locally and post to Node (non-blocking)."""
     try:
         total_reqs = sum(dp["values"][0] for dp in data_points)
         total_4xx  = sum(dp["values"][3] for dp in data_points)
@@ -153,15 +153,33 @@ async def _evaluate_alerts(api_id: str, stage: str, data_points: list, region: s
         avg_lat    = sum(dp["values"][1] for dp in data_points) / max(len(data_points), 1)
         err_rate   = round(((total_4xx + total_5xx) / total_reqs) * 100) if total_reqs > 0 else 0
 
-        node_url = get_settings().node_backend_url
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(
-                f"{node_url}/internal/gateway-metrics-alert",
-                json={
-                    "apiId": api_id, "stage": stage, "region": region,
-                    "errorRate": err_rate, "avgLatency": round(avg_lat),
-                    "totalRequests": total_reqs, "status4xx": total_4xx, "status5xx": total_5xx,
-                },
-            )
+        metrics_snapshot = {
+            "errorRate": err_rate,
+            "avgLatency": round(avg_lat),
+            "totalRequests": total_reqs,
+            "status4xx": total_4xx,
+            "status5xx": total_5xx,
+        }
+
+        # 1. Native Python alert evaluation & webhook dispatch
+        try:
+            from services.alert_evaluator import evaluate_alerts
+            await evaluate_alerts(api_id, stage, metrics_snapshot)
+        except Exception:
+            pass
+
+        # 2. Forward to Node internal bridge if reachable
+        try:
+            node_url = get_settings().node_backend_url
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                await client.post(
+                    f"{node_url}/internal/gateway-metrics-alert",
+                    json={
+                        "apiId": api_id, "stage": stage, "region": region,
+                        **metrics_snapshot,
+                    },
+                )
+        except Exception:
+            pass
     except Exception:
         pass  # Non-critical — never fail the main response
