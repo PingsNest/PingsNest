@@ -1,0 +1,106 @@
+# ==============================================================================
+# AWS Elastic Beanstalk Multi-Container Production Docker Compose Configuration
+# ==============================================================================
+# For Elastic Beanstalk Docker Platform (Amazon Linux 2023)
+# Persistent data stores (PostgreSQL/TimescaleDB, Redis, MSK Kafka) connect to
+# managed AWS infrastructure (Amazon RDS, Amazon ElastiCache, Amazon MSK).
+# ==============================================================================
+
+services:
+  # ── Nginx Ingress Reverse Proxy ─────────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: pingsnest-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      app:
+        condition: service_healthy
+      python-backend:
+        condition: service_healthy
+    restart: always
+    networks:
+      - monitor-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ── Python FastAPI — API Gateway Monitoring Microservice ────────────────────
+  python-backend:
+    build:
+      context: ./python-backend
+      dockerfile: Dockerfile.python
+    image: ${PYTHON_IMAGE:-pingsnest-python:latest}
+    container_name: pingsnest-python
+    expose:
+      - "8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - NODE_BACKEND_URL=http://app:3001
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_SECRET=${ENCRYPTION_SECRET}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+    restart: always
+    networks:
+      - monitor-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ── Node.js — Core Platform (Lambda, URL Synthetics, Auth, WS) ──────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${APP_IMAGE:-pingsnest-app:latest}
+    container_name: pingsnest-app
+    expose:
+      - "3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - KAFKA_BROKERS=${KAFKA_BROKERS:-}
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_SECRET=${ENCRYPTION_SECRET}
+      - LOG_ROTATION_INTERVAL=30 days
+      - CREDENTIALS_DIR=/app/credentials
+    volumes:
+      - credentials_data:/app/credentials
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+    restart: always
+    networks:
+      - monitor-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+networks:
+  monitor-net:
+    driver: bridge
+
+volumes:
+  credentials_data:
