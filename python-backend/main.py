@@ -88,8 +88,12 @@ app.include_router(gateways.router,    prefix="/api")
 app.include_router(diagnostics.router, prefix="/api")
 app.include_router(traces.router,     prefix="/api")
 
-# TODO Phase 5+: add routers as they are implemented
-# from routers import alerts, sla, ingest
+# Phase 5 — Gateway Alerting & Monitored Gateways
+from routers import alerts  # noqa: E402
+app.include_router(alerts.router, prefix="/api")
+
+# TODO Phase 6+: add routers as they are implemented
+# from routers import sla, ingest
 
 
 # ── Dev entry point ────────────────────────────────────────────────────────────
