@@ -1,17 +1,26 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Server } from 'http';
 import crypto from 'crypto';
-import { Redis } from 'ioredis';
+import { Redis, type RedisOptions } from 'ioredis';
+import { getRedisUrl } from './cache.ts';
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const REDIS_URL = getRedisUrl();
 
 // Redis Pub/Sub clients for multi-replica horizontal WebSocket fanout
 let pubClient: Redis | null = null;
 let subClient: Redis | null = null;
 
 try {
-  pubClient = new Redis(REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false });
-  subClient = new Redis(REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false });
+  const isTls = REDIS_URL.startsWith('rediss://') || process.env.REDIS_TLS === 'true';
+  const redisOptions: RedisOptions = {
+    lazyConnect: true,
+    connectTimeout: 5000,
+    maxRetriesPerRequest: 1,
+    enableOfflineQueue: false,
+    ...(isTls ? { tls: { rejectUnauthorized: false } } : {})
+  };
+  pubClient = new Redis(REDIS_URL, redisOptions);
+  subClient = new Redis(REDIS_URL, redisOptions);
 
   pubClient.connect().catch(() => {});
   subClient.connect().then(() => {

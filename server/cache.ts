@@ -1,6 +1,19 @@
-import { Redis } from 'ioredis';
+import { Redis, type RedisOptions } from 'ioredis';
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+export function getRedisUrl(): string {
+  if (process.env.REDIS_URL) return process.env.REDIS_URL;
+  if (process.env.REDIS_HOST) {
+    const isAws = process.env.REDIS_HOST.includes('cache.amazonaws.com');
+    const useTls = process.env.REDIS_TLS === 'true' || isAws;
+    const protocol = useTls ? 'rediss' : 'redis';
+    const port = process.env.REDIS_PORT || '6379';
+    const auth = process.env.REDIS_PASSWORD ? `:${encodeURIComponent(process.env.REDIS_PASSWORD)}@` : '';
+    return `${protocol}://${auth}${process.env.REDIS_HOST}:${port}`;
+  }
+  return 'redis://localhost:6379';
+}
+
+const REDIS_URL = getRedisUrl();
 
 let client: Redis | null = null;
 let connected = false;
@@ -8,12 +21,15 @@ let connected = false;
 function getClient(): Redis | null {
   if (client) return client;
   try {
-    client = new Redis(REDIS_URL, {
+    const isTls = REDIS_URL.startsWith('rediss://') || process.env.REDIS_TLS === 'true';
+    const redisOptions: RedisOptions = {
       lazyConnect: true,
-      connectTimeout: 3000,
+      connectTimeout: 5000,
       maxRetriesPerRequest: 1,
       enableOfflineQueue: false,
-    });
+      ...(isTls ? { tls: { rejectUnauthorized: false } } : {})
+    };
+    client = new Redis(REDIS_URL, redisOptions);
 
     client.on('connect', () => {
       connected = true;
