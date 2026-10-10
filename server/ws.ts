@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import type { Server } from 'http';
 import crypto from 'crypto';
 import { Redis, type RedisOptions } from 'ioredis';
-import { getRedisUrl } from './cache.ts';
+import { getRedisUrl } from './cache.js';
 
 const REDIS_URL = getRedisUrl();
 
