@@ -22,6 +22,14 @@ try {
   pubClient = new Redis(REDIS_URL, redisOptions);
   subClient = new Redis(REDIS_URL, redisOptions);
 
+  pubClient.on('error', (err: any) => {
+    // Suppress spammy unhandled error events
+  });
+
+  subClient.on('error', (err: any) => {
+    // Suppress spammy unhandled error events
+  });
+
   pubClient.connect().catch(() => {});
   subClient.connect().then(() => {
     subClient?.subscribe('ws:fanout:logs', 'ws:fanout:metrics', 'ws:fanout:alert', 'ws:fanout:ping', 'ws:fanout:lambda', (err) => {

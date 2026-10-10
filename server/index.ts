@@ -5463,7 +5463,10 @@ app.get('/api/system/health', async (req, res) => {
   let dbPoolTotal = 0;
   try {
     const { pool } = await import('./db.js');
-    await pool.query('SELECT 1');
+    await Promise.race([
+      pool.query('SELECT 1'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('db timeout')), 2000))
+    ]);
     dbOk = true;
     dbPoolIdle = pool.idleCount;
     dbPoolTotal = pool.totalCount;

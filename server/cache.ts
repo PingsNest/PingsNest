@@ -124,7 +124,10 @@ export async function getRedisStats(): Promise<{ connected: boolean; memUsed: st
   try {
     const c = getClient();
     if (!c || !connected) return { connected: false, memUsed: 'N/A' };
-    const info = await c.info('memory');
+    const info = await Promise.race([
+      c.info('memory'),
+      new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+    ]);
     const match = info.match(/used_memory_human:(\S+)/);
     return { connected: true, memUsed: match ? match[1] : 'unknown' };
   } catch {
