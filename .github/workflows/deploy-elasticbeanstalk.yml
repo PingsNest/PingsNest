@@ -1,0 +1,125 @@
+name: Deploy to AWS Elastic Beanstalk
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  EB_APPLICATION_NAME: ${{ secrets.EB_APPLICATION_NAME || 'api-gateway-monitor' }}
+  EB_ENVIRONMENT_NAME: ${{ secrets.EB_ENVIRONMENT_NAME || 'api-gateway-monitor-prod' }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY || 'api-gateway-monitor' }}
+
+jobs:
+  # ── 1. Quality & Lint Verification ─────────────────────────────────────────
+  validate:
+    name: Lint & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Linter
+        run: npm run lint
+
+      - name: Validate Server & Frontend Builds
+        run: npm run build:all
+
+  # ── 2. Build Container & Deploy to Elastic Beanstalk ────────────────────────
+  build-and-deploy:
+    name: Build, Package & Deploy
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Needed if using AWS OIDC role assumption
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set Release Version
+        id: vars
+        run: |
+          echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "timestamp=$(date +'%Y%m%d%H%M%S')" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Docker Image to ECR
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.vars.outputs.sha_short }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate Dockerrun.aws.json
+        run: |
+          cat <<EOF > Dockerrun.aws.json
+          {
+            "AWSEBDockerrunVersion": "1",
+            "Image": {
+              "Name": "${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.vars.outputs.sha_short }}",
+              "Update": "true"
+            },
+            "Ports": [
+              {
+                "ContainerPort": 3001,
+                "HostPort": 80
+              }
+            ]
+          }
+          EOF
+
+      - name: Prepare Elastic Beanstalk Deployment Package
+        run: |
+          # Package Dockerrun.aws.json and any .ebextensions configuration files
+          if [ -d ".ebextensions" ]; then
+            zip -r deploy-package-${{ steps.vars.outputs.sha_short }}.zip Dockerrun.aws.json .ebextensions/
+          else
+            zip -r deploy-package-${{ steps.vars.outputs.sha_short }}.zip Dockerrun.aws.json
+          fi
+
+      - name: Deploy to Elastic Beanstalk
+        uses: einaregilsson/beanstalk-deploy@v22
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          region: ${{ env.AWS_REGION }}
+          application_name: ${{ env.EB_APPLICATION_NAME }}
+          environment_name: ${{ env.EB_ENVIRONMENT_NAME }}
+          version_label: "release-${{ steps.vars.outputs.sha_short }}-${{ steps.vars.outputs.timestamp }}"
+          deployment_package: "deploy-package-${{ steps.vars.outputs.sha_short }}.zip"
+          use_existing_version_if_available: false
+          wait_for_deployment: true
