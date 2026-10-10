@@ -31,7 +31,7 @@ services:
       - NODE_ENV=production
       - PORT=3001
       - REDIS_URL=redis://redis:6379
-      - DATABASE_URL=postgres://nova:nova_secret@timescaledb:5432/nova_monitor
+      - DATABASE_URL=${DATABASE_URL:-postgres://nova:nova_secret@timescaledb:5432/nova_monitor}
       - KAFKA_BROKERS=kafka:9092
       - LOG_ROTATION_INTERVAL=30 days
       - CREDENTIALS_DIR=/app/credentials

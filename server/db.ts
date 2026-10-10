@@ -4,10 +4,27 @@ import crypto from 'crypto';
 const { Pool } = pg;
 
 // ─── Connection Pool ──────────────────────────────────────────────────────────
-// Reads DATABASE_URL for production; falls back to sensible local defaults.
-const DATABASE_URL =
-  process.env.DATABASE_URL ||
-  'postgres://nova:nova_secret@localhost:5432/nova_monitor';
+// Reads DATABASE_URL or individual RDS_* variables; falls back to sensible local defaults.
+export function getDatabaseConnectionString(): string {
+  if (process.env.DATABASE_URL) {
+    return process.env.DATABASE_URL;
+  }
+  if (process.env.RDS_HOSTNAME) {
+    const user = process.env.RDS_USERNAME || 'postgres';
+    const pass = process.env.RDS_PASSWORD ? encodeURIComponent(process.env.RDS_PASSWORD) : '';
+    const host = process.env.RDS_HOSTNAME;
+    const port = process.env.RDS_PORT || '5432';
+    const db = process.env.RDS_DB_NAME || 'nova_monitor';
+    return `postgres://${user}:${pass}@${host}:${port}/${db}`;
+  }
+  return 'postgres://nova:nova_secret@localhost:5432/nova_monitor';
+}
+
+export const DATABASE_URL = getDatabaseConnectionString();
+
+// AWS RDS requires SSL connection (or when explicitly requested via DB_SSL / sslmode)
+const isRds = DATABASE_URL.includes('rds.amazonaws.com') || !!process.env.RDS_HOSTNAME;
+const useSsl = process.env.DB_SSL === 'true' || isRds || DATABASE_URL.includes('sslmode=require');
 
 export const pool = new Pool({
   connectionString: DATABASE_URL,
@@ -15,6 +32,7 @@ export const pool = new Pool({
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
   allowExitOnIdle: true,         // allows graceful shutdown without hanging
+  ssl: useSsl ? { rejectUnauthorized: false } : undefined,
 });
 
 pool.on('error', (err) => {

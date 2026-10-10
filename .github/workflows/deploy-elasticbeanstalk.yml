@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  AWS_REGION: ${{ secrets.AWS_REGION || 'ap-south-1' }}
   EB_APPLICATION_NAME: ${{ secrets.EB_APPLICATION_NAME || 'api-gateway-monitor' }}
   EB_ENVIRONMENT_NAME: ${{ secrets.EB_ENVIRONMENT_NAME || 'api-gateway-monitor-prod' }}
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY || 'api-gateway-monitor' }}

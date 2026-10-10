@@ -43,3 +43,16 @@ pnpm-debug.log*
 # Agent Brain / Temporary IDE State
 .gemini/
 .kilo/
+*.zip
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+ENV/
