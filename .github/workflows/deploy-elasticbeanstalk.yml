@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - tws-hackathon
     paths-ignore:
       - '**.md'
       - '.gitignore'
