@@ -1,7 +1,15 @@
 import { Redis, type RedisOptions } from 'ioredis';
 
 export function getRedisUrl(): string {
-  if (process.env.REDIS_URL) return process.env.REDIS_URL;
+  if (process.env.REDIS_URL) {
+    let url = process.env.REDIS_URL.trim();
+    if (!url.startsWith('redis://') && !url.startsWith('rediss://')) {
+      const isAws = url.includes('cache.amazonaws.com');
+      const protocol = isAws || process.env.REDIS_TLS === 'true' ? 'rediss' : 'redis';
+      url = `${protocol}://${url}`;
+    }
+    return url;
+  }
   if (process.env.REDIS_HOST) {
     const isAws = process.env.REDIS_HOST.includes('cache.amazonaws.com');
     const useTls = process.env.REDIS_TLS === 'true' || isAws;
