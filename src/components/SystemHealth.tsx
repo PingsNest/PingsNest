@@ -133,10 +133,10 @@ export const SystemHealth: React.FC = () => {
             )}
           </div>
           <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)' }}>
-            {health?.redis.memUsed ?? 'N/A'}
+            {health?.redis.memUsed === 'unknown' ? 'Serverless Managed' : (health?.redis.memUsed ?? 'N/A')}
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-            Memory Used (LRU Eviction)
+            {health?.redis.memUsed?.includes('Serverless') || health?.redis.memUsed === 'unknown' ? 'Auto-Scaling In-Memory Cache' : 'Memory Used (LRU Eviction)'}
           </div>
         </div>
 

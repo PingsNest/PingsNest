@@ -128,16 +128,55 @@ export async function cacheGetOrSet<T = any>(
   return value;
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
 export async function getRedisStats(): Promise<{ connected: boolean; memUsed: string }> {
   try {
     const c = getClient();
     if (!c || !connected) return { connected: false, memUsed: 'N/A' };
-    const info = await Promise.race([
-      c.info('memory'),
-      new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
-    ]);
-    const match = info.match(/used_memory_human:(\S+)/);
-    return { connected: true, memUsed: match ? match[1] : 'unknown' };
+    
+    let info = '';
+    try {
+      info = await Promise.race([
+        c.info('memory'),
+        new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+      ]);
+    } catch {}
+
+    if (!info || info.trim().length === 0 || info.trim() === '# Memory') {
+      try {
+        info = await Promise.race([
+          c.info(),
+          new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+        ]);
+      } catch {}
+    }
+
+    // 1. Check used_memory_human (e.g. 1.25M)
+    const humanMatch = info.match(/used_memory_human:\s*([^\r\n]+)/i);
+    if (humanMatch && humanMatch[1].trim()) {
+      return { connected: true, memUsed: humanMatch[1].trim() };
+    }
+
+    // 2. Check raw used_memory in bytes
+    const bytesMatch = info.match(/used_memory:\s*(\d+)/i);
+    if (bytesMatch && bytesMatch[1]) {
+      return { connected: true, memUsed: formatBytes(parseInt(bytesMatch[1], 10)) };
+    }
+
+    // 3. Check used_memory_peak_human
+    const peakMatch = info.match(/used_memory_peak_human:\s*([^\r\n]+)/i);
+    if (peakMatch && peakMatch[1].trim()) {
+      return { connected: true, memUsed: peakMatch[1].trim() };
+    }
+
+    // 4. Amazon ElastiCache Serverless dynamically manages memory without static bounds
+    return { connected: true, memUsed: 'Serverless (Auto)' };
   } catch {
     return { connected: false, memUsed: 'N/A' };
   }

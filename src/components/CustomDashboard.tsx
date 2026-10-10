@@ -400,7 +400,7 @@ const WidgetSystemHealth: React.FC = () => {
 
   const components = [
     { name: 'PostgreSQL', ok: health.db?.connected, detail: `${health.db?.poolTotal ?? 0} pool` },
-    { name: 'Redis',      ok: health.redis?.connected, detail: health.redis?.memUsed ?? 'N/A' },
+    { name: 'Redis',      ok: health.redis?.connected, detail: health.redis?.memUsed === 'unknown' ? 'Serverless' : (health.redis?.memUsed ?? 'N/A') },
     { name: 'Kafka',      ok: health.kafka?.connected, detail: health.kafka?.connected ? 'active' : 'disabled' },
     { name: 'WebSocket',  ok: true, detail: `${health.websocket?.clients ?? 0} clients` },
   ];
