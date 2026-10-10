@@ -1341,7 +1341,7 @@ function MainAppShell() {
         {/* Tab Body Content */}
         {!showWelcome && (
         <section style={{ flex: 1 }}>
-          {activeTab === 'overview' && (selectedGateway ? <Overview /> : renderGatewayRequiredFallback())}
+          {activeTab === 'overview' && (hasAwsConnection ? <Overview /> : renderGatewayRequiredFallback())}
           {activeTab === 'dashboard' && <CustomDashboard />}
           {activeTab === 'routes' && (selectedGateway ? <RoutePerformance /> : renderGatewayRequiredFallback())}
           {activeTab === 'logs' && (selectedGateway ? <LiveLogs token={token} /> : renderGatewayRequiredFallback())}
