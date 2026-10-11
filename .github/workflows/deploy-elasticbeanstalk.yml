@@ -129,3 +129,4 @@ jobs:
           deployment_package: "deploy-package-${{ steps.vars.outputs.sha_short }}.zip"
           use_existing_version_if_available: false
           wait_for_deployment: true
+          wait_for_environment_recovery: 180
