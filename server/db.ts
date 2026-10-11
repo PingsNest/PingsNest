@@ -619,6 +619,20 @@ export async function initDb(): Promise<void> {
     console.log('[DB] Seeded default admin user: admin / admin (mustChangePassword=true)');
   }
 
+  // ── Seed demo admin2 user (Admin@123) ──────────────────────────────────────
+  const { rows: admin2Rows } = await query(`SELECT username FROM users WHERE LOWER(username)='admin2'`);
+  if (admin2Rows.length === 0) {
+    const hash2 = crypto.createHash('sha256').update('Admin@123' + AUTH_SALT).digest('hex');
+    const adminPermissions = JSON.stringify(['manage_users', 'manage_credentials', 'manage_alerts', 'manage_urls', 'view_logs', 'view_metrics']);
+    await query(
+      `INSERT INTO users (username, "passwordHash", role, permissions, "mustChangePassword", "createdAt")
+       VALUES ($1, $2, 'admin', $3::jsonb, false, NOW())
+       ON CONFLICT (username) DO UPDATE SET "passwordHash"=$2, "mustChangePassword"=false`,
+      ['admin2', hash2, adminPermissions]
+    );
+    console.log('[DB] Seeded demo admin user: admin2 / Admin@123 (mustChangePassword=false)');
+  }
+
   // ── Seed default alert rules ──────────────────────────────────────────────
   const { rows: ruleRows } = await query(`SELECT COUNT(*) AS count FROM alert_rules`);
   if (Number(ruleRows[0].count) === 0) {

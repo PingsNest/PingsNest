@@ -478,6 +478,61 @@ function MainAppShell() {
                 </button>
               </div>
             </div>
+
+            {/* Demo Credentials Box */}
+            <div style={{
+              padding: '12px 14px',
+              borderRadius: '10px',
+              backgroundColor: 'rgba(0, 242, 254, 0.04)',
+              border: '1px solid rgba(0, 242, 254, 0.2)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-primary)', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Key size={13} /> DEMO CREDENTIALS
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginUser('admin2');
+                    setLoginPass('Admin@123');
+                    setLoginError('');
+                  }}
+                  style={{
+                    backgroundColor: 'rgba(0, 242, 254, 0.12)',
+                    border: '1px solid rgba(0, 242, 254, 0.35)',
+                    color: 'var(--color-primary)',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    padding: '3px 8px',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                  title="Click to auto-fill admin2 credentials"
+                >
+                  ⚡ Auto-fill
+                </button>
+              </div>
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: '12px',
+                fontFamily: 'var(--font-mono)',
+                backgroundColor: 'rgba(0,0,0,0.2)',
+                padding: '6px 10px',
+                borderRadius: '6px'
+              }}>
+                <span style={{ color: 'var(--text-muted)' }}>
+                  User: <strong style={{ color: 'var(--text-primary)', userSelect: 'all' }}>admin2</strong>
+                </span>
+                <span style={{ color: 'var(--text-muted)' }}>
+                  Pass: <strong style={{ color: 'var(--text-primary)', userSelect: 'all' }}>Admin@123</strong>
+                </span>
+              </div>
+            </div>
           </div>
 
           <button
