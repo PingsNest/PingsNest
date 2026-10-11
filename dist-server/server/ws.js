@@ -1,13 +1,28 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import crypto from 'crypto';
 import { Redis } from 'ioredis';
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+import { getRedisUrl } from './cache.js';
+const REDIS_URL = getRedisUrl();
 // Redis Pub/Sub clients for multi-replica horizontal WebSocket fanout
 let pubClient = null;
 let subClient = null;
 try {
-    pubClient = new Redis(REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false });
-    subClient = new Redis(REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false });
+    const isTls = REDIS_URL.startsWith('rediss://') || process.env.REDIS_TLS === 'true';
+    const redisOptions = {
+        lazyConnect: true,
+        connectTimeout: 5000,
+        maxRetriesPerRequest: 1,
+        enableOfflineQueue: false,
+        ...(isTls ? { tls: { rejectUnauthorized: false } } : {})
+    };
+    pubClient = new Redis(REDIS_URL, redisOptions);
+    subClient = new Redis(REDIS_URL, redisOptions);
+    pubClient.on('error', (err) => {
+        // Suppress spammy unhandled error events
+    });
+    subClient.on('error', (err) => {
+        // Suppress spammy unhandled error events
+    });
     pubClient.connect().catch(() => { });
     subClient.connect().then(() => {
         subClient?.subscribe('ws:fanout:logs', 'ws:fanout:metrics', 'ws:fanout:alert', 'ws:fanout:ping', 'ws:fanout:lambda', (err) => {

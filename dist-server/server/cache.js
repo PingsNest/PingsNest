@@ -1,17 +1,40 @@
 import { Redis } from 'ioredis';
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+export function getRedisUrl() {
+    if (process.env.REDIS_URL) {
+        let url = process.env.REDIS_URL.trim();
+        if (!url.startsWith('redis://') && !url.startsWith('rediss://')) {
+            const isAws = url.includes('cache.amazonaws.com');
+            const protocol = isAws || process.env.REDIS_TLS === 'true' ? 'rediss' : 'redis';
+            url = `${protocol}://${url}`;
+        }
+        return url;
+    }
+    if (process.env.REDIS_HOST) {
+        const isAws = process.env.REDIS_HOST.includes('cache.amazonaws.com');
+        const useTls = process.env.REDIS_TLS === 'true' || isAws;
+        const protocol = useTls ? 'rediss' : 'redis';
+        const port = process.env.REDIS_PORT || '6379';
+        const auth = process.env.REDIS_PASSWORD ? `:${encodeURIComponent(process.env.REDIS_PASSWORD)}@` : '';
+        return `${protocol}://${auth}${process.env.REDIS_HOST}:${port}`;
+    }
+    return 'redis://localhost:6379';
+}
+const REDIS_URL = getRedisUrl();
 let client = null;
 let connected = false;
 function getClient() {
     if (client)
         return client;
     try {
-        client = new Redis(REDIS_URL, {
+        const isTls = REDIS_URL.startsWith('rediss://') || process.env.REDIS_TLS === 'true';
+        const redisOptions = {
             lazyConnect: true,
-            connectTimeout: 3000,
+            connectTimeout: 5000,
             maxRetriesPerRequest: 1,
             enableOfflineQueue: false,
-        });
+            ...(isTls ? { tls: { rejectUnauthorized: false } } : {})
+        };
+        client = new Redis(REDIS_URL, redisOptions);
         client.on('connect', () => {
             connected = true;
             console.log('[Cache] Redis connected');
@@ -101,14 +124,54 @@ export async function cacheGetOrSet(key, ttlSeconds, fn) {
     await cacheSet(key, value, ttlSeconds);
     return value;
 }
+function formatBytes(bytes) {
+    if (bytes < 1024)
+        return `${bytes} B`;
+    if (bytes < 1024 * 1024)
+        return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024)
+        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 export async function getRedisStats() {
     try {
         const c = getClient();
         if (!c || !connected)
             return { connected: false, memUsed: 'N/A' };
-        const info = await c.info('memory');
-        const match = info.match(/used_memory_human:(\S+)/);
-        return { connected: true, memUsed: match ? match[1] : 'unknown' };
+        let info = '';
+        try {
+            info = await Promise.race([
+                c.info('memory'),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+            ]);
+        }
+        catch { }
+        if (!info || info.trim().length === 0 || info.trim() === '# Memory') {
+            try {
+                info = await Promise.race([
+                    c.info(),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+                ]);
+            }
+            catch { }
+        }
+        // 1. Check used_memory_human (e.g. 1.25M)
+        const humanMatch = info.match(/used_memory_human:\s*([^\r\n]+)/i);
+        if (humanMatch && humanMatch[1].trim()) {
+            return { connected: true, memUsed: humanMatch[1].trim() };
+        }
+        // 2. Check raw used_memory in bytes
+        const bytesMatch = info.match(/used_memory:\s*(\d+)/i);
+        if (bytesMatch && bytesMatch[1]) {
+            return { connected: true, memUsed: formatBytes(parseInt(bytesMatch[1], 10)) };
+        }
+        // 3. Check used_memory_peak_human
+        const peakMatch = info.match(/used_memory_peak_human:\s*([^\r\n]+)/i);
+        if (peakMatch && peakMatch[1].trim()) {
+            return { connected: true, memUsed: peakMatch[1].trim() };
+        }
+        // 4. Amazon ElastiCache Serverless dynamically manages memory without static bounds
+        return { connected: true, memUsed: 'Serverless (Auto)' };
     }
     catch {
         return { connected: false, memUsed: 'N/A' };

@@ -3,7 +3,7 @@ import { useMonitor } from '../context/MonitorContext';
 import {
   Search, RefreshCw, Layers, Terminal, ExternalLink,
   Download, ArrowUpDown, LayoutGrid, List, TrendingUp, TrendingDown,
-  Minus, Clock, Activity
+  Minus, Clock, Activity, Globe
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -688,156 +688,379 @@ export const MultiGatewayFleetView: React.FC<{
               return (
                 <div
                   key={gw.id}
-                  className="glass-panel"
+                  className="fleet-gateway-card glass-panel"
                   style={{
-                    padding: '20px',
-                    borderRadius: '14px',
-                    borderLeft: `5px solid ${statusColor}`,
+                    padding: '22px',
+                    borderRadius: '16px',
+                    background: 'linear-gradient(180deg, rgba(17, 24, 39, 0.78) 0%, rgba(10, 15, 29, 0.92) 100%)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    boxShadow: '0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
                     display: 'flex',
                     flexDirection: 'column',
                     gap: '14px',
-                    background: 'var(--bg-card)',
-                    transition: 'all 0.2s ease'
+                    position: 'relative',
+                    overflow: 'hidden',
+                    transition: 'all 0.25s cubic-bezier(0.16, 1, 0.3, 1)'
                   }}
                 >
+                  {/* Glowing Top Status Accent Bar */}
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: '3px',
+                    background: `linear-gradient(90deg, ${statusColor} 0%, rgba(0, 242, 254, 0.4) 100%)`,
+                    boxShadow: `0 1px 10px ${statusColor}80`
+                  }} />
+
                   {/* Card Top Info */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
-                    <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0, flex: 1 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <h4 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                        <h4 style={{
+                          fontSize: '17px',
+                          fontWeight: 800,
+                          color: 'var(--text-primary)',
+                          margin: 0,
+                          letterSpacing: '-0.02em',
+                          textOverflow: 'ellipsis',
+                          overflow: 'hidden',
+                          whiteSpace: 'nowrap'
+                        }}>
                           {gw.name}
                         </h4>
-                        <span style={{ fontSize: '10px', fontWeight: 800, padding: '2px 7px', borderRadius: '6px', background: 'rgba(0, 242, 254, 0.12)', color: 'var(--color-primary)', border: '1px solid rgba(0,242,254,0.25)' }}>
+                        <span style={{
+                          fontSize: '10px',
+                          fontWeight: 800,
+                          padding: '2px 8px',
+                          borderRadius: '6px',
+                          background: 'rgba(0, 242, 254, 0.1)',
+                          color: 'var(--color-primary)',
+                          border: '1px solid rgba(0, 242, 254, 0.25)',
+                          letterSpacing: '0.04em'
+                        }}>
                           {gw.protocol}
                         </span>
-
-                        {/* Interactive Stage Selector */}
-                        <div style={{
-                          display: 'inline-flex', alignItems: 'center', gap: '5px',
-                          background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.35)',
-                          borderRadius: '8px', padding: '2px 8px', transition: 'all 0.2s ease'
-                        }}>
-                          <Layers size={11} color="var(--color-success)" />
-                          <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--color-success)' }}>STAGE:</span>
-                          <select
-                            value={currentStage}
-                            onChange={(e) => handleStageSelect(gw, e.target.value)}
-                            onClick={(e) => e.stopPropagation()}
-                            title="Select default stage for this API Gateway"
-                            style={{
-                              backgroundColor: 'transparent', border: 'none',
-                              color: 'var(--text-primary)', fontSize: '11px',
-                              fontWeight: 800, cursor: 'pointer', outline: 'none', padding: '0 2px'
-                            }}
-                          >
-                            {stagesList.map((s: string) => (
-                              <option key={s} value={s} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
-                                {s} {s === currentStage ? '★ Default' : ''}
-                              </option>
-                            ))}
-                          </select>
-                          {savedToast === gw.id && (
-                            <span style={{ fontSize: '9px', fontWeight: 800, color: 'var(--color-success)', background: 'rgba(16,185,129,0.25)', padding: '1px 5px', borderRadius: '4px', marginLeft: '4px' }}>
-                              Default Set!
-                            </span>
-                          )}
-                        </div>
                       </div>
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'monospace', marginTop: '4px' }}>
-                        ID: {gw.id} • Region: {gw.region}
+                      
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        fontSize: '11px',
+                        color: 'var(--text-muted)',
+                        fontFamily: 'var(--font-mono)'
+                      }}>
+                        <span style={{ opacity: 0.85 }}>ID: {gw.id}</span>
+                        <span style={{ opacity: 0.35 }}>•</span>
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          padding: '1px 6px',
+                          borderRadius: '4px',
+                          backgroundColor: 'rgba(255, 255, 255, 0.04)',
+                          border: '1px solid rgba(255, 255, 255, 0.06)'
+                        }}>
+                          <Globe size={10} color="var(--text-muted)" /> {gw.region}
+                        </span>
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
-                      <span style={{
-                        padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 800,
-                        background: statusBg, color: statusColor,
-                        display: 'flex', alignItems: 'center', gap: '4px'
+                    {/* Status badge with glowing dot + History bar */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px', flexShrink: 0 }}>
+                      <div style={{
+                        padding: '4px 10px',
+                        borderRadius: '20px',
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        background: statusBg,
+                        color: statusColor,
+                        border: `1px solid ${statusColor}40`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        boxShadow: `0 0 12px ${statusColor}20`
                       }}>
+                        <span style={{
+                          width: '6px',
+                          height: '6px',
+                          borderRadius: '50%',
+                          backgroundColor: statusColor,
+                          boxShadow: `0 0 8px ${statusColor}`,
+                          display: 'inline-block'
+                        }} />
                         {gw.healthStatus}
-                      </span>
-                      {/* Health history bar */}
+                      </div>
                       {hist.length > 0 && <HealthHistoryBar history={hist as any} />}
                     </div>
                   </div>
 
-                  {/* Log Group Source Badge */}
+                  {/* Stage Switcher & Log Source Toolbar */}
                   <div style={{
-                    padding: '8px 12px', borderRadius: '8px',
-                    background: isLambdaFallback ? 'rgba(129, 140, 248, 0.12)' : 'var(--bg-input)',
-                    border: `1px solid ${isLambdaFallback ? 'rgba(129, 140, 248, 0.25)' : 'var(--border-main)'}`,
-                    fontSize: '11.5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px'
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '8px',
+                    padding: '8px 12px',
+                    borderRadius: '10px',
+                    background: 'rgba(0, 0, 0, 0.25)',
+                    border: '1px solid rgba(255, 255, 255, 0.05)'
                   }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-                      <Terminal size={13} color={isLambdaFallback ? '#818cf8' : 'var(--text-muted)'} />
-                      <span style={{ fontWeight: 700, color: isLambdaFallback ? '#818cf8' : 'var(--text-secondary)' }}>
+                    {/* Stage Selector Pill */}
+                    <div style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      background: 'rgba(16, 185, 129, 0.08)',
+                      border: '1px solid rgba(16, 185, 129, 0.25)',
+                      borderRadius: '7px',
+                      padding: '3px 8px'
+                    }}>
+                      <Layers size={11} color="var(--color-success)" />
+                      <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--color-success)', letterSpacing: '0.04em' }}>STAGE</span>
+                      <select
+                        value={currentStage}
+                        onChange={(e) => handleStageSelect(gw, e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        title="Select default stage for this API Gateway"
+                        style={{
+                          backgroundColor: 'transparent',
+                          border: 'none',
+                          color: 'var(--text-primary)',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          outline: 'none',
+                          padding: '0 2px'
+                        }}
+                      >
+                        {stagesList.map((s: string) => (
+                          <option key={s} value={s} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+                            {s} {s === currentStage ? '★ Default' : ''}
+                          </option>
+                        ))}
+                      </select>
+                      {savedToast === gw.id && (
+                        <span style={{ fontSize: '9px', fontWeight: 800, color: 'var(--color-success)', background: 'rgba(16,185,129,0.25)', padding: '1px 5px', borderRadius: '4px' }}>
+                          Saved
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Log Group Source Chip */}
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: '11px',
+                      maxWidth: '220px',
+                      overflow: 'hidden'
+                    }}>
+                      <Terminal size={12} color={isLambdaFallback ? '#818cf8' : 'var(--text-muted)'} />
+                      <span style={{
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        color: isLambdaFallback ? '#818cf8' : 'var(--text-muted)',
+                        textTransform: 'uppercase'
+                      }}>
                         {gw.logSource.label}:
                       </span>
-                      <span style={{ color: 'var(--text-muted)', fontFamily: 'monospace', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                      <span style={{
+                        color: 'var(--text-secondary)',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '10.5px',
+                        textOverflow: 'ellipsis',
+                        overflow: 'hidden',
+                        whiteSpace: 'nowrap'
+                      }} title={gw.logSource.logGroup}>
                         {gw.logSource.logGroup}
                       </span>
                     </div>
                   </div>
 
-                  {/* Card Metric Grid + Sparklines */}
-                  <div style={{ background: 'var(--bg-input)', padding: '10px 12px', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', fontSize: '12px' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>THROUGHPUT</span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-primary)' }}>{gw.requestsPerMin} /min</span>
-                          <TrendArrow values={reqSpark.length >= 2 ? reqSpark : [gw.requestsPerMin]} />
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>AVG / P99 LATENCY</span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <span style={{ fontSize: '13px', fontWeight: 800, color: gw.avgLatencyMs > 300 ? 'var(--color-warning)' : 'var(--text-primary)' }}>
-                            {gw.avgLatencyMs}ms / {gw.p99LatencyMs}ms
-                          </span>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>5XX / 4XX ERRORS</span>
-                        <span style={{ fontSize: '13px', fontWeight: 800, color: gw.errorRate5xxPct > 0 ? 'var(--color-error)' : 'var(--color-success)' }}>
-                          {gw.errorRate5xxPct}% / {gw.errorRate4xxPct}%
+                  {/* 3-Column Metrics KPI Grid */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(3, 1fr)',
+                    gap: '10px'
+                  }}>
+                    {/* Throughput */}
+                    <div style={{
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      background: 'rgba(0, 242, 254, 0.03)',
+                      border: '1px solid rgba(0, 242, 254, 0.1)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px'
+                    }}>
+                      <span style={{ fontSize: '9.5px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+                        THROUGHPUT
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                        <span style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'var(--font-heading)' }}>
+                          {gw.requestsPerMin}
                         </span>
+                        <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>/min</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
+                        <TrendArrow values={reqSpark.length >= 2 ? reqSpark : [gw.requestsPerMin]} />
+                        <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>flow</span>
                       </div>
                     </div>
-                    {/* Sparkline row */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                      <Activity size={10} color="var(--text-muted)" />
-                      <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', minWidth: 60 }}>Req Trend</span>
-                      <MiniSparkline
-                        values={reqSpark}
-                        color={sparkColor}
-                        gradId={sparkGradId(gw.id, 'req')}
-                        width={80}
-                        height={20}
-                      />
-                      <Clock size={10} color="var(--text-muted)" style={{ marginLeft: 6 }} />
-                      <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', minWidth: 60 }}>Latency</span>
-                      <MiniSparkline
-                        values={latSpark}
-                        color={gw.avgLatencyMs > 300 ? 'var(--color-warning)' : '#60a5fa'}
-                        gradId={sparkGradId(gw.id, 'lat')}
-                        width={80}
-                        height={20}
-                      />
+
+                    {/* Latency */}
+                    <div style={{
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      background: 'rgba(255, 153, 0, 0.03)',
+                      border: '1px solid rgba(255, 153, 0, 0.1)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px'
+                    }}>
+                      <span style={{ fontSize: '9.5px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+                        AVG / P99 LATENCY
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                        <span style={{
+                          fontSize: '15px',
+                          fontWeight: 800,
+                          color: gw.avgLatencyMs > 300 ? 'var(--color-warning)' : 'var(--text-primary)',
+                          fontFamily: 'var(--font-heading)'
+                        }}>
+                          {gw.avgLatencyMs}
+                        </span>
+                        <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>ms</span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '2px' }}>/ {gw.p99LatencyMs}ms</span>
+                      </div>
+                      <span style={{ fontSize: '10px', color: gw.avgLatencyMs > 300 ? 'var(--color-warning)' : 'var(--color-success)' }}>
+                        {gw.avgLatencyMs > 300 ? 'High Latency' : 'Nominal'}
+                      </span>
+                    </div>
+
+                    {/* Error Rates */}
+                    <div style={{
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      background: gw.errorRate5xxPct > 0 ? 'rgba(239, 68, 68, 0.05)' : 'rgba(16, 185, 129, 0.03)',
+                      border: `1px solid ${gw.errorRate5xxPct > 0 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.1)'}`,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px'
+                    }}>
+                      <span style={{ fontSize: '9.5px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+                        5XX / 4XX ERRORS
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                        <span style={{
+                          fontSize: '15px',
+                          fontWeight: 800,
+                          color: gw.errorRate5xxPct > 0 ? 'var(--color-error)' : 'var(--color-success)',
+                          fontFamily: 'var(--font-heading)'
+                        }}>
+                          {gw.errorRate5xxPct}%
+                        </span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>/ {gw.errorRate4xxPct}%</span>
+                      </div>
+                      <span style={{ fontSize: '10px', color: gw.errorRate5xxPct > 0 ? 'var(--color-error)' : 'var(--color-success)' }}>
+                        {gw.errorRate5xxPct > 0 ? 'Server Errors' : '0% 5xx Failure'}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Drill Down Action Button */}
+                  {/* Sparkline Visualization Bay */}
+                  <div style={{
+                    padding: '10px 14px',
+                    borderRadius: '10px',
+                    background: 'rgba(0, 0, 0, 0.3)',
+                    border: '1px solid rgba(255, 255, 255, 0.05)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '14px'
+                  }}>
+                    {/* Req Sparkline */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: '65px' }}>
+                        <span style={{ fontSize: '9px', fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                          <Activity size={9} color="var(--text-muted)" /> REQ TREND
+                        </span>
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: sparkColor, fontFamily: 'var(--font-mono)' }}>
+                          {reqSpark.length > 0 ? reqSpark[reqSpark.length - 1] : 0}
+                        </span>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 60, height: 22 }}>
+                        <MiniSparkline
+                          values={reqSpark}
+                          color={sparkColor}
+                          gradId={sparkGradId(gw.id, 'req')}
+                          width={90}
+                          height={22}
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{ width: '1px', height: '22px', backgroundColor: 'rgba(255, 255, 255, 0.08)' }} />
+
+                    {/* Latency Sparkline */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: '60px' }}>
+                        <span style={{ fontSize: '9px', fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                          <Clock size={9} color="var(--text-muted)" /> LATENCY
+                        </span>
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: gw.avgLatencyMs > 300 ? 'var(--color-warning)' : '#60a5fa', fontFamily: 'var(--font-mono)' }}>
+                          {gw.avgLatencyMs}ms
+                        </span>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 60, height: 22 }}>
+                        <MiniSparkline
+                          values={latSpark}
+                          color={gw.avgLatencyMs > 300 ? 'var(--color-warning)' : '#60a5fa'}
+                          gradId={sparkGradId(gw.id, 'lat')}
+                          width={90}
+                          height={22}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Inspect Telemetry CTA Button */}
                   <button
                     onClick={() => onSelectGateway && onSelectGateway({ id: gw.id, name: gw.name, protocol: gw.protocol }, currentStage)}
-                    className="btn btn-secondary"
                     style={{
-                      width: '100%', padding: '8px', fontSize: '12px', fontWeight: 700, borderRadius: '8px',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                      borderColor: 'var(--border-main)', color: 'var(--color-primary)'
+                      width: '100%',
+                      padding: '10px 14px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      borderRadius: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      background: 'linear-gradient(135deg, rgba(0, 242, 254, 0.08) 0%, rgba(79, 172, 254, 0.04) 100%)',
+                      border: '1px solid rgba(0, 242, 254, 0.3)',
+                      color: 'var(--color-primary)',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      boxShadow: '0 2px 8px rgba(0, 242, 254, 0.08)'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'linear-gradient(135deg, rgba(0, 242, 254, 0.18) 0%, rgba(79, 172, 254, 0.12) 100%)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 242, 254, 0.55)';
+                      e.currentTarget.style.boxShadow = '0 0 16px rgba(0, 242, 254, 0.25)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'linear-gradient(135deg, rgba(0, 242, 254, 0.08) 0%, rgba(79, 172, 254, 0.04) 100%)';
+                      e.currentTarget.style.borderColor = 'rgba(0, 242, 254, 0.3)';
+                      e.currentTarget.style.boxShadow = '0 2px 8px rgba(0, 242, 254, 0.08)';
                     }}
                   >
-                    Inspect Gateway Telemetry & Routes ({currentStage}) <ExternalLink size={13} />
+                    <span>Inspect Gateway Telemetry & Routes ({currentStage})</span>
+                    <ExternalLink size={13} />
                   </button>
                 </div>
               );

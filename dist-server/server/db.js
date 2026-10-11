@@ -2,15 +2,32 @@ import pg from 'pg';
 import crypto from 'crypto';
 const { Pool } = pg;
 // ─── Connection Pool ──────────────────────────────────────────────────────────
-// Reads DATABASE_URL for production; falls back to sensible local defaults.
-const DATABASE_URL = process.env.DATABASE_URL ||
-    'postgres://nova:nova_secret@localhost:5432/nova_monitor';
+// Reads DATABASE_URL or individual RDS_* variables; falls back to sensible local defaults.
+export function getDatabaseConnectionString() {
+    if (process.env.DATABASE_URL) {
+        return process.env.DATABASE_URL;
+    }
+    if (process.env.RDS_HOSTNAME) {
+        const user = process.env.RDS_USERNAME || 'postgres';
+        const pass = process.env.RDS_PASSWORD ? encodeURIComponent(process.env.RDS_PASSWORD) : '';
+        const host = process.env.RDS_HOSTNAME;
+        const port = process.env.RDS_PORT || '5432';
+        const db = process.env.RDS_DB_NAME || 'nova_monitor';
+        return `postgres://${user}:${pass}@${host}:${port}/${db}`;
+    }
+    return 'postgres://nova:nova_secret@localhost:5432/nova_monitor';
+}
+export const DATABASE_URL = getDatabaseConnectionString();
+// AWS RDS requires SSL connection (or when explicitly requested via DB_SSL / sslmode)
+const isRds = DATABASE_URL.includes('rds.amazonaws.com') || !!process.env.RDS_HOSTNAME;
+const useSsl = process.env.DB_SSL === 'true' || isRds || DATABASE_URL.includes('sslmode=require');
 export const pool = new Pool({
     connectionString: DATABASE_URL,
     max: 25, // up from 10 — handles concurrent API + background pollers
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
     allowExitOnIdle: true, // allows graceful shutdown without hanging
+    ssl: useSsl ? { rejectUnauthorized: false } : undefined,
 });
 pool.on('error', (err) => {
     console.error('[DB] Unexpected pool error:', err.message);
@@ -542,6 +559,16 @@ export async function initDb() {
         await query(`INSERT INTO users (username, "passwordHash", role, permissions, "mustChangePassword", "createdAt")
        VALUES ($1, $2, 'admin', $3::jsonb, true, NOW()) ON CONFLICT (username) DO NOTHING`, ['admin', hash, adminPermissions]);
         console.log('[DB] Seeded default admin user: admin / admin (mustChangePassword=true)');
+    }
+    // ── Seed demo admin2 user (Admin@123) ──────────────────────────────────────
+    const { rows: admin2Rows } = await query(`SELECT username FROM users WHERE LOWER(username)='admin2'`);
+    if (admin2Rows.length === 0) {
+        const hash2 = crypto.createHash('sha256').update('Admin@123' + AUTH_SALT).digest('hex');
+        const adminPermissions = JSON.stringify(['manage_users', 'manage_credentials', 'manage_alerts', 'manage_urls', 'view_logs', 'view_metrics']);
+        await query(`INSERT INTO users (username, "passwordHash", role, permissions, "mustChangePassword", "createdAt")
+       VALUES ($1, $2, 'admin', $3::jsonb, false, NOW())
+       ON CONFLICT (username) DO UPDATE SET "passwordHash"=$2, "mustChangePassword"=false`, ['admin2', hash2, adminPermissions]);
+        console.log('[DB] Seeded demo admin user: admin2 / Admin@123 (mustChangePassword=false)');
     }
     // ── Seed default alert rules ──────────────────────────────────────────────
     const { rows: ruleRows } = await query(`SELECT COUNT(*) AS count FROM alert_rules`);

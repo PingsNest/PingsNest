@@ -15,7 +15,7 @@ import { STSClient, AssumeRoleCommand } from '@aws-sdk/client-sts';
 import { fromNodeProviderChain, fromInstanceMetadata } from '@aws-sdk/credential-providers';
 import { XRayClient, BatchGetTracesCommand } from '@aws-sdk/client-xray';
 import { cacheGet, cacheSet, cacheDel, cacheDelPattern, cacheGetOrSet, getRedisStats } from './cache.js';
-import { query, initDb, encryptSecret, decryptSecret } from './db.js';
+import { query, initDb, encryptSecret, decryptSecret, DATABASE_URL } from './db.js';
 import { getProducer, kafkaEnabled, TOPICS, disconnectKafka } from './kafka.js';
 import { startConsumer, consumerEventLog } from './consumer.js';
 import { evaluateAlerts, testAlert } from './alerting.js';
@@ -5396,7 +5396,10 @@ app.get('/api/system/health', async (req, res) => {
     let dbPoolTotal = 0;
     try {
         const { pool } = await import('./db.js');
-        await pool.query('SELECT 1');
+        await Promise.race([
+            pool.query('SELECT 1'),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('db timeout')), 2000))
+        ]);
         dbOk = true;
         dbPoolIdle = pool.idleCount;
         dbPoolTotal = pool.totalCount;
@@ -5429,7 +5432,7 @@ if (fs.existsSync(distPath)) {
 const startServer = () => {
     const httpServer = app.listen(PORT, () => {
         console.log(`[Server] Running on http://localhost:${PORT}`);
-        console.log(`[Server] Database: ${process.env.DATABASE_URL || 'postgres://nova:nova_secret@localhost:5432/nova_monitor'}`);
+        console.log(`[Server] Database: ${DATABASE_URL.replace(/:[^:@]+@/, ':***@')}`);
         console.log(`[Server] Redis URL: ${process.env.REDIS_URL || 'redis://localhost:6379'}`);
     });
     // Attach WebSocket server to the same HTTP server
