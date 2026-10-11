@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useMonitor } from '../context/MonitorContext';
 import type { RequestLog } from '../context/MonitorContext';
 import { TraceViewer } from './TraceViewer';
-import { Play, Pause, Trash2, Search, ShieldCheck, Terminal, Globe, AlertTriangle, Radio, History, Calendar, Maximize2, X, Copy, CheckCheck, Clock, RefreshCw, Zap, Download, Server, Layers } from 'lucide-react';
+import { Play, Pause, Trash2, Search, ShieldCheck, Terminal, Globe, AlertTriangle, Radio, History, Calendar, Maximize2, X, Copy, CheckCheck, Clock, RefreshCw, Zap, Download, Server, Layers, Sparkles, Bot, Key, Eye, EyeOff, Check } from 'lucide-react';
 
 
 
@@ -259,30 +259,15 @@ export const LiveLogs: React.FC<LiveLogsProps> = ({ token }) => {
   
   const [frozenLogs, setFrozenLogs] = useState<RequestLog[]>([]);
   const [aiModalOpen, setAiModalOpen] = useState(false);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiData, setAiData] = useState<any>(null);
+  const [harryApiKey, setHarryApiKey] = useState(() => localStorage.getItem('pingsnest_harry_openai_key') || '');
+  const [showHarryApiKey, setShowHarryApiKey] = useState(false);
+  const [harryKeySaved, setHarryKeySaved] = useState(false);
   const [activeTraceId, setActiveTraceId] = useState<string | null>(null);
 
-  const handleRunAiDiagnostics = async () => {
-    setAiModalOpen(true);
-    setAiLoading(true);
-    try {
-      const res = await fetch('/api/diagnostics/analyze-spike', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiId: selectedGateway?.id, errorLogs: filteredLogs.slice(0, 10) })
-      });
-      const data = await res.json();
-      setAiData(data);
-    } catch {
-      setAiData({
-        summary: 'Diagnostic scan complete.',
-        findings: ['No structural errors detected in current log stream.'],
-        recommendations: ['Monitor latency metrics and p99 baseline targets.']
-      });
-    } finally {
-      setAiLoading(false);
-    }
+  const handleSaveHarryKey = () => {
+    localStorage.setItem('pingsnest_harry_openai_key', harryApiKey.trim());
+    setHarryKeySaved(true);
+    setTimeout(() => setHarryKeySaved(false), 3000);
   };
 
 
@@ -855,23 +840,47 @@ export const LiveLogs: React.FC<LiveLogsProps> = ({ token }) => {
             ))}
 
             <button
-              onClick={handleRunAiDiagnostics}
+              onClick={() => setAiModalOpen(true)}
+              title="Harry — AI Incident Diagnostic Assistant (Coming Soon)"
               style={{
                 padding: '8px 14px',
                 borderRadius: '8px',
                 fontSize: '12px',
-                fontWeight: 600,
+                fontWeight: 700,
                 cursor: 'pointer',
-                backgroundColor: 'rgba(99, 102, 241, 0.15)',
-                border: '1px solid #6366f1',
-                color: '#a5b4fc',
+                background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.22) 0%, rgba(0, 242, 254, 0.16) 100%)',
+                border: '1px solid rgba(168, 85, 247, 0.55)',
+                color: '#e9d5ff',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '6px',
-                marginLeft: '8px'
+                gap: '7px',
+                marginLeft: '8px',
+                boxShadow: '0 0 14px rgba(168, 85, 247, 0.18)',
+                transition: 'all 0.2s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = 'rgba(0, 242, 254, 0.85)';
+                e.currentTarget.style.boxShadow = '0 0 18px rgba(0, 242, 254, 0.35)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = 'rgba(168, 85, 247, 0.55)';
+                e.currentTarget.style.boxShadow = '0 0 14px rgba(168, 85, 247, 0.18)';
               }}
             >
-              <Zap size={14} /> AI Diagnostic Scan
+              <Sparkles size={14} color="#00f2fe" />
+              <span>Harry</span>
+              <span style={{
+                fontSize: '9px',
+                fontWeight: 800,
+                padding: '1px 5px',
+                borderRadius: '4px',
+                background: 'rgba(168, 85, 247, 0.35)',
+                color: '#f3e8ff',
+                border: '1px solid rgba(168, 85, 247, 0.5)',
+                letterSpacing: '0.04em'
+              }}>
+                AI
+              </span>
             </button>
           </div>
         </div>
@@ -879,7 +888,7 @@ export const LiveLogs: React.FC<LiveLogsProps> = ({ token }) => {
         {/* Trace Viewer Modal */}
         <TraceViewer traceId={activeTraceId} onClose={() => setActiveTraceId(null)} />
 
-        {/* AI Diagnostics Modal */}
+        {/* Harry AI Diagnostics Modal (Coming Soon) */}
         {aiModalOpen && (
           <div style={{
             position: 'fixed',
@@ -887,61 +896,320 @@ export const LiveLogs: React.FC<LiveLogsProps> = ({ token }) => {
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.75)',
-            backdropFilter: 'blur(4px)',
+            backgroundColor: 'rgba(0, 0, 0, 0.82)',
+            backdropFilter: 'blur(8px)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 1000,
-            padding: '24px'
+            padding: '20px'
           }}>
             <div style={{
-              backgroundColor: 'var(--bg-card, #12161f)',
-              border: '1px solid var(--border-main, rgba(255,255,255,0.1))',
-              borderRadius: '12px',
+              background: 'linear-gradient(180deg, rgba(23, 19, 38, 0.96) 0%, rgba(12, 16, 28, 0.98) 100%)',
+              border: '1px solid rgba(168, 85, 247, 0.35)',
+              borderRadius: '16px',
               width: '100%',
-              maxWidth: '650px',
-              padding: '24px',
-              color: '#fff'
+              maxWidth: '680px',
+              padding: '28px',
+              color: 'var(--text-primary)',
+              boxShadow: '0 20px 50px rgba(0, 0, 0, 0.6), 0 0 30px rgba(168, 85, 247, 0.2)',
+              position: 'relative',
+              overflow: 'hidden'
             }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h3 style={{ margin: 0, fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px', color: '#a5b4fc' }}>
-                  <Zap size={20} color="#6366f1" /> AI Incident Diagnostic Assistant
-                </h3>
-                <button onClick={() => setAiModalOpen(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>
-                  <X size={20} />
+              {/* Glowing Top Accent Bar */}
+              <div style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                height: '3px',
+                background: 'linear-gradient(90deg, #a855f7 0%, #00f2fe 50%, #10b981 100%)',
+                boxShadow: '0 1px 12px rgba(168, 85, 247, 0.6)'
+              }} />
+
+              {/* Modal Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{
+                    width: '44px',
+                    height: '44px',
+                    borderRadius: '12px',
+                    background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.25) 0%, rgba(0, 242, 254, 0.2) 100%)',
+                    border: '1px solid rgba(168, 85, 247, 0.4)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 0 16px rgba(168, 85, 247, 0.3)'
+                  }}>
+                    <Bot size={24} color="#00f2fe" />
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 800, color: '#f3e8ff', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        Harry <Sparkles size={16} color="#00f2fe" />
+                      </h3>
+                      <span style={{
+                        fontSize: '10px',
+                        fontWeight: 800,
+                        padding: '2px 8px',
+                        borderRadius: '6px',
+                        background: 'rgba(245, 158, 11, 0.15)',
+                        color: 'var(--color-warning)',
+                        border: '1px solid rgba(245, 158, 11, 0.35)',
+                        letterSpacing: '0.04em'
+                      }}>
+                        COMING SOON
+                      </span>
+                    </div>
+                    <p style={{ margin: '3px 0 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                      Autonomous Real-Time AI Incident Diagnostic Assistant
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setAiModalOpen(false)}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    borderRadius: '8px',
+                    color: 'var(--text-muted)',
+                    cursor: 'pointer',
+                    padding: '6px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = '#fff';
+                    e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = 'var(--text-muted)';
+                    e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+                  }}
+                >
+                  <X size={18} />
                 </button>
               </div>
 
-              {aiLoading ? (
-                <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>
-                  <RefreshCw size={28} className="spin" style={{ marginBottom: '12px' }} />
-                  <p>Analyzing CloudWatch log patterns & metric correlations...</p>
+              {/* Status / Development Announcement */}
+              <div style={{
+                padding: '16px 18px',
+                borderRadius: '12px',
+                background: 'rgba(168, 85, 247, 0.08)',
+                border: '1px solid rgba(168, 85, 247, 0.25)',
+                marginBottom: '18px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '16px' }}>🚀</span>
+                  <span style={{ fontSize: '13px', fontWeight: 800, color: '#e9d5ff' }}>
+                    Harry is currently under active development!
+                  </span>
                 </div>
-              ) : aiData ? (
-                <div>
-                  <p style={{ fontSize: '13px', color: '#cbd5e1', marginBottom: '16px' }}>{aiData.summary}</p>
+                <p style={{ margin: 0, fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: 1.55 }}>
+                  We are building <strong>Harry</strong> to provide instant, automated log analysis directly inside your live API Gateway & Lambda telemetry feed. Harry will autonomously parse CloudWatch 5xx errors, pinpoint breaking backend exceptions, and generate step-by-step remediation fixes.
+                </p>
+              </div>
 
-                  <h4 style={{ fontSize: '14px', margin: '0 0 8px 0', color: '#f87171' }}>Key Findings</h4>
-                  <ul style={{ margin: '0 0 16px 0', paddingLeft: '20px', fontSize: '13px', color: '#e2e8f0' }}>
-                    {aiData.findings?.map((f: string, i: number) => <li key={i}>{f}</li>)}
-                  </ul>
+              {/* OpenAI Key Requirement Card */}
+              <div style={{
+                padding: '18px',
+                borderRadius: '12px',
+                background: 'rgba(0, 0, 0, 0.35)',
+                border: '1px solid rgba(245, 158, 11, 0.3)',
+                marginBottom: '18px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Key size={16} color="var(--color-warning)" />
+                    <span style={{ fontSize: '12.5px', fontWeight: 800, color: '#fef08a', letterSpacing: '0.02em' }}>
+                      OPENAI API KEY REQUIRED TO USE HARRY
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '11px', color: 'var(--color-warning)', fontWeight: 700 }}>
+                    Bring Your Own Key (BYOK)
+                  </span>
+                </div>
 
-                  <h4 style={{ fontSize: '14px', margin: '0 0 8px 0', color: '#38bdf8' }}>Recommended Actions</h4>
-                  <ul style={{ margin: '0 0 20px 0', paddingLeft: '20px', fontSize: '13px', color: '#e2e8f0' }}>
-                    {aiData.recommendations?.map((r: string, i: number) => <li key={i}>{r}</li>)}
-                  </ul>
+                <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  To activate Harry once live, you will need to provide your own <strong>OpenAI API Key</strong> (e.g. GPT-4o / GPT-4 Turbo). This ensures zero server-side telemetry storage, complete data privacy, and direct autonomous diagnostics.
+                </p>
 
-                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                {/* Pre-configuration Input Field */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '4px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)' }}>
+                    Pre-configure OpenAI API Key (Optional Preview):
+                  </label>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <div style={{
+                      position: 'relative',
+                      flex: 1,
+                      display: 'flex',
+                      alignItems: 'center'
+                    }}>
+                      <input
+                        type={showHarryApiKey ? 'text' : 'password'}
+                        value={harryApiKey}
+                        onChange={(e) => setHarryApiKey(e.target.value)}
+                        placeholder="sk-proj-..."
+                        style={{
+                          width: '100%',
+                          padding: '9px 38px 9px 12px',
+                          borderRadius: '8px',
+                          border: '1px solid rgba(255, 255, 255, 0.12)',
+                          background: 'rgba(0, 0, 0, 0.4)',
+                          color: '#fff',
+                          fontSize: '12px',
+                          fontFamily: 'var(--font-mono)'
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowHarryApiKey(!showHarryApiKey)}
+                        style={{
+                          position: 'absolute',
+                          right: '8px',
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--text-muted)',
+                          cursor: 'pointer',
+                          padding: '4px'
+                        }}
+                        title={showHarryApiKey ? 'Hide key' : 'Show key'}
+                      >
+                        {showHarryApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
+
                     <button
-                      onClick={() => setAiModalOpen(false)}
-                      style={{ padding: '8px 16px', borderRadius: '6px', backgroundColor: '#6366f1', border: 'none', color: '#fff', fontWeight: 600, cursor: 'pointer' }}
+                      type="button"
+                      onClick={handleSaveHarryKey}
+                      style={{
+                        padding: '9px 16px',
+                        borderRadius: '8px',
+                        background: harryKeySaved ? 'rgba(16, 185, 129, 0.2)' : 'linear-gradient(135deg, rgba(0, 242, 254, 0.18) 0%, rgba(168, 85, 247, 0.18) 100%)',
+                        border: `1px solid ${harryKeySaved ? 'var(--color-success)' : 'rgba(0, 242, 254, 0.4)'}`,
+                        color: harryKeySaved ? 'var(--color-success)' : 'var(--color-primary)',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        whiteSpace: 'nowrap',
+                        transition: 'all 0.2s ease'
+                      }}
                     >
-                      Close Diagnostics
+                      {harryKeySaved ? (
+                        <>
+                          <Check size={14} /> Saved!
+                        </>
+                      ) : (
+                        'Save Key'
+                      )}
                     </button>
                   </div>
+                  <span style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>
+                    {harryKeySaved ? (
+                      <span style={{ color: 'var(--color-success)' }}>✓ Key securely saved to your local browser storage.</span>
+                    ) : (
+                      'Keys are saved strictly in your browser local storage and never sent to external telemetry servers.'
+                    )}
+                  </span>
                 </div>
-              ) : null}
+              </div>
+
+              {/* Planned Capabilities Deck */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '22px' }}>
+                <div style={{
+                  padding: '12px',
+                  borderRadius: '10px',
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#00f2fe' }}>
+                    <Zap size={14} />
+                    <span style={{ fontSize: '11px', fontWeight: 800 }}>Instant RCA</span>
+                  </div>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                    Correlate 5xx spikes with downstream Lambda timeouts in &lt;1s.
+                  </span>
+                </div>
+
+                <div style={{
+                  padding: '12px',
+                  borderRadius: '10px',
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#a855f7' }}>
+                    <Terminal size={14} />
+                    <span style={{ fontSize: '11px', fontWeight: 800 }}>Stack Decoding</span>
+                  </div>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                    Auto-isolate uncaught exceptions, missing IAM roles, and OOM faults.
+                  </span>
+                </div>
+
+                <div style={{
+                  padding: '12px',
+                  borderRadius: '10px',
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#10b981' }}>
+                    <ShieldCheck size={14} />
+                    <span style={{ fontSize: '11px', fontWeight: 800 }}>Auto-Playbooks</span>
+                  </div>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                    Generate throttling rules and memory resizing suggestions.
+                  </span>
+                </div>
+              </div>
+
+              {/* Close Button */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setAiModalOpen(false)}
+                  style={{
+                    padding: '9px 20px',
+                    borderRadius: '8px',
+                    background: 'rgba(255, 255, 255, 0.08)',
+                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    color: 'var(--text-primary)',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.14)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
+                  }}
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         )}
