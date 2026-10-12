@@ -391,15 +391,16 @@ function hasAwsCreds(creds: Awaited<ReturnType<typeof getAwsCredentialsFromReq>>
 app.get('/api/lambda/functions', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
-    if (!hasAwsCreds(creds)) {
+    const isDemo = req.query.demo === 'true';
+    if (!isDemo && !hasAwsCreds(creds)) {
       return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
     }
     const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || creds.authType || 'default').digest('hex').slice(0, 12);
-    const cacheKey = `lambda:fns:${creds.region}:${keyHash}`;
+    const cacheKey = `lambda:fns:${creds.region}:${keyHash}:${isDemo ? 'demo' : 'live'}`;
     const bypassCache = req.query.refresh === 'true' || req.query.bypassCache === 'true';
     if (bypassCache) await cacheDel(cacheKey);
     const result = await cacheGetOrSet(cacheKey, TTL.LAMBDAS, async () => {
-      const functions = await discoverLambdaFunctions(creds.region, creds);
+      const functions = await discoverLambdaFunctions(creds.region, creds, { demoMode: isDemo });
       return { functions };
     });
     res.json(result);
@@ -411,15 +412,16 @@ app.get('/api/lambda/functions', async (req, res) => {
 app.post('/api/aws/lambda/list', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
-    if (!hasAwsCreds(creds)) {
+    const isDemo = req.query.demo === 'true' || req.body?.demo === true;
+    if (!isDemo && !hasAwsCreds(creds)) {
       return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
     }
     const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || creds.authType || 'default').digest('hex').slice(0, 12);
-    const cacheKey = `lambda:fns:${creds.region}:${keyHash}`;
+    const cacheKey = `lambda:fns:${creds.region}:${keyHash}:${isDemo ? 'demo' : 'live'}`;
     const bypassCache = req.query.refresh === 'true' || req.query.bypassCache === 'true' || req.body?.bypassCache === true;
     if (bypassCache) await cacheDel(cacheKey);
     const result = await cacheGetOrSet(cacheKey, TTL.LAMBDAS, async () => {
-      const functions = await discoverLambdaFunctions(creds.region, creds);
+      const functions = await discoverLambdaFunctions(creds.region, creds, { demoMode: isDemo });
       return { functions };
     });
     res.json(result);

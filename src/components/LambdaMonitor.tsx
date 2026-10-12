@@ -48,12 +48,14 @@ export interface LambdaFunctionItem {
   // 17-Column Table Extended Fields
   team?: string;
   environment?: string;
-  invocations?: string;
-  errors?: number;
-  errorRatePct?: number;
-  avgDurationMs?: number;
-  p95DurationMs?: number;
-  coldStartMs?: number;
+  metricStatus?: 'MEASURED' | 'NO_DATA' | 'FETCH_FAILED';
+  fetchErrorMessage?: string;
+  invocations?: string | null;
+  errors?: number | null;
+  errorRatePct?: number | null;
+  avgDurationMs?: number | null;
+  p95DurationMs?: number | null;
+  coldStartMs?: number | null;
   lastDeployment?: string;
   lastInvocation?: string;
   costToday?: number;
@@ -61,6 +63,7 @@ export interface LambdaFunctionItem {
   verificationTier?: 'METRICS' | 'LOG_STREAMS' | 'EVENT_TRIGGERS' | 'UNVERIFIED_DORMANT';
   activeTriggers?: string[];
   lastLogIngest?: string;
+  isDemo?: boolean;
 }
 
 export type ViewSubTab = 'overview' | 'table' | 'live_triggering' | 'performance' | 'errors' | 'deployments' | 'security';
@@ -527,6 +530,7 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
   // Live Triggering State
   const [isLiveFeedPaused, setIsLiveFeedPaused] = useState<boolean>(false);
   const [liveTriggerFilter, setLiveTriggerFilter] = useState<string>('');
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(false);
 
   const handleColumnResize = (colKey: string, e: React.MouseEvent) => {
     e.preventDefault();
@@ -953,11 +957,12 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
     }
   }, [selectedFunctionName, timeRange, awsConfig?.region, activeProfileId]);
 
-  const loadFunctions = async () => {
+  const loadFunctions = async (overrideDemo?: boolean) => {
     try {
       const headers = getAwsFetchHeaders();
-      const res = await fetch(`/api/lambda/functions?region=${encodeURIComponent(awsConfig?.region || 'us-east-1')}`, { headers });
-      if (res.status === 400) {
+      const demoFlag = overrideDemo !== undefined ? overrideDemo : isDemoMode;
+      const res = await fetch(`/api/lambda/functions?region=${encodeURIComponent(awsConfig?.region || 'us-east-1')}&demo=${demoFlag}`, { headers });
+      if (res.status === 400 && !demoFlag) {
         const errData = await res.json().catch(() => ({}));
         if (errData?.error && errData.error.includes('Missing credentials')) {
           setMissingCredentials(true);
@@ -967,7 +972,7 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
         }
       }
       const data = await res.json();
-      if (data?.error && data.error.includes('Missing credentials')) {
+      if (data?.error && data.error.includes('Missing credentials') && !demoFlag) {
         setMissingCredentials(true);
         setFunctions([]);
         setSelectedFunctionName('');
@@ -1078,7 +1083,7 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
     }
   };
 
-  if (missingCredentials || (!awsConfig?.accessKeyId && !activeProfileId)) {
+  if (!isDemoMode && (missingCredentials || (!awsConfig?.accessKeyId && !activeProfileId))) {
     return (
       <div style={{
         display: 'flex',
@@ -1106,15 +1111,24 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
           AWS Connection Not Configured
         </h3>
         <p style={{ fontSize: '13px', color: 'var(--text-muted)', maxWidth: '400px', marginBottom: '20px', lineHeight: 1.5 }}>
-          To monitor live AWS Lambda functions, performance metrics, and telemetry, please configure your AWS credentials in Settings.
+          To monitor live AWS Lambda functions, performance metrics, and telemetry, please configure your AWS credentials in Settings or explore with simulated demo data.
         </p>
-        <button
-          onClick={() => onNavigateTab ? onNavigateTab('settings') : undefined}
-          className="btn btn-primary"
-          style={{ padding: '10px 20px', borderRadius: '8px', fontSize: '13px', fontWeight: 600 }}
-        >
-          Configure AWS Credentials in Settings
-        </button>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center' }}>
+          <button
+            onClick={() => onNavigateTab ? onNavigateTab('settings') : undefined}
+            className="btn btn-primary"
+            style={{ padding: '10px 20px', borderRadius: '8px', fontSize: '13px', fontWeight: 600 }}
+          >
+            Configure AWS Credentials in Settings
+          </button>
+          <button
+            onClick={() => { setIsDemoMode(true); setMissingCredentials(false); loadFunctions(true); }}
+            className="btn btn-secondary"
+            style={{ padding: '10px 20px', borderRadius: '8px', fontSize: '13px', fontWeight: 600 }}
+          >
+            🧪 Explore with Demo Data
+          </button>
+        </div>
       </div>
     );
   }
@@ -1122,7 +1136,34 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', paddingBottom: '40px' }}>
 
-
+      {/* ─── PROMINENT DEMO DATA MODE BANNER ─────────────────────────────────── */}
+      {(isDemoMode || functions.some(f => f.isDemo)) && (
+        <div style={{
+          background: 'linear-gradient(90deg, rgba(245,158,11,0.18), rgba(168,85,247,0.15))',
+          border: '1px solid rgba(245,158,11,0.4)',
+          borderRadius: '12px',
+          padding: '12px 18px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '20px' }}>🧪</span>
+            <div>
+              <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--color-warning)', letterSpacing: '0.04em' }}>DEMO DATA MODE ACTIVE</div>
+              <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>Showing simulated synthetic telemetry. Disable demo mode to view real CloudWatch metrics from your AWS account.</div>
+            </div>
+          </div>
+          <button
+            onClick={() => { setIsDemoMode(false); loadFunctions(false); }}
+            className="btn btn-secondary"
+            style={{ padding: '5px 12px', fontSize: '11.5px', borderRadius: '6px' }}
+          >
+            Disable Demo Mode
+          </button>
+        </div>
+      )}
 
       {/* ─── TAB 1: OVERVIEW & EXECUTIVE NOC DASHBOARD ────────────────────────── */}
       {currentSubTab === 'overview' && (
@@ -2401,8 +2442,6 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
 
                         const cellPadding = rowDensity === 'compact' ? '6px 10px' : rowDensity === 'comfortable' ? '16px 18px' : '11px 14px';
 
-                        const avgDur = fn.avgDurationMs || 142;
-                        const p95Dur = fn.p95DurationMs || 280;
                         const formatDur = (ms: number) => ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`;
 
                         return (
@@ -2428,19 +2467,43 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
                               </span>
                             </td>
                             <td style={{ padding: cellPadding, textAlign: 'right', fontWeight: 700, color: '#f8fafc', minWidth: `${colWidths.invocations}px`, borderRight: '1px solid rgba(255,255,255,0.03)' }}>
-                              {fn.invocations || '450k'}
+                              {fn.metricStatus === 'FETCH_FAILED' ? (
+                                <span title={fn.fetchErrorMessage || 'CloudWatch query failed'} style={{ color: 'var(--color-warning)', fontSize: '11px' }}>⚠️ Failed</span>
+                              ) : fn.metricStatus === 'NO_DATA' || fn.invocations === null || fn.invocations === undefined ? (
+                                <span style={{ color: 'var(--text-muted)' }}>—</span>
+                              ) : (
+                                fn.invocations
+                              )}
                             </td>
                             <td style={{ padding: cellPadding, textAlign: 'right', fontWeight: (fn.errors || 0) > 0 ? 800 : 400, color: (fn.errors || 0) > 0 ? 'var(--color-error)' : '#94a3b8', minWidth: `${colWidths.errors}px`, borderRight: '1px solid rgba(255,255,255,0.03)' }}>
-                              {fn.errors || 0}
+                              {fn.metricStatus === 'FETCH_FAILED' ? (
+                                <span style={{ color: 'var(--color-warning)' }}>⚠️</span>
+                              ) : fn.metricStatus === 'NO_DATA' || fn.errors === null || fn.errors === undefined ? (
+                                <span style={{ color: 'var(--text-muted)' }}>—</span>
+                              ) : (
+                                fn.errors
+                              )}
                             </td>
                             <td style={{ padding: cellPadding, textAlign: 'right', fontWeight: 800, color: errPctColor, minWidth: `${colWidths.errorRatePct}px`, borderRight: '1px solid rgba(255,255,255,0.03)' }}>
-                              {fn.errorRatePct || 0.05}%
+                              {fn.metricStatus === 'FETCH_FAILED' || fn.metricStatus === 'NO_DATA' || fn.errorRatePct === null || fn.errorRatePct === undefined ? (
+                                <span style={{ color: 'var(--text-muted)' }}>—</span>
+                              ) : (
+                                `${fn.errorRatePct.toFixed(1)}%`
+                              )}
                             </td>
                             <td style={{ padding: cellPadding, textAlign: 'right', fontFamily: 'var(--font-mono)', color: '#60a5fa', fontWeight: 700, minWidth: `${colWidths.avgDurationMs}px`, borderRight: '1px solid rgba(255,255,255,0.03)' }}>
-                              {formatDur(avgDur)}
+                              {fn.metricStatus === 'FETCH_FAILED' || fn.metricStatus === 'NO_DATA' || fn.avgDurationMs === null || fn.avgDurationMs === undefined ? (
+                                <span style={{ color: 'var(--text-muted)' }}>—</span>
+                              ) : (
+                                formatDur(fn.avgDurationMs)
+                              )}
                             </td>
                             <td style={{ padding: cellPadding, textAlign: 'right', fontFamily: 'var(--font-mono)', color: '#a78bfa', fontWeight: 700, minWidth: `${colWidths.p95DurationMs}px`, borderRight: '1px solid rgba(255,255,255,0.03)' }}>
-                              {formatDur(p95Dur)}
+                              {fn.metricStatus === 'FETCH_FAILED' || fn.metricStatus === 'NO_DATA' || fn.p95DurationMs === null || fn.p95DurationMs === undefined ? (
+                                <span style={{ color: 'var(--text-muted)' }}>—</span>
+                              ) : (
+                                formatDur(fn.p95DurationMs)
+                              )}
                             </td>
                             <td style={{ padding: cellPadding, textAlign: 'right', color: '#94a3b8', minWidth: `${colWidths.timeout}px`, borderRight: '1px solid rgba(255,255,255,0.03)' }}>
                               {fn.timeout}s
@@ -2449,16 +2512,16 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
                               {fn.memorySize} MB
                             </td>
                             <td style={{ padding: cellPadding, textAlign: 'right', fontFamily: 'var(--font-mono)', color: '#f59e0b', fontWeight: 700, minWidth: `${colWidths.coldStartMs}px`, borderRight: '1px solid rgba(255,255,255,0.03)' }}>
-                              {fn.coldStartMs ? formatDur(fn.coldStartMs) : '350 ms'}
+                              {fn.coldStartMs ? formatDur(fn.coldStartMs) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                             </td>
                             <td style={{ padding: cellPadding, color: '#94a3b8', fontSize: '11px', minWidth: `${colWidths.lastDeployment}px`, borderRight: '1px solid rgba(255,255,255,0.03)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {fn.lastDeployment || '2h ago'}
+                              {fn.lastDeployment || '—'}
                             </td>
                             <td style={{ padding: cellPadding, color: '#94a3b8', fontSize: '11px', minWidth: `${colWidths.lastInvocation}px`, borderRight: '1px solid rgba(255,255,255,0.03)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {fn.lastInvocation || '12s ago'}
+                              {fn.lastInvocation || '—'}
                             </td>
                             <td style={{ padding: cellPadding, textAlign: 'right', fontWeight: 800, color: 'var(--color-warning)', minWidth: `${colWidths.costToday}px` }}>
-                              ${(fn.costToday || (fn.monthlyCost / 30)).toFixed(2)}
+                              ${(fn.costToday ?? (fn.monthlyCost ? fn.monthlyCost / 30 : 0)).toFixed(2)}
                             </td>
                           </tr>
                         );
