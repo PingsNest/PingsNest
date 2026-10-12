@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import {
   extractTeam,
   extractEnvironment,
-  generateMockLambdaFunctions
+  generateMockLambdaFunctions,
+  buildTelemetryFromFunctions
 } from '../server/lambdaEngine.js';
 
 async function runTests() {
@@ -101,7 +102,45 @@ async function runTests() {
 
   console.log('✓ Passed: Brand-new functions accurately report NO_DATA (null / "—") and never fabricated metrics.');
 
-  console.log('\nALL 4 REGRESSION TESTS PASSED SUCCESSFULLY! 🎉');
+  // Test 5: Lambda Overview Tab Fleet Telemetry for Newly Created / Untriggered Lambda
+  console.log('[Test 5] Testing Overview tab fleet telemetry for untriggered newly created Lambda...');
+  const singleNewFn = {
+    functionArn: 'arn:aws:lambda:us-east-1:123456789012:function:brand-new-handler',
+    functionName: 'brand-new-handler',
+    runtime: 'nodejs20.x',
+    memorySize: 512,
+    timeout: 15,
+    handler: 'index.handler',
+    region: 'us-east-1',
+    accountId: '123456789012',
+    lastModified: new Date().toISOString(),
+    status: 'Active' as const,
+    healthScore: 100,
+    healthStatus: 'Healthy' as const,
+    monthlyCost: 0,
+    costToday: 0,
+    securityScore: 100,
+    metricStatus: 'NO_DATA' as const,
+    invocations: null,
+    errors: null,
+    errorRatePct: null,
+    avgDurationMs: null
+  };
+
+  const overviewTelemetry = buildTelemetryFromFunctions([singleNewFn]);
+  assert.equal(overviewTelemetry.nocSummary.totalLambdas, 1, 'Total lambdas must be 1');
+  assert.equal(overviewTelemetry.nocSummary.totalInvocationsToday, '0', 'Total invocations today must be "0", NOT "18.4M" or synthetic formulas');
+  assert.equal(overviewTelemetry.nocSummary.errorRatePct, 0, 'Fleet error rate must be 0%, NOT 0.08% or 3.2%');
+  assert.equal(overviewTelemetry.nocSummary.avgDurationMs, 0, 'Average duration must be 0 ms, NOT 423ms');
+  assert.equal(overviewTelemetry.topErroring.length, 0, 'Top erroring list must be empty for function with 0 errors');
+  assert.equal(overviewTelemetry.topTimeouts.length, 0, 'Top timeouts list must be empty when no functions exceed threshold');
+  assert.equal(overviewTelemetry.recentAnomalies.length, 0, 'Recent anomalies must be empty');
+  assert.equal(overviewTelemetry.nocSummary.healthy, 1, 'Healthy count must be 1');
+  assert.equal(overviewTelemetry.nocSummary.warning, 0, 'Warning count must be 0');
+  assert.equal(overviewTelemetry.nocSummary.critical, 0, 'Critical count must be 0');
+  console.log('✓ Passed: Overview tab fleet telemetry accurately reflects true state with zero fake numbers.');
+
+  console.log('\nALL 5 REGRESSION TESTS PASSED SUCCESSFULLY! 🎉');
 }
 
 runTests().catch(err => {

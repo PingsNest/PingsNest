@@ -2021,80 +2021,107 @@ export function buildTelemetryFromFunctions(discovered: LambdaFunctionDetails[])
   const healthyCount = discovered.filter(f => f.healthStatus === 'Healthy').length;
   const warningCount = discovered.filter(f => f.healthStatus === 'Warning').length;
   const criticalCount = discovered.filter(f => f.healthStatus === 'Critical').length;
+  const unknownCount = discovered.filter(f => !f.healthStatus || f.metricStatus === 'FETCH_FAILED' || f.metricStatus === 'NO_DATA').length;
   const activeCount = discovered.filter(f => f.status === 'Active').length;
   const disabledCount = totalFns - activeCount;
 
-  const totalCost = Number(discovered.reduce((sum, f) => sum + f.monthlyCost, 0).toFixed(2));
-  const avgHealth = Math.round(discovered.reduce((sum, f) => sum + f.healthScore, 0) / (totalFns || 1));
+  const totalCost = Number(discovered.reduce((sum, f) => sum + (f.monthlyCost || 0), 0).toFixed(2));
+  const avgHealth = totalFns > 0 ? Math.round(discovered.reduce((sum, f) => sum + f.healthScore, 0) / totalFns) : 100;
 
-  // Dynamic Top Erroring from real functions
-  // Bug 8 fix: use a deterministic hash of the function name instead of Math.random().
-  // Old code returned different error percentages on every page refresh for the same function,
-  // making trend analysis impossible and alert rules fire/unfire randomly.
-  function deterministicFloat(seed: string, min: number, max: number): number {
-    let h = 0;
-    for (let i = 0; i < seed.length; i++) { h = (h * 31 + seed.charCodeAt(i)) >>> 0; }
-    return min + (h % 1000) / 1000 * (max - min);
-  }
+  // Real Invocations & Errors from measured telemetry
+  const validInvs = discovered
+    .map(f => (f.invocations !== null && f.invocations !== undefined ? parseFloat(f.invocations) : 0))
+    .filter(n => !isNaN(n));
+  const totalInvSum = validInvs.reduce((a, b) => a + b, 0);
+  const totalErrorsSum = discovered.reduce((sum, f) => sum + (f.errors || 0), 0);
 
+  // Real Durations
+  const validDurs = discovered
+    .map(f => f.avgDurationMs)
+    .filter((d): d is number => typeof d === 'number' && d > 0);
+  const avgDuration = validDurs.length ? Math.round(validDurs.reduce((a, b) => a + b, 0) / validDurs.length) : null;
+
+  const validP95s = discovered
+    .map(f => f.p95DurationMs)
+    .filter((d): d is number => typeof d === 'number' && d > 0);
+  const p99Latency = validP95s.length ? Math.max(...validP95s) : (avgDuration ? Math.round(avgDuration * 1.5) : 0);
+
+  // Real Error Rate
+  const fleetErrRate = totalInvSum > 0 ? Number(((totalErrorsSum / totalInvSum) * 100).toFixed(2)) : 0.0;
+
+  // Real Invocations formatted
+  const totalInvocationsToday = totalInvSum >= 1_000_000
+    ? `${(totalInvSum / 1_000_000).toFixed(1)}M`
+    : totalInvSum >= 1_000
+    ? `${(totalInvSum / 1_000).toFixed(1)}k`
+    : String(totalInvSum);
+
+  // Top Erroring from real measurements (strictly functions that have errors)
   const topErroring = discovered
-    .map(f => {
-      const errPct = f.healthStatus === 'Critical'
-        ? Number(deterministicFloat(f.functionName + 'e', 6, 14).toFixed(1))
-        : f.healthStatus === 'Warning'
-        ? Number(deterministicFloat(f.functionName + 'e', 2, 6).toFixed(1))
-        : Number(deterministicFloat(f.functionName + 'e', 0, 0.5).toFixed(2));
-      const errors = Math.round(errPct * 30 + deterministicFloat(f.functionName + 'ec', 0, 20));
-      return { name: f.functionName, errorPct: errPct, errors, runtime: f.runtime };
-    })
+    .filter(f => (f.errors || 0) > 0 || (f.errorRatePct || 0) > 0)
+    .map(f => ({
+      name: f.functionName,
+      errorPct: f.errorRatePct || 0,
+      errors: f.errors || 0,
+      runtime: f.runtime
+    }))
     .sort((a, b) => b.errorPct - a.errorPct)
     .slice(0, 10);
 
-  // Dynamic Top Timeouts from real functions
+  // Top Timeouts from real functions where duration approaches configured timeout
   const topTimeouts = discovered
+    .filter(f => f.timeout && (f.avgDurationMs || 0) > 0 && ((f.avgDurationMs! / 1000) / f.timeout) >= 0.7)
     .map(f => {
-      const timeoutSec = f.timeout || 30;
-      const ratio = f.healthStatus === 'Critical' ? 0.967 : f.healthStatus === 'Warning' ? 0.885 : 0.42;
-      const durationSec = Math.round(timeoutSec * ratio);
-      const pct = Number((ratio * 100).toFixed(1));
+      const timeoutSec = f.timeout;
+      const durationSec = parseFloat(((f.avgDurationMs || 0) / 1000).toFixed(1));
+      const pct = Math.min(100, Math.round((durationSec / timeoutSec) * 1000) / 10);
       return { name: f.functionName, durationSec, timeoutSec, pct };
     })
     .sort((a, b) => b.pct - a.pct)
     .slice(0, 5);
 
-  // Dynamic Most Expensive from real functions
+  // Most Expensive from real functions
   const mostExpensive = [...discovered]
-    .sort((a, b) => b.monthlyCost - a.monthlyCost)
+    .filter(f => (f.costToday || f.monthlyCost || 0) > 0)
+    .sort((a, b) => (b.monthlyCost || 0) - (a.monthlyCost || 0))
     .slice(0, 5)
     .map((f, idx) => {
-      const gbSec = Math.round(f.monthlyCost * 3100);
-      const invCount = f.monthlyCost > 100 ? `${(f.monthlyCost / 30).toFixed(1)}M` : `${Math.round(f.monthlyCost * 2)}k`;
+      const rawInv = String(f.invocations || '0');
+      const invNum = parseFloat(rawInv) || 0;
+      const gbSec = Math.round((f.memorySize / 1024) * ((f.avgDurationMs || 0) / 1000) * invNum);
+      const invCount = invNum >= 1_000_000 ? `${(invNum / 1_000_000).toFixed(1)}M` : invNum >= 1000 ? `${Math.round(invNum / 1000)}k` : String(invNum);
       return {
         rank: idx + 1,
         name: f.functionName,
         gbSeconds: gbSec,
         invocations: invCount,
-        estimatedCost: `$${f.monthlyCost.toFixed(2)}`
+        estimatedCost: `$${(f.monthlyCost || 0).toFixed(2)}`
       };
     });
 
-  // Dynamic Most Invoked from real functions
+  // Most Invoked from real functions
   const mostInvoked = [...discovered]
+    .filter(f => f.invocations && parseFloat(f.invocations) > 0)
+    .sort((a, b) => (parseFloat(b.invocations || '0') || 0) - (parseFloat(a.invocations || '0') || 0))
     .slice(0, 5)
-    .map((f, idx) => ({
-      rank: idx + 1,
-      name: f.functionName,
-      invocations: `${(5.2 - idx * 0.9).toFixed(1)}M`,
-      errorRatePct: f.healthStatus === 'Critical' ? 8.2 : f.healthStatus === 'Warning' ? 2.4 : 0.05
-    }));
+    .map((f, idx) => {
+      const n = parseFloat(f.invocations || '0') || 0;
+      const invLabel = n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n);
+      return {
+        rank: idx + 1,
+        name: f.functionName,
+        invocations: invLabel,
+        errorRatePct: f.errorRatePct || 0
+      };
+    });
 
-  // Dynamic Cold Start Leaders grouped by real function runtimes
+  // Cold Start Leaders from real functions
   const runtimeMap = new Map<string, number[]>();
   discovered.forEach(f => {
+    if (!f.coldStartMs) return;
     const key = f.runtime.includes('java') ? 'Java Lambda' : f.runtime.includes('dotnet') ? '.NET' : f.runtime.includes('node') ? 'Node.js' : f.runtime.includes('python') ? 'Python' : 'Go / Custom';
-    const val = f.runtime.includes('java') ? 2100 : f.runtime.includes('dotnet') ? 1500 : f.runtime.includes('node') ? 350 : f.runtime.includes('python') ? 190 : 120;
     if (!runtimeMap.has(key)) runtimeMap.set(key, []);
-    runtimeMap.get(key)!.push(val);
+    runtimeMap.get(key)!.push(f.coldStartMs);
   });
 
   const coldStartLeaders = Array.from(runtimeMap.entries()).map(([runtime, arr]) => {
@@ -2113,7 +2140,7 @@ export function buildTelemetryFromFunctions(discovered: LambdaFunctionDetails[])
     else if (nameLower.includes('notif') || nameLower.includes('mail') || nameLower.includes('push') || nameLower.includes('sms')) groupName = 'Notifications';
     else if (nameLower.includes('order') || nameLower.includes('cart') || nameLower.includes('checkout') || nameLower.includes('ship')) groupName = 'Orders';
     else if (nameLower.includes('analytics') || nameLower.includes('report') || nameLower.includes('metric') || nameLower.includes('sync')) groupName = 'Analytics & Reporting';
-    
+
     if (!groupsMap.has(groupName)) groupsMap.set(groupName, []);
     groupsMap.get(groupName)!.push(f);
   });
@@ -2123,8 +2150,10 @@ export function buildTelemetryFromFunctions(discovered: LambdaFunctionDetails[])
     const wCount = fns.filter(f => f.healthStatus === 'Warning').length;
     const cCount = fns.filter(f => f.healthStatus === 'Critical').length;
     const overallStatus: 'Healthy' | 'Warning' | 'Critical' = cCount > 0 ? 'Critical' : wCount > 0 ? 'Warning' : 'Healthy';
-    const totalInv = `${(fns.length * 0.45).toFixed(1)}M`;
-    const avgLatency = Math.round(fns.reduce((sum, f) => sum + (f.timeout * 15), 0) / fns.length);
+    const groupInvSum = fns.reduce((acc, f) => acc + (parseFloat(f.invocations || '0') || 0), 0);
+    const totalInv = groupInvSum >= 1_000_000 ? `${(groupInvSum / 1_000_000).toFixed(1)}M` : groupInvSum >= 1000 ? `${(groupInvSum / 1000).toFixed(1)}k` : String(groupInvSum);
+    const groupDurs = fns.map(f => f.avgDurationMs).filter((d): d is number => typeof d === 'number' && d > 0);
+    const avgLatency = groupDurs.length ? Math.round(groupDurs.reduce((sum, d) => sum + d, 0) / groupDurs.length) : 0;
 
     return {
       id: `service-group-${idx}`,
@@ -2140,12 +2169,24 @@ export function buildTelemetryFromFunctions(discovered: LambdaFunctionDetails[])
         name: f.functionName,
         runtime: f.runtime,
         status: f.healthStatus,
-        errorRatePct: f.healthStatus === 'Critical' ? 8.5 : f.healthStatus === 'Warning' ? 2.1 : 0.05,
-        avgDurationMs: Math.round(f.timeout * 20),
+        errorRatePct: f.errorRatePct || 0,
+        avgDurationMs: f.avgDurationMs || 0,
         memoryMb: f.memorySize
       }))
     };
   });
+
+  // Recent anomalies strictly from functions that have real critical errors
+  const recentAnomalies = discovered
+    .filter(f => f.healthStatus === 'Critical' && ((f.errors || 0) > 0 || (f.errorRatePct || 0) > 5))
+    .slice(0, 3)
+    .map(f => ({
+      timestamp: now,
+      functionName: f.functionName,
+      type: 'ERROR_SPIKE' as const,
+      message: `${f.functionName} (${f.runtime}): High error rate ${f.errorRatePct || 0}% (${f.errors || 0} errors)`,
+      severity: 'critical' as const
+    }));
 
   return {
     nocSummary: {
@@ -2153,22 +2194,22 @@ export function buildTelemetryFromFunctions(discovered: LambdaFunctionDetails[])
       healthy: healthyCount,
       warning: warningCount,
       critical: criticalCount,
-      unknown: 0,
-      availabilityPct: Number((99.90 + (healthyCount / (totalFns || 1)) * 0.09).toFixed(2)),
-      successRatePct: Number((99.85 + (healthyCount / (totalFns || 1)) * 0.12).toFixed(2)),
-      avgDurationMs: Math.round(discovered.reduce((sum, f) => sum + f.timeout * 18, 0) / (totalFns || 1)),
-      errorRatePct: Number((((warningCount + criticalCount * 2) / (totalFns || 1)) * 0.8).toFixed(2)),
-      totalInvocationsToday: `${(totalFns * 0.034).toFixed(1)}M`
+      unknown: unknownCount,
+      availabilityPct: totalFns > 0 ? Number((99.90 + (healthyCount / totalFns) * 0.09).toFixed(2)) : 100,
+      successRatePct: totalFns > 0 ? Number((100 - fleetErrRate).toFixed(2)) : 100,
+      avgDurationMs: avgDuration || 0,
+      errorRatePct: fleetErrRate,
+      totalInvocationsToday
     },
     kpiCards: {
       totalFunctions: totalFns,
       activeFunctions: activeCount,
       disabledFunctions: disabledCount,
-      functionsWithErrors: warningCount + criticalCount,
-      functionsThrottled: warningCount,
-      functionsTimingOut: criticalCount,
-      functionsWithDlq: Math.min(2, criticalCount),
-      functionsMissingInvocations: disabledCount,
+      functionsWithErrors: discovered.filter(f => (f.errors || 0) > 0).length,
+      functionsThrottled: 0,
+      functionsTimingOut: topTimeouts.length,
+      functionsWithDlq: 0,
+      functionsMissingInvocations: discovered.filter(f => f.metricStatus === 'NO_DATA' || f.invocations === null || f.invocations === '0').length,
       estimatedCostToday: `$${(totalCost / 30).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       estimatedCostThisMonth: `$${totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     },
@@ -2176,44 +2217,44 @@ export function buildTelemetryFromFunctions(discovered: LambdaFunctionDetails[])
       healthy: healthyCount,
       warning: warningCount,
       critical: criticalCount,
-      unknown: 0
+      unknown: unknownCount
     },
     severityTimeline: {
       labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', 'Now'],
-      critical: [Math.max(0, criticalCount - 2), criticalCount, Math.max(0, criticalCount - 1), criticalCount, criticalCount, criticalCount, criticalCount],
-      warning: [Math.max(0, warningCount - 3), warningCount, Math.max(0, warningCount - 1), warningCount, warningCount, warningCount, warningCount],
-      healthy: [totalFns - warningCount - criticalCount, totalFns - warningCount - criticalCount, totalFns - warningCount - criticalCount, healthyCount, healthyCount, healthyCount, healthyCount]
+      critical: [criticalCount, criticalCount, criticalCount, criticalCount, criticalCount, criticalCount, criticalCount],
+      warning: [warningCount, warningCount, warningCount, warningCount, warningCount, warningCount, warningCount],
+      healthy: [healthyCount, healthyCount, healthyCount, healthyCount, healthyCount, healthyCount, healthyCount]
     },
     topErroring,
     topTimeouts,
     mostExpensive,
     mostInvoked,
     coldStartLeaders,
-    serviceGroups: [],
+    serviceGroups: serviceGroups.length > 0 ? serviceGroups : [],
     totalFunctionsCount: totalFns,
     activeFunctionsCount: activeCount,
-    fleetInvocationsPerSec: Math.round(totalFns * 4.8),
-    fleetErrorRatePct: Number((((warningCount + criticalCount * 2) / (totalFns || 1)) * 0.8).toFixed(2)),
-    fleetP99LatencyMs: 423,
+    fleetInvocationsPerSec: totalInvSum > 0 ? Math.round(totalInvSum / 86400) : 0,
+    fleetErrorRatePct: fleetErrRate,
+    fleetP99LatencyMs: p99Latency,
     fleetTotalMonthlyCost: totalCost,
-    activeThrottlesCount: warningCount * 2,
+    activeThrottlesCount: 0,
     fleetHealthScore: avgHealth,
-    recentAnomalies: discovered.slice(0, 3).map(f => ({
-      timestamp: now,
-      functionName: f.functionName,
-      type: f.healthStatus === 'Critical' ? 'HIGH_LATENCY' : f.healthStatus === 'Warning' ? 'ERROR_SPIKE' : 'COLD_START',
-      message: `${f.functionName} (${f.runtime}): Health score ${f.healthScore}% (${f.healthStatus})`,
-      severity: f.healthStatus === 'Critical' ? 'critical' : f.healthStatus === 'Warning' ? 'warning' : 'info'
-    }))
+    recentAnomalies
   };
 }
 
 export async function getBulkFleetTelemetry(
-  credentials?: AwsCredentialsInput
+  credentials?: AwsCredentialsInput,
+  options?: { demoMode?: boolean }
 ): Promise<FleetTelemetrySummary> {
+  if (options?.demoMode) {
+    const discovered = await discoverLambdaFunctions(credentials?.region || 'us-east-1', credentials, { demoMode: true });
+    return buildTelemetryFromFunctions(discovered);
+  }
+
   if (hasCredentials(credentials)) {
     try {
-      const discovered = await discoverLambdaFunctions(credentials?.region || 'us-east-1', credentials);
+      const discovered = await discoverLambdaFunctions(credentials?.region || 'us-east-1', credentials, { demoMode: false });
       if (discovered && discovered.length > 0) {
         return buildTelemetryFromFunctions(discovered);
       }
