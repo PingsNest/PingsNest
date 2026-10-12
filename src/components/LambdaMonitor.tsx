@@ -666,37 +666,54 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
       { name: 'Dev & UAT Testing Sandbox', keywords: ['test', 'dev', 'uat', 'mock', 'demo'] }
     ];
 
-    const autoGroups = domainRules.map((rule, idx) => {
-      const matchingFns = functions.filter(f => 
-        rule.keywords.some(kw => f.functionName.toLowerCase().includes(kw))
-      );
-      const memberFns = matchingFns.length > 0 ? matchingFns : functions.slice(idx * 3, (idx + 1) * 3);
-      const healthyCount = memberFns.filter(f => f.healthStatus === 'Healthy').length;
-      const warningCount = memberFns.filter(f => f.healthStatus === 'Warning').length;
-      const criticalCount = memberFns.filter(f => f.healthStatus === 'Critical').length;
-      const overallStatus: 'Healthy' | 'Warning' | 'Critical' = criticalCount > 0 ? 'Critical' : warningCount > 0 ? 'Warning' : 'Healthy';
+    const autoGroups = domainRules
+      .map((rule, idx) => {
+        const memberFns = functions.filter(f => 
+          rule.keywords.some(kw => f.functionName.toLowerCase().includes(kw))
+        );
+        if (memberFns.length === 0) return null;
 
-      return {
-        id: `auto-group-${idx}-${Date.now()}`,
-        isCustom: true,
-        name: rule.name,
-        count: memberFns.length,
-        healthStatus: overallStatus,
-        healthyCount,
-        warningCount,
-        criticalCount,
-        totalInvocations: `${(memberFns.length * 0.35 + 0.8).toFixed(1)}M`,
-        avgLatencyMs: Math.round(memberFns.reduce((a, b) => a + (b.timeout || 15) * 15, 0) / (memberFns.length || 1)),
-        lambdas: memberFns.map(f => ({
-          name: f.functionName,
-          runtime: f.runtime,
-          status: f.healthStatus || 'Healthy',
-          errorRatePct: f.healthStatus === 'Critical' ? 7.5 : f.healthStatus === 'Warning' ? 2.1 : 0.05,
-          avgDurationMs: Math.round((f.timeout || 15) * 20),
-          memoryMb: f.memorySize || 512
-        }))
-      };
-    });
+        const healthyCount = memberFns.filter(f => f.healthStatus === 'Healthy').length;
+        const warningCount = memberFns.filter(f => f.healthStatus === 'Warning').length;
+        const criticalCount = memberFns.filter(f => f.healthStatus === 'Critical').length;
+        const overallStatus: 'Healthy' | 'Warning' | 'Critical' = criticalCount > 0 ? 'Critical' : warningCount > 0 ? 'Warning' : 'Healthy';
+
+        const sumInv = memberFns.reduce((sum, f) => {
+          const raw = String(f.invocations || '0');
+          const n = raw.toUpperCase().endsWith('M') ? parseFloat(raw) * 1_000_000
+            : raw.toUpperCase().endsWith('K') ? parseFloat(raw) * 1_000
+            : parseFloat(raw) || 0;
+          return sum + n;
+        }, 0);
+        const totalInvocations = sumInv >= 1_000_000 ? `${(sumInv / 1_000_000).toFixed(1)}M`
+          : sumInv >= 1_000 ? `${(sumInv / 1_000).toFixed(0)}k`
+          : String(sumInv);
+
+        const measuredDurs = memberFns.map(f => f.avgDurationMs || 0).filter(d => d > 0);
+        const avgLatencyMs = measuredDurs.length > 0 ? Math.round(measuredDurs.reduce((a, b) => a + b, 0) / measuredDurs.length) : 0;
+
+        return {
+          id: `auto-group-${idx}-${Date.now()}`,
+          isCustom: true,
+          name: rule.name,
+          count: memberFns.length,
+          healthStatus: overallStatus,
+          healthyCount,
+          warningCount,
+          criticalCount,
+          totalInvocations,
+          avgLatencyMs,
+          lambdas: memberFns.map(f => ({
+            name: f.functionName,
+            runtime: f.runtime,
+            status: f.healthStatus || 'Healthy',
+            errorRatePct: f.errorRatePct ?? 0,
+            avgDurationMs: f.avgDurationMs ?? 0,
+            memoryMb: f.memorySize || 512
+          }))
+        };
+      })
+      .filter((g): g is NonNullable<typeof g> => g !== null);
 
     setCustomGroups(autoGroups);
     localStorage.setItem('lambda_custom_groups', JSON.stringify(autoGroups));
@@ -727,6 +744,20 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
     const overallStatus: 'Healthy' | 'Warning' | 'Critical' = criticalCount > 0 ? 'Critical' : warningCount > 0 ? 'Warning' : 'Healthy';
     const newGroupId = `custom-group-${Date.now()}`;
 
+    const sumInv = memberFns.reduce((sum, f) => {
+      const raw = String(f.invocations || '0');
+      const n = raw.toUpperCase().endsWith('M') ? parseFloat(raw) * 1_000_000
+        : raw.toUpperCase().endsWith('K') ? parseFloat(raw) * 1_000
+        : parseFloat(raw) || 0;
+      return sum + n;
+    }, 0);
+    const totalInvocations = sumInv >= 1_000_000 ? `${(sumInv / 1_000_000).toFixed(1)}M`
+      : sumInv >= 1_000 ? `${(sumInv / 1_000).toFixed(0)}k`
+      : String(sumInv);
+
+    const measuredDurs = memberFns.map(f => f.avgDurationMs || 0).filter(d => d > 0);
+    const avgLatencyMs = measuredDurs.length > 0 ? Math.round(measuredDurs.reduce((a, b) => a + b, 0) / measuredDurs.length) : 0;
+
     const newGroupObj = {
       id: newGroupId,
       isCustom: true,
@@ -736,14 +767,14 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
       healthyCount,
       warningCount,
       criticalCount,
-      totalInvocations: `${(memberFns.length * 0.45 || 1.2).toFixed(1)}M`,
-      avgLatencyMs: Math.round(memberFns.reduce((a, b) => a + (b.timeout || 15) * 15, 0) / (memberFns.length || 1)),
+      totalInvocations,
+      avgLatencyMs,
       lambdas: memberFns.map(f => ({
         name: f.functionName,
         runtime: f.runtime,
         status: f.healthStatus || 'Healthy',
-        errorRatePct: f.healthStatus === 'Critical' ? 7.5 : f.healthStatus === 'Warning' ? 2.1 : 0.05,
-        avgDurationMs: Math.round((f.timeout || 15) * 20),
+        errorRatePct: f.errorRatePct ?? 0,
+        avgDurationMs: f.avgDurationMs ?? 0,
         memoryMb: f.memorySize || 512
       }))
     };
@@ -778,11 +809,11 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
   };
 
   useEffect(() => {
-    // Fetch fleet telemetry every 10 s; run security audit once on mount then every 4 hours
+    // Fetch fleet telemetry every 30 s; run security audit once on mount then every 4 hours
     const fetchFleetTelemetry = async () => {
       try {
         const headers = getAwsFetchHeaders();
-        const resFleet = await fetch('/api/lambda/fleet/telemetry', { headers }).then(r => r.json());
+        const resFleet = await fetch(`/api/lambda/fleet/telemetry?demo=${isDemoMode}`, { headers }).then(r => r.json());
         if (resFleet.fleet) setFleetSummary(resFleet.fleet);
       } catch (err) {
         console.warn('[Fleet Telemetry Error]:', err);
@@ -800,7 +831,7 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
       clearInterval(telemetryInterval);
       clearInterval(auditInterval);
     };
-  }, [awsConfig]);
+  }, [awsConfig, activeProfileId, isDemoMode]);
 
   // AI Copilot & Remediation States
   const [showAiCopilot, setShowAiCopilot] = useState<boolean>(false);
@@ -1170,7 +1201,7 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
 
           {/* Real-Time Fleet Anomaly Stream Ticker */}
-          {fleetSummary && fleetSummary.recentAnomalies && (
+          {fleetSummary && fleetSummary.recentAnomalies && fleetSummary.recentAnomalies.length > 0 && (
             <div className="glass-panel" style={{ padding: '12px 18px', borderRadius: '12px', background: 'var(--bg-card)', border: '1px solid rgba(245, 158, 11, 0.35)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--color-warning)', background: 'rgba(245, 158, 11, 0.18)', padding: '4px 10px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -1182,7 +1213,7 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
                 </div>
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                Fleet Load: <strong>{fleetSummary.fleetInvocationsPerSec || 2450} req/s</strong> • P99: <strong>{fleetSummary.fleetP99LatencyMs || 423} ms</strong> • Spend: <strong>${fleetSummary.fleetTotalMonthlyCost || 3840.50}/mo</strong>
+                Fleet Load: <strong>{fleetSummary.fleetInvocationsPerSec != null ? `${fleetSummary.fleetInvocationsPerSec} req/s` : '0 req/s'}</strong> • P99: <strong>{fleetSummary.fleetP99LatencyMs != null ? `${fleetSummary.fleetP99LatencyMs} ms` : '—'}</strong> • Spend: <strong>${fleetSummary.fleetTotalMonthlyCost != null ? Number(fleetSummary.fleetTotalMonthlyCost).toFixed(2) : '0.00'}/mo</strong>
               </div>
             </div>
           )}
@@ -1287,170 +1318,209 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
           <div className="dashboard-grid">
             <MetricCard
               title="TOTAL INVOCATIONS"
-              value={fleetSummary?.nocSummary?.totalInvocationsToday || '18.4M'}
+              value={
+                fleetSummary?.nocSummary?.totalInvocationsToday != null
+                  ? fleetSummary.nocSummary.totalInvocationsToday
+                  : (isDemoMode ? '18.4M' : (functions.length === 0 ? '—' : '0'))
+              }
               subText="Active Lambda execution volume"
               icon={<Activity size={18} />}
               color="cyan"
-              sparklineData={[120, 140, 180, 160, 210, 245, 290, 310, 340, 390, 420]}
+              sparklineData={
+                fleetSummary?.nocSummary?.totalInvocationsToday && fleetSummary.nocSummary.totalInvocationsToday !== '0' && fleetSummary.nocSummary.totalInvocationsToday !== '—'
+                  ? [120, 140, 180, 160, 210, 245, 290, 310, 340, 390, 420]
+                  : [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+              }
             />
             <MetricCard
               title="AVG DURATION"
-              value={`${fleetSummary?.nocSummary?.avgDurationMs || 423}ms`}
+              value={
+                fleetSummary?.nocSummary?.avgDurationMs != null && fleetSummary.nocSummary.avgDurationMs > 0
+                  ? `${fleetSummary.nocSummary.avgDurationMs}ms`
+                  : (isDemoMode ? '423ms' : '—')
+              }
               subText="Mean function execution time"
               icon={<Clock size={18} />}
               color="cyan"
-              sparklineData={[480, 470, 450, 440, 435, 430, 425, 423, 420, 423]}
+              sparklineData={
+                (fleetSummary?.nocSummary?.avgDurationMs || 0) > 0
+                  ? [480, 470, 450, 440, 435, 430, 425, 423, 420, 423]
+                  : [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+              }
             />
             <MetricCard
               title="COLD STARTS"
-              value={`${fleetSummary?.kpiCards?.functionsThrottled || 6} / ${fleetSummary?.kpiCards?.totalFunctions || 537}`}
+              value={`${fleetSummary?.kpiCards?.coldStartsCount ?? (isDemoMode ? 6 : functions.filter(f => (f.coldStartMs || 0) > 0).length)} / ${fleetSummary?.kpiCards?.totalFunctions ?? functions.length}`}
               subText="Init duration overhead"
               icon={<Flame size={18} />}
               color="aws"
-              sparklineData={[15, 12, 10, 8, 14, 9, 6, 7, 5, 6]}
+              sparklineData={
+                (fleetSummary?.kpiCards?.coldStartsCount || 0) > 0 || isDemoMode
+                  ? [15, 12, 10, 8, 14, 9, 6, 7, 5, 6]
+                  : [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+              }
             />
             <MetricCard
               title="THROTTLES & TIMEOUTS"
-              value={`${(fleetSummary?.kpiCards?.functionsThrottled || 6) + (fleetSummary?.kpiCards?.functionsTimingOut || 3)}`}
+              value={`${(fleetSummary?.kpiCards?.functionsThrottled || 0) + (fleetSummary?.kpiCards?.functionsTimingOut || 0)}`}
               subText="Concurrency & execution breaches"
               icon={<AlertTriangle size={18} />}
               color="warning"
-              sparklineData={[2, 4, 3, 5, 8, 6, 9, 4, 3, 9]}
+              sparklineData={
+                ((fleetSummary?.kpiCards?.functionsThrottled || 0) + (fleetSummary?.kpiCards?.functionsTimingOut || 0)) > 0
+                  ? [2, 4, 3, 5, 8, 6, 9, 4, 3, 9]
+                  : [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+              }
             />
             <MetricCard
               title="ERROR RATE"
-              value={`${fleetSummary?.nocSummary?.errorRatePct || 0.08}%`}
+              value={`${(fleetSummary?.nocSummary?.errorRatePct ?? 0).toFixed(2)}%`}
               subText="Handled & unhandled runtime errors"
               icon={<AlertTriangle size={18} />}
-              color={fleetSummary?.nocSummary?.errorRatePct > 1 ? 'error' : 'success'}
-              trend={fleetSummary?.nocSummary?.errorRatePct > 1 ? 'up' : 'neutral'}
-              trendValue={`${fleetSummary?.nocSummary?.errorRatePct || 0.08}%`}
-              sparklineData={[0.12, 0.10, 0.09, 0.08, 0.07, 0.08, 0.08]}
+              color={(fleetSummary?.nocSummary?.errorRatePct || 0) > 1 ? 'error' : 'success'}
+              trend={(fleetSummary?.nocSummary?.errorRatePct || 0) > 1 ? 'up' : 'neutral'}
+              trendValue={`${(fleetSummary?.nocSummary?.errorRatePct ?? 0).toFixed(2)}%`}
+              sparklineData={
+                (fleetSummary?.nocSummary?.errorRatePct || 0) > 0
+                  ? [0.12, 0.10, 0.09, 0.08, 0.07, 0.08, 0.08]
+                  : [0, 0, 0, 0, 0, 0, 0]
+              }
             />
           </div>
 
-            {/* Fleet Health Distribution & Severity Timeline (2-Column Grid) */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '20px' }}>
-              
-              {/* Fleet Health Distribution (Donut & Progress Bars) */}
-              <div className="glass-panel" style={{ padding: '20px', borderRadius: '14px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h4 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Activity size={18} color="var(--color-primary)" /> Fleet Health Distribution
-                  </h4>
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Donut & Breakdown</span>
-                </div>
+          {/* Fleet Health Distribution & Severity Timeline (2-Column Grid) */}
+          {(() => {
+            const healthyCount = fleetSummary?.healthDistribution?.healthy ?? functions.filter(f => f.healthStatus === 'Healthy' && f.metricStatus !== 'FETCH_FAILED').length;
+            const warningCount = fleetSummary?.healthDistribution?.warning ?? functions.filter(f => f.healthStatus === 'Warning').length;
+            const criticalCount = fleetSummary?.healthDistribution?.critical ?? functions.filter(f => f.healthStatus === 'Critical').length;
+            const unknownCount = fleetSummary?.healthDistribution?.unknown ?? functions.filter(f => !f.healthStatus || f.metricStatus === 'FETCH_FAILED').length;
+            const totalFleet = healthyCount + warningCount + criticalCount + unknownCount || functions.length;
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
-                  {/* SVG Donut Chart */}
-                  <div style={{ position: 'relative', width: '130px', height: '130px', flexShrink: 0 }}>
-                    <svg width="130" height="130" viewBox="0 0 42 42" style={{ transform: 'rotate(-90deg)' }}>
-                      <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="rgba(255,255,255,0.05)" strokeWidth="5" />
-                      {/* Healthy Segment (97.4%) */}
-                      <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#10b981" strokeWidth="5" strokeDasharray="97.4 2.6" strokeDashoffset="0" />
-                      {/* Warning Segment (1.9%) */}
-                      <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#f59e0b" strokeWidth="5" strokeDasharray="1.9 98.1" strokeDashoffset="-97.4" />
-                      {/* Critical Segment (0.7%) */}
-                      <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#ef4444" strokeWidth="5" strokeDasharray="0.7 99.3" strokeDashoffset="-99.3" />
-                    </svg>
-                    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                      <span style={{ fontSize: '20px', fontWeight: 800, color: '#fff' }}>537</span>
-                      <span style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Fleet</span>
-                    </div>
+            const hPct = totalFleet > 0 ? (healthyCount / totalFleet) * 100 : 0;
+            const wPct = totalFleet > 0 ? (warningCount / totalFleet) * 100 : 0;
+            const cPct = totalFleet > 0 ? (criticalCount / totalFleet) * 100 : 0;
+            const uPct = totalFleet > 0 ? (unknownCount / totalFleet) * 100 : 0;
+
+            const statusLabel = criticalCount > 0 ? `${criticalCount} Critical Flagged` : warningCount > 0 ? `${warningCount} Warning` : 'Stable Fleet';
+            const badgeColor = criticalCount > 0 ? 'var(--color-danger)' : warningCount > 0 ? 'var(--color-warning)' : 'var(--color-success)';
+            const badgeBg = criticalCount > 0 ? 'rgba(239,68,68,0.15)' : warningCount > 0 ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.15)';
+
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '20px' }}>
+                
+                {/* Fleet Health Distribution (Donut & Progress Bars) */}
+                <div className="glass-panel" style={{ padding: '20px', borderRadius: '14px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h4 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Activity size={18} color="var(--color-primary)" /> Fleet Health Distribution
+                    </h4>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Donut & Breakdown</span>
                   </div>
 
-                  {/* Horizontal Breakdown Bars matching prompt drawing */}
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', fontFamily: 'monospace' }}>
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
-                        <span style={{ color: 'var(--color-success)', fontWeight: 700 }}>Healthy</span>
-                        <span style={{ color: '#fff', fontWeight: 700 }}>523</span>
-                      </div>
-                      <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
-                        <div style={{ width: '97.4%', height: '100%', background: '#10b981', borderRadius: '4px' }} />
-                      </div>
-                    </div>
-
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
-                        <span style={{ color: 'var(--color-warning)', fontWeight: 700 }}>Warning</span>
-                        <span style={{ color: '#fff', fontWeight: 700 }}>10</span>
-                      </div>
-                      <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
-                        <div style={{ width: '8%', height: '100%', background: '#f59e0b', borderRadius: '4px' }} />
-                      </div>
-                    </div>
-
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
-                        <span style={{ color: 'var(--color-danger)', fontWeight: 700 }}>Critical</span>
-                        <span style={{ color: '#fff', fontWeight: 700 }}>4</span>
-                      </div>
-                      <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
-                        <div style={{ width: '4%', height: '100%', background: '#ef4444', borderRadius: '4px' }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
+                    {/* SVG Donut Chart */}
+                    <div style={{ position: 'relative', width: '130px', height: '130px', flexShrink: 0 }}>
+                      <svg width="130" height="130" viewBox="0 0 42 42" style={{ transform: 'rotate(-90deg)' }}>
+                        <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="rgba(255,255,255,0.05)" strokeWidth="5" />
+                        {hPct > 0 && (
+                          <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#10b981" strokeWidth="5" strokeDasharray={`${hPct} ${100 - hPct}`} strokeDashoffset="0" />
+                        )}
+                        {wPct > 0 && (
+                          <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#f59e0b" strokeWidth="5" strokeDasharray={`${wPct} ${100 - wPct}`} strokeDashoffset={`-${hPct}`} />
+                        )}
+                        {cPct > 0 && (
+                          <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#ef4444" strokeWidth="5" strokeDasharray={`${cPct} ${100 - cPct}`} strokeDashoffset={`-${hPct + wPct}`} />
+                        )}
+                        {uPct > 0 && (
+                          <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#64748b" strokeWidth="5" strokeDasharray={`${uPct} ${100 - uPct}`} strokeDashoffset={`-${hPct + wPct + cPct}`} />
+                        )}
+                      </svg>
+                      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                        <span style={{ fontSize: '20px', fontWeight: 800, color: '#fff' }}>{totalFleet}</span>
+                        <span style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Fleet</span>
                       </div>
                     </div>
 
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
-                        <span style={{ color: 'var(--text-muted)', fontWeight: 700 }}>Unknown</span>
-                        <span style={{ color: '#fff', fontWeight: 700 }}>2</span>
-                      </div>
-                      <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
-                        <div style={{ width: '2%', height: '100%', background: '#64748b', borderRadius: '4px' }} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Severity Timeline (Last 24 Hours) */}
-              <div className="glass-panel" style={{ padding: '20px', borderRadius: '14px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                {(() => {
-                  const healthyCnt = functions.filter(f => f.healthStatus === 'Healthy' || (!f.healthStatus && (f.errorRatePct || 0) <= 1)).length;
-                  const warningCnt = functions.filter(f => f.healthStatus === 'Warning' || ((f.errorRatePct || 0) > 1 && (f.errorRatePct || 0) <= 5)).length;
-                  const criticalCnt = functions.filter(f => f.healthStatus === 'Critical' || (f.errorRatePct || 0) > 5).length;
-                  const total = healthyCnt + warningCnt + criticalCnt;
-                  const statusLabel = criticalCnt > 0 ? `${criticalCnt} Critical Flagged` : warningCnt > 0 ? `${warningCnt} Warning` : 'Stable Fleet';
-                  const badgeColor = criticalCnt > 0 ? 'var(--color-danger)' : warningCnt > 0 ? 'var(--color-warning)' : 'var(--color-success)';
-                  const badgeBg = criticalCnt > 0 ? 'rgba(239,68,68,0.15)' : warningCnt > 0 ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.15)';
-
-                  return (
-                    <>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <h4 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
-                            Severity Breakdown ({total} Lambdas)
-                          </h4>
-                          <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>Real Fleet Status • Healthy vs Warning vs Critical</span>
+                    {/* Horizontal Breakdown Bars */}
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', fontFamily: 'monospace' }}>
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
+                          <span style={{ color: 'var(--color-success)', fontWeight: 700 }}>Healthy</span>
+                          <span style={{ color: '#fff', fontWeight: 700 }}>{healthyCount}</span>
                         </div>
-                        <span style={{ fontSize: '11px', color: badgeColor, background: badgeBg, padding: '4px 10px', borderRadius: '12px', fontWeight: 700 }}>
-                          {statusLabel}
-                        </span>
+                        <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div style={{ width: `${hPct}%`, height: '100%', background: '#10b981', borderRadius: '4px' }} />
+                        </div>
                       </div>
 
-                      <div style={{ height: '180px', width: '100%', marginTop: '8px' }}>
-                        <AreaChart
-                          height={180}
-                          series={[
-                            { name: 'Healthy', color: 'success' },
-                            { name: 'Warning', color: 'warning' },
-                            { name: 'Critical', color: 'error' }
-                          ]}
-                          data={[
-                            { label: '-6h', values: [Math.max(0, healthyCnt - 1), warningCnt, criticalCnt] },
-                            { label: '-4h', values: [healthyCnt, Math.max(0, warningCnt - 1), criticalCnt] },
-                            { label: '-2h', values: [healthyCnt, warningCnt, criticalCnt] },
-                            { label: 'Now', values: [healthyCnt, warningCnt, criticalCnt] }
-                          ]}
-                        />
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
+                          <span style={{ color: 'var(--color-warning)', fontWeight: 700 }}>Warning</span>
+                          <span style={{ color: '#fff', fontWeight: 700 }}>{warningCount}</span>
+                        </div>
+                        <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div style={{ width: `${wPct}%`, height: '100%', background: '#f59e0b', borderRadius: '4px' }} />
+                        </div>
                       </div>
-                    </>
-                  );
-                })()}
+
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
+                          <span style={{ color: 'var(--color-danger)', fontWeight: 700 }}>Critical</span>
+                          <span style={{ color: '#fff', fontWeight: 700 }}>{criticalCount}</span>
+                        </div>
+                        <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div style={{ width: `${cPct}%`, height: '100%', background: '#ef4444', borderRadius: '4px' }} />
+                        </div>
+                      </div>
+
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
+                          <span style={{ color: 'var(--text-muted)', fontWeight: 700 }}>Unknown</span>
+                          <span style={{ color: '#fff', fontWeight: 700 }}>{unknownCount}</span>
+                        </div>
+                        <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div style={{ width: `${uPct}%`, height: '100%', background: '#64748b', borderRadius: '4px' }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Severity Timeline (Last 24 Hours) */}
+                <div className="glass-panel" style={{ padding: '20px', borderRadius: '14px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <h4 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                        Severity Breakdown ({totalFleet} Lambdas)
+                      </h4>
+                      <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>Real Fleet Status • Healthy vs Warning vs Critical</span>
+                    </div>
+                    <span style={{ fontSize: '11px', color: badgeColor, background: badgeBg, padding: '4px 10px', borderRadius: '12px', fontWeight: 700 }}>
+                      {statusLabel}
+                    </span>
+                  </div>
+
+                  <div style={{ height: '180px', width: '100%', marginTop: '8px' }}>
+                    <AreaChart
+                      height={180}
+                      series={[
+                        { name: 'Healthy', color: 'success' },
+                        { name: 'Warning', color: 'warning' },
+                        { name: 'Critical', color: 'error' }
+                      ]}
+                      data={[
+                        { label: '-6h', values: [healthyCount, warningCount, criticalCount] },
+                        { label: '-4h', values: [healthyCount, warningCount, criticalCount] },
+                        { label: '-2h', values: [healthyCount, warningCount, criticalCount] },
+                        { label: 'Now', values: [healthyCount, warningCount, criticalCount] }
+                      ]}
+                    />
+                  </div>
+                </div>
+
               </div>
-
-            </div>
+            );
+          })()}
 
           {/* ═══════════════════════════════════════════════════════════════════════
               LEVEL 2 — TOP PROBLEMS (AUTOMATED PROBLEM HIGHLIGHTS)
@@ -1497,7 +1567,7 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
                     <tbody>
                       {(() => {
                         const realErroringFns = [...functions]
-                          .filter(f => (f.errorRatePct || 0) > 0 || (f.errors || 0) > 0 || f.healthStatus === 'Critical' || f.healthStatus === 'Warning')
+                          .filter(f => (f.errorRatePct || 0) > 0 || (f.errors || 0) > 0)
                           .sort((a, b) => (b.errorRatePct || 0) - (a.errorRatePct || 0))
                           .slice(0, 10);
 
@@ -1749,11 +1819,12 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
                             : parseFloat(raw) || 0;
                           return { f, n };
                         })
+                        .filter(item => item.n > 0)
                         .sort((a, b) => b.n - a.n)
                         .slice(0, 5);
 
                       if (invRanked.length === 0) {
-                        return <div style={{ color: 'var(--text-muted)', fontSize: '11px', textAlign: 'center', padding: '12px' }}>Connect AWS credentials to see invocation data</div>;
+                        return <div style={{ color: 'var(--text-muted)', fontSize: '11px', textAlign: 'center', padding: '16px' }}>No invocations recorded yet</div>;
                       }
 
                       return invRanked.map(({ f, n }, idx) => {
@@ -1792,14 +1863,15 @@ export const LambdaMonitor: React.FC<LambdaMonitorProps> = ({
                         .map(([rt, vals]) => ({ rt, avg: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) }))
                         .sort((a, b) => b.avg - a.avg);
 
-                      const fallback = [
-                        { rt: 'Java', avg: 2100 },
-                        { rt: 'dotnet', avg: 1500 },
-                        { rt: 'nodejs', avg: 350 },
-                        { rt: 'python', avg: 190 }
-                      ];
+                      if (csRanked.length === 0) {
+                        return (
+                          <div style={{ color: 'var(--text-muted)', fontSize: '11px', textAlign: 'center', padding: '16px' }}>
+                            No cold start metrics recorded yet
+                          </div>
+                        );
+                      }
 
-                      return (csRanked.length > 0 ? csRanked : fallback).map((cs, idx) => (
+                      return csRanked.map((cs, idx) => (
                         <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', background: 'var(--bg-input)', borderRadius: '8px' }}>
                           <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{cs.rt}</span>
                           <span style={{ fontFamily: 'monospace', fontWeight: 800, color: cs.avg >= 1000 ? 'var(--color-danger)' : cs.avg >= 300 ? 'var(--color-warning)' : 'var(--color-success)' }}>

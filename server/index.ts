@@ -829,15 +829,16 @@ app.post('/api/lambda/remediate/rollback', async (req, res) => {
 app.get('/api/lambda/fleet/telemetry', async (req, res) => {
   try {
     const creds = await getAwsCredentialsFromReq(req);
-    if (!hasAwsCreds(creds)) {
+    const isDemo = req.query.demo === 'true';
+    if (!isDemo && !hasAwsCreds(creds)) {
       return res.status(400).json({ error: 'Missing credentials — configure an AWS connection in Settings' });
     }
     const keyHash = crypto.createHash('sha256').update(creds.accessKeyId || creds.authType || 'default').digest('hex').slice(0, 12);
-    const cacheKey = `lambda:fleet:telemetry:${creds.region}:${keyHash}`;
+    const cacheKey = `lambda:fleet:telemetry:${creds.region}:${keyHash}:${isDemo ? 'demo' : 'live'}`;
     const bypassCache = req.query.refresh === 'true' || req.query.bypassCache === 'true';
     if (bypassCache) await cacheDel(cacheKey);
     const result = await cacheGetOrSet(cacheKey, 30, async () => {
-      const fleet = await getBulkFleetTelemetry(creds);
+      const fleet = await getBulkFleetTelemetry(creds, { demoMode: isDemo });
       return { fleet };
     });
     res.json(result);
