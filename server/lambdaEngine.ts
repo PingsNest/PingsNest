@@ -4,6 +4,8 @@ import { LambdaClient, ListFunctionsCommand, GetFunctionConfigurationCommand, Ge
 import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import { query } from './db.js';
 
+export type MetricFetchStatus = 'MEASURED' | 'NO_DATA' | 'FETCH_FAILED';
+
 export interface LambdaFunctionDetails {
   functionArn: string;
   functionName: string;
@@ -23,18 +25,21 @@ export interface LambdaFunctionDetails {
   // 17-Column Table Extended Fields
   team?: string;
   environment?: string;
-  invocations?: string;
-  errors?: number;
-  errorRatePct?: number;
-  avgDurationMs?: number;
-  p95DurationMs?: number;
-  coldStartMs?: number;
+  metricStatus?: MetricFetchStatus;
+  fetchErrorMessage?: string;
+  invocations?: string | null;
+  errors?: number | null;
+  errorRatePct?: number | null;
+  avgDurationMs?: number | null;
+  p95DurationMs?: number | null;
+  coldStartMs?: number | null;
   lastDeployment?: string;
   lastInvocation?: string;
   costToday?: number;
   verificationTier?: 'METRICS' | 'LOG_STREAMS' | 'EVENT_TRIGGERS' | 'UNVERIFIED_DORMANT';
   activeTriggers?: string[];
   lastLogIngest?: string;
+  isDemo?: boolean;
 }
 
 export interface HealthCheckItem {
@@ -296,8 +301,252 @@ export function hasCredentials(credentials?: AwsCredentialsInput): boolean {
   );
 }
 
+// ─── Team and Environment Extractor from Tags / Config ─────────────────────────
+export function extractTeam(f: any): string {
+  if (f.Tags?.Team || f.Tags?.team || f.Tags?.owner || f.Tags?.Owner) {
+    return f.Tags.Team || f.Tags.team || f.Tags.owner || f.Tags.Owner;
+  }
+  const envVars = f.Environment?.Variables || {};
+  if (envVars.TEAM || envVars.Team || envVars.team || envVars.OWNER || envVars.Owner) {
+    return envVars.TEAM || envVars.Team || envVars.team || envVars.OWNER || envVars.Owner;
+  }
+  if (f.Description && f.Description.includes(':')) {
+    const candidate = f.Description.split(':')[0].trim();
+    if (candidate.length > 0 && candidate.length < 30) return candidate;
+  }
+  return 'Unassigned';
+}
+
+export function extractEnvironment(f: any): string {
+  if (f.Tags?.Environment || f.Tags?.environment || f.Tags?.env || f.Tags?.Env || f.Tags?.stage || f.Tags?.Stage) {
+    return f.Tags.Environment || f.Tags.environment || f.Tags.env || f.Tags.Env || f.Tags.stage || f.Tags.Stage;
+  }
+  const envVars = f.Environment?.Variables || {};
+  if (envVars.ENV || envVars.ENVIRONMENT || envVars.STAGE || envVars.NODE_ENV) {
+    return envVars.ENV || envVars.ENVIRONMENT || envVars.STAGE || envVars.NODE_ENV;
+  }
+  const fnLower = (f.FunctionName || '').toLowerCase();
+  if (fnLower.endsWith('-prod') || fnLower.includes('-prod-')) return 'prod';
+  if (fnLower.endsWith('-staging') || fnLower.includes('-staging-') || fnLower.endsWith('-uat')) return 'staging';
+  if (fnLower.endsWith('-dev') || fnLower.includes('-dev-')) return 'dev';
+  return 'Unassigned';
+}
+
+export interface FunctionMetricTelemetry {
+  metricStatus: MetricFetchStatus;
+  fetchErrorMessage?: string;
+  invocations: number | null;
+  errors: number | null;
+  errorRatePct: number | null;
+  avgDurationMs: number | null;
+  p95DurationMs: number | null;
+  lastInvocation?: string;
+  costToday?: number;
+  monthlyCost?: number;
+}
+
+// ─── Batched CloudWatch Metric Fetcher (up to 100 functions / 400 queries per call) ───
+export async function batchFetchCloudWatchMetrics(
+  functionNames: string[],
+  region: string,
+  credentials?: AwsCredentialsInput
+): Promise<Map<string, FunctionMetricTelemetry>> {
+  const telemetryMap = new Map<string, FunctionMetricTelemetry>();
+  if (!functionNames.length) return telemetryMap;
+
+  const CHUNK_SIZE = 100;
+  const cwClient = new CloudWatchClient({
+    region: region || credentials?.region || 'us-east-1',
+    credentials: resolveAwsClientCredentials(credentials)
+  });
+
+  const now = new Date();
+  const startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const period = 86400;
+
+  for (let c = 0; c < functionNames.length; c += CHUNK_SIZE) {
+    const chunk = functionNames.slice(c, c + CHUNK_SIZE);
+    const queries: any[] = [];
+
+    chunk.forEach((fnName, idx) => {
+      const qPrefix = `q${idx}_`;
+      queries.push(
+        {
+          Id: `${qPrefix}inv`,
+          MetricStat: {
+            Metric: { Namespace: 'AWS/Lambda', MetricName: 'Invocations', Dimensions: [{ Name: 'FunctionName', Value: fnName }] },
+            Period: period,
+            Stat: 'Sum'
+          }
+        },
+        {
+          Id: `${qPrefix}err`,
+          MetricStat: {
+            Metric: { Namespace: 'AWS/Lambda', MetricName: 'Errors', Dimensions: [{ Name: 'FunctionName', Value: fnName }] },
+            Period: period,
+            Stat: 'Sum'
+          }
+        },
+        {
+          Id: `${qPrefix}dur`,
+          MetricStat: {
+            Metric: { Namespace: 'AWS/Lambda', MetricName: 'Duration', Dimensions: [{ Name: 'FunctionName', Value: fnName }] },
+            Period: period,
+            Stat: 'Average'
+          }
+        },
+        {
+          Id: `${qPrefix}p95`,
+          MetricStat: {
+            Metric: { Namespace: 'AWS/Lambda', MetricName: 'Duration', Dimensions: [{ Name: 'FunctionName', Value: fnName }] },
+            Period: period,
+            Stat: 'p95'
+          }
+        }
+      );
+    });
+
+    try {
+      const res = await cwClient.send(new GetMetricDataCommand({
+        StartTime: startTime,
+        EndTime: now,
+        MetricDataQueries: queries
+      }));
+
+      const resultsMap = new Map<string, number[]>();
+      for (const r of res.MetricDataResults || []) {
+        if (r.Id && r.Values) {
+          resultsMap.set(r.Id, r.Values);
+        }
+      }
+
+      chunk.forEach((fnName, idx) => {
+        const qPrefix = `q${idx}_`;
+        const invVals = resultsMap.get(`${qPrefix}inv`) || [];
+        const errVals = resultsMap.get(`${qPrefix}err`) || [];
+        const durVals = resultsMap.get(`${qPrefix}dur`) || [];
+        const p95Vals = resultsMap.get(`${qPrefix}p95`) || [];
+
+        const hasAnyData = invVals.length > 0 || errVals.length > 0 || durVals.length > 0;
+
+        if (!hasAnyData) {
+          // No datapoints in CloudWatch: newly created or untriggered in 24h
+          telemetryMap.set(fnName, {
+            metricStatus: 'NO_DATA',
+            invocations: null,
+            errors: null,
+            errorRatePct: null,
+            avgDurationMs: null,
+            p95DurationMs: null,
+            lastInvocation: undefined,
+            costToday: 0,
+            monthlyCost: 0
+          });
+          return;
+        }
+
+        const invSum = invVals.reduce((sum, v) => sum + v, 0);
+        const errSum = errVals.reduce((sum, v) => sum + v, 0);
+        const durAvg = durVals.length ? Math.round(durVals.reduce((sum, v) => sum + v, 0) / durVals.length) : null;
+        const p95Dur = p95Vals.length ? Math.round(Math.max(...p95Vals)) : null;
+        const errRate = invSum > 0 ? Number(((errSum / invSum) * 100).toFixed(2)) : 0.0;
+
+        const requestCost = (invSum / 1_000_000) * 0.20;
+        const gbSeconds = durAvg ? invSum * (durAvg / 1000) * (512 / 1024) : 0;
+        const computeCost = gbSeconds * 0.0000166667;
+        const costToday = Number((requestCost + computeCost).toFixed(2));
+
+        telemetryMap.set(fnName, {
+          metricStatus: 'MEASURED',
+          invocations: invSum,
+          errors: errSum,
+          errorRatePct: errRate,
+          avgDurationMs: durAvg,
+          p95DurationMs: p95Dur,
+          lastInvocation: invSum > 0 ? 'Today' : undefined,
+          costToday,
+          monthlyCost: Number((costToday * 30).toFixed(2))
+        });
+      });
+    } catch (err: any) {
+      console.warn(`[CloudWatch Batch GetMetricData Error for chunk ${c}]:`, err.message);
+      chunk.forEach(fnName => {
+        telemetryMap.set(fnName, {
+          metricStatus: 'FETCH_FAILED',
+          fetchErrorMessage: err.message || 'Failed to query CloudWatch metrics',
+          invocations: null,
+          errors: null,
+          errorRatePct: null,
+          avgDurationMs: null,
+          p95DurationMs: null,
+          costToday: undefined,
+          monthlyCost: undefined
+        });
+      });
+    }
+  }
+
+  return telemetryMap;
+}
+
+// ─── Quarantined Demo Mode Generator (strictly opt-in via demo flag) ───────────
+export function generateMockLambdaFunctions(region: string): LambdaFunctionDetails[] {
+  const mockDefs = [
+    { name: 'payment-processor', team: 'Payments', env: 'production', inv: 1500, errRate: 3.2, dur: 180 },
+    { name: 'auth-token-verifier', team: 'Authentication', env: 'production', inv: 4200, errRate: 0.1, dur: 65 },
+    { name: 'order-checkout-api', team: 'Payments', env: 'uat', inv: 890, errRate: 0.0, dur: 120 },
+    { name: 'notification-dispatcher', team: 'Core Infra', env: 'dev', inv: 310, errRate: 0.5, dur: 95 },
+    { name: 'data-ingest-worker', team: 'Data Platform', env: 'production', inv: 6200, errRate: 1.8, dur: 450 }
+  ];
+
+  return mockDefs.map((def, idx) => {
+    const errs = Math.round((def.errRate / 100) * def.inv);
+    const mCost = Number(((512 / 1024) * 2.4).toFixed(2));
+    return {
+      functionArn: `arn:aws:lambda:${region}:demo-account:function:${def.name}`,
+      functionName: def.name,
+      runtime: 'nodejs20.x',
+      memorySize: 512,
+      timeout: 15,
+      handler: 'index.handler',
+      region: region || 'us-east-1',
+      accountId: 'demo-account',
+      lastModified: new Date(Date.now() - idx * 86400000).toISOString(),
+      status: 'Active',
+      healthScore: def.errRate > 2.0 ? 76 : 98,
+      healthStatus: def.errRate > 2.0 ? 'Warning' : 'Healthy',
+      monthlyCost: mCost,
+      securityScore: 92,
+      team: def.team,
+      environment: def.env,
+      metricStatus: 'MEASURED',
+      invocations: String(def.inv),
+      errors: errs,
+      errorRatePct: def.errRate,
+      avgDurationMs: def.dur,
+      p95DurationMs: Math.round(def.dur * 1.5),
+      coldStartMs: 350,
+      lastDeployment: `${idx}d ago`,
+      lastInvocation: 'Today',
+      costToday: Number((mCost / 30).toFixed(2)),
+      verificationTier: 'METRICS',
+      activeTriggers: ['API Gateway'],
+      lastLogIngest: 'Today',
+      isDemo: true
+    };
+  });
+}
+
 // ─── Function Discovery Engine ────────────────────────────────────────────────
-export async function discoverLambdaFunctions(region: string, credentials?: AwsCredentialsInput): Promise<LambdaFunctionDetails[]> {
+export async function discoverLambdaFunctions(
+  region: string,
+  credentials?: AwsCredentialsInput,
+  options?: { demoMode?: boolean }
+): Promise<LambdaFunctionDetails[]> {
+  if (options?.demoMode) {
+    return generateMockLambdaFunctions(region);
+  }
+
   if (hasCredentials(credentials)) {
     // 1. Primary: Direct AWS Lambda ListFunctions API
     try {
@@ -317,73 +566,112 @@ export async function discoverLambdaFunctions(region: string, credentials?: AwsC
       } while (marker);
 
       if (allFunctions.length > 0) {
+        const functionNames = allFunctions.map(f => f.FunctionName).filter(Boolean);
+        const cwMetrics = await batchFetchCloudWatchMetrics(
+          functionNames,
+          region || credentials?.region || 'us-east-1',
+          credentials
+        );
+
         return allFunctions.map((f, idx) => {
           const fnName = f.FunctionName || `Lambda-${idx}`;
-          const arn = f.FunctionArn || `arn:aws:lambda:${region}:123456789012:function:${fnName}`;
-          const accountId = arn.split(':')[4] || '123456789012';
-          const teams = ['Payments', 'Authentication', 'Core Infra', 'Data Platform', 'DevOps'];
-          const envs = ['production', 'production', 'uat', 'uat', 'dev'];
-          const fnTeam = teams[idx % teams.length];
-          const fnEnv = envs[idx % envs.length];
+          const arn = f.FunctionArn || `arn:aws:lambda:${region}:unknown:function:${fnName}`;
+          const accountId = arn.split(':')[4] || 'unknown';
 
-          // Compute real days uninvoked from AWS f.LastModified
-          let daysSinceActivity = 0;
+          const fnTeam = extractTeam(f);
+          const fnEnv = extractEnvironment(f);
+
+          let daysSinceDeployment = 0;
           if (f.LastModified) {
             const modTime = Date.parse(f.LastModified);
             if (!isNaN(modTime) && modTime > 0) {
               const diffMs = Date.now() - modTime;
               if (diffMs > 0) {
-                daysSinceActivity = Math.floor(diffMs / (86400 * 1000));
+                daysSinceDeployment = Math.floor(diffMs / (86400 * 1000));
               }
             }
           }
+          const fnLastDeployment = f.LastModified ? (daysSinceDeployment === 0 ? 'Today' : `${daysSinceDeployment}d ago`) : '—';
 
-          const fnLastDeployment = f.LastModified ? `${daysSinceActivity}d ago` : '—';
-          const fnLastInvocation = daysSinceActivity === 0 ? 'Today' : `${daysSinceActivity}d ago`;
+          const telemetry = cwMetrics.get(fnName);
+          const metricStatus = telemetry?.metricStatus || 'NO_DATA';
+          const fetchErrorMessage = telemetry?.fetchErrorMessage;
 
-          // A real function is ONLY marked dormant if its real AWS activity timestamp is >= 30 days
-          const isDormant = daysSinceActivity >= 30;
-          const fnInvocations365d = isDormant ? 0 : Math.round(1500 + (idx % 80) * 80);
-          const fnInvocations = isDormant ? '0' : `${fnInvocations365d}`;
+          const invCount = telemetry?.invocations ?? null;
+          const errors = telemetry?.errors ?? null;
+          const errorRatePct = telemetry?.errorRatePct ?? null;
+          const avgDurationMs = telemetry?.avgDurationMs ?? null;
+          const p95DurationMs = telemetry?.p95DurationMs ?? null;
 
-          const fnErrPct = isDormant ? 0.0 : (idx % 17 === 0 ? 3.2 : 0.05);
-          const fnErrors = isDormant ? 0 : Math.round(fnErrPct * 12);
-          const mCost = Number((((f.MemorySize || 512) / 1024) * 2.4).toFixed(2));
+          const isDormant = daysSinceDeployment >= 30 && (invCount === 0 || invCount === null);
+          const isUntriggeredNew = daysSinceDeployment < 30 && (invCount === 0 || invCount === null);
+
+          const verificationTier = isDormant ? 'UNVERIFIED_DORMANT' : (isUntriggeredNew ? 'UNVERIFIED_DORMANT' : 'METRICS');
+          const lastInvocation = telemetry?.lastInvocation || (invCount === 0 || invCount === null ? 'Never' : undefined);
+
           const fnTimeout = f.Timeout || 15;
-          const fnAvgDuration = Math.round(fnTimeout * 12 + 40);
-          const fnP95Duration = Math.round(fnAvgDuration * 1.5);
-          const fnColdStart = (f.Runtime || '').includes('java') ? 2100 : (f.Runtime || '').includes('node') ? 350 : 190;
-          const fnCostToday = Number((mCost / 30).toFixed(2));
+          const memMb = f.MemorySize || 512;
+          let costToday = 0;
+          let monthlyCost = 0;
+          if (invCount !== null && invCount > 0 && avgDurationMs !== null) {
+            const gbSeconds = invCount * (avgDurationMs / 1000) * (memMb / 1024);
+            const computeCost = gbSeconds * 0.0000166667;
+            const requestCost = (invCount / 1_000_000) * 0.20;
+            costToday = Number((computeCost + requestCost).toFixed(2));
+            monthlyCost = Number((costToday * 30).toFixed(2));
+          }
+
+          let healthScore = 100;
+          let healthStatus: 'Healthy' | 'Warning' | 'Critical' = 'Healthy';
+
+          if (metricStatus === 'FETCH_FAILED') {
+            healthScore = 80;
+            healthStatus = 'Warning';
+          } else if (errorRatePct !== null) {
+            if (errorRatePct > 5.0) {
+              healthScore = Math.max(0, 100 - Math.round(errorRatePct * 5));
+              healthStatus = 'Critical';
+            } else if (errorRatePct > 1.0) {
+              healthScore = Math.max(50, 100 - Math.round(errorRatePct * 5));
+              healthStatus = 'Warning';
+            } else {
+              healthScore = isDormant ? 75 : 98;
+              healthStatus = isDormant ? 'Warning' : 'Healthy';
+            }
+          }
 
           return {
             functionArn: arn,
             functionName: fnName,
             runtime: f.Runtime || 'nodejs20.x',
-            memorySize: f.MemorySize || 512,
+            memorySize: memMb,
             timeout: fnTimeout,
             handler: f.Handler || 'index.handler',
             region: region || 'us-east-1',
             accountId,
             lastModified: f.LastModified || new Date().toISOString(),
             status: f.State === 'Inactive' ? 'Inactive' : 'Active',
-            healthScore: isDormant ? 60 : 98,
-            healthStatus: isDormant ? 'Warning' : 'Healthy',
-            monthlyCost: mCost,
-            securityScore: 92,
+            healthScore,
+            healthStatus,
+            monthlyCost,
+            securityScore: 90,
             team: fnTeam,
             environment: fnEnv,
-            invocations: fnInvocations,
-            errors: fnErrors,
-            errorRatePct: fnErrPct,
-            avgDurationMs: fnAvgDuration,
-            p95DurationMs: fnP95Duration,
-            coldStartMs: fnColdStart,
+            metricStatus,
+            fetchErrorMessage,
+            invocations: invCount !== null ? String(invCount) : null,
+            errors,
+            errorRatePct,
+            avgDurationMs,
+            p95DurationMs,
+            coldStartMs: null,
             lastDeployment: fnLastDeployment,
-            lastInvocation: fnLastInvocation,
-            costToday: fnCostToday,
-            verificationTier: isDormant ? 'UNVERIFIED_DORMANT' : 'LOG_STREAMS',
+            lastInvocation,
+            costToday,
+            verificationTier,
             activeTriggers: [],
-            lastLogIngest: fnLastInvocation
+            lastLogIngest: lastInvocation,
+            isDemo: false
           };
         });
       }
@@ -391,9 +679,7 @@ export async function discoverLambdaFunctions(region: string, credentials?: AwsC
       console.warn('[AWS Lambda Direct Discovery Error]:', err.message);
     }
 
-// ─── Bug 7 fix: CW log group fallback ──────────────────────────────────────────
-// - Reads real accountId from the STS-derived ARN when possible, not hardcoded 123456789012
-// - healthScore clamped to [0, 100] (was going negative at index 32)
+// ─── CW Log Group Fallback ───────────────────────────────────────────────────
     try {
       const logsClient = new CloudWatchLogsClient({
         region: region || credentials?.region || 'us-east-1',
@@ -401,11 +687,23 @@ export async function discoverLambdaFunctions(region: string, credentials?: AwsC
       });
       const res = await logsClient.send(new DescribeLogGroupsCommand({ logGroupNamePrefix: '/aws/lambda/', limit: 50 }));
       if (res.logGroups && res.logGroups.length > 0) {
+        const functionNames = res.logGroups.map(g => (g.logGroupName || '').replace('/aws/lambda/', '')).filter(Boolean);
+        const cwMetrics = await batchFetchCloudWatchMetrics(
+          functionNames,
+          region || credentials?.region || 'us-east-1',
+          credentials
+        );
+
         return res.logGroups.map((g, idx) => {
           const fnName = (g.logGroupName || '').replace('/aws/lambda/', '');
-          // Bug 7 fix: clamp healthScore so it never goes negative for large idx values
-          const healthScore = Math.max(0, Math.min(100, 95 - (idx * 3)));
-          const healthStatus: LambdaFunctionDetails['healthStatus'] = idx === 2 ? 'Warning' : 'Healthy';
+          const telemetry = cwMetrics.get(fnName);
+          const metricStatus = telemetry?.metricStatus || 'NO_DATA';
+          const invCount = telemetry?.invocations ?? null;
+          const errors = telemetry?.errors ?? null;
+          const errorRatePct = telemetry?.errorRatePct ?? null;
+          const avgDurationMs = telemetry?.avgDurationMs ?? null;
+          const p95DurationMs = telemetry?.p95DurationMs ?? null;
+
           return {
             functionArn: `arn:aws:lambda:${region}:unknown:function:${fnName}`,
             functionName: fnName,
@@ -417,10 +715,27 @@ export async function discoverLambdaFunctions(region: string, credentials?: AwsC
             accountId: 'unknown',
             lastModified: g.creationTime ? new Date(g.creationTime).toISOString() : new Date().toISOString(),
             status: 'Active',
-            healthScore,
-            healthStatus,
-            monthlyCost: Number(((idx % 15 === 0) ? 95.0 + idx * 12.5 : 0.45 + (idx % 10) * 1.8).toFixed(2)),
-            securityScore: Math.max(0, Math.min(100, 90 - (idx * 4)))
+            healthScore: metricStatus === 'FETCH_FAILED' ? 80 : 100,
+            healthStatus: 'Healthy',
+            monthlyCost: telemetry?.monthlyCost || 0,
+            securityScore: 85,
+            team: 'Unassigned',
+            environment: 'Unassigned',
+            metricStatus,
+            fetchErrorMessage: telemetry?.fetchErrorMessage,
+            invocations: invCount !== null ? String(invCount) : null,
+            errors,
+            errorRatePct,
+            avgDurationMs,
+            p95DurationMs,
+            coldStartMs: null,
+            lastDeployment: g.creationTime ? `${Math.floor((Date.now() - g.creationTime) / 86400000)}d ago` : '—',
+            lastInvocation: telemetry?.lastInvocation || 'Never',
+            costToday: telemetry?.costToday || 0,
+            verificationTier: 'UNVERIFIED_DORMANT',
+            activeTriggers: [],
+            lastLogIngest: telemetry?.lastInvocation || 'Never',
+            isDemo: false
           };
         });
       }
@@ -452,7 +767,20 @@ export async function getFunctionDetails(
       const lastModifiedMs = cfg.LastModified ? Date.parse(cfg.LastModified) : Date.now();
       const daysSince = Math.max(0, Math.floor((Date.now() - lastModifiedMs) / 86400000));
       const isDormant = daysSince >= 30;
-      const mCost = Number(((memSize / 1024) * 2.4).toFixed(2));
+      const fnTeam = extractTeam(cfg);
+      const fnEnv = extractEnvironment(cfg);
+
+      const cwMetrics = await batchFetchCloudWatchMetrics([functionName], credentials?.region || 'us-east-1', credentials);
+      const telemetry = cwMetrics.get(functionName);
+      const metricStatus = telemetry?.metricStatus || 'NO_DATA';
+
+      const invCount = telemetry?.invocations ?? null;
+      const errors = telemetry?.errors ?? null;
+      const errorRatePct = telemetry?.errorRatePct ?? null;
+      const avgDurationMs = telemetry?.avgDurationMs ?? null;
+      const p95DurationMs = telemetry?.p95DurationMs ?? null;
+      const costToday = telemetry?.costToday || 0;
+      const monthlyCost = telemetry?.monthlyCost || 0;
 
       return {
         functionArn: arn,
@@ -465,25 +793,28 @@ export async function getFunctionDetails(
         accountId,
         lastModified: cfg.LastModified || new Date().toISOString(),
         status: cfg.State === 'Inactive' ? 'Inactive' : 'Active',
-        healthScore: isDormant ? 60 : 95,
-        healthStatus: isDormant ? 'Warning' : 'Healthy',
-        monthlyCost: mCost,
+        healthScore: errorRatePct !== null && errorRatePct > 5 ? 60 : 98,
+        healthStatus: errorRatePct !== null && errorRatePct > 5 ? 'Critical' : 'Healthy',
+        monthlyCost,
         securityScore: 85,
-        team: cfg.Description?.split(':')[0] || 'Unknown',
-        environment: cfg.Environment?.Variables?.ENV || cfg.Environment?.Variables?.ENVIRONMENT || (isDormant ? 'inactive' : 'production'),
-        invocations: isDormant ? '0' : 'live',
-        errors: 0,
-        errorRatePct: 0,
-        avgDurationMs: Math.round(timeout * 12 + 40),
-        p95DurationMs: Math.round((timeout * 12 + 40) * 1.5),
-        coldStartMs: runtime.includes('java') ? 2100 : runtime.includes('node') ? 350 : 190,
+        team: fnTeam,
+        environment: fnEnv,
+        metricStatus,
+        fetchErrorMessage: telemetry?.fetchErrorMessage,
+        invocations: invCount !== null ? String(invCount) : null,
+        errors,
+        errorRatePct,
+        avgDurationMs,
+        p95DurationMs,
+        coldStartMs: null,
         lastDeployment: daysSince === 0 ? 'Today' : `${daysSince}d ago`,
-        lastInvocation: isDormant ? `${daysSince}d ago` : 'Today',
-        costToday: Number((mCost / 30).toFixed(2)),
+        lastInvocation: telemetry?.lastInvocation || (invCount === 0 || invCount === null ? 'Never' : 'Today'),
+        costToday,
         verificationTier: isDormant ? 'UNVERIFIED_DORMANT' : 'METRICS',
         activeTriggers: [],
-        lastLogIngest: isDormant ? `${daysSince}d ago` : 'Today',
-        dataSource: 'aws_live'
+        lastLogIngest: telemetry?.lastInvocation || 'Today',
+        dataSource: 'aws_live',
+        isDemo: false
       } as any;
     } catch (err: any) {
       console.warn('[getFunctionDetails AWS Error]:', err.message);
